@@ -16,16 +16,16 @@ QMainWindow {
 QMenuBar {
     background: rgba(255, 255, 255, 0.7);
     border: 1px solid #d6e3f1;
-    border-radius: 10px;
-    padding: 8px;
+    border-radius: 0px;
+    padding: 2px 4px;
 }
 
 QMenuBar::item {
-    padding: 6px 12px;
-    border-radius: 8px;
+    padding: 4px 8px;
+    border-radius: 0px;
     background: rgba(255, 255, 255, 0.0);
     border: 1px solid transparent;
-    margin: 1px;
+    margin: 0px;
 }
 
 QMenuBar::item:selected {
@@ -41,12 +41,13 @@ QMenuBar::item:pressed {
 QMenu {
     background: #ffffff;
     border: 1px solid #dbe5f2;
-    padding: 6px;
+    padding: 4px;
+    border-radius: 0px;
 }
 
 QMenu::item {
-    padding: 7px 14px;
-    border-radius: 8px;
+    padding: 6px 12px;
+    border-radius: 0px;
     background: transparent;
     color: #132033;
 }
@@ -71,7 +72,7 @@ QMenu::separator {
 
 QPushButton {
     border: none;
-    border-radius: 12px;
+    border-radius: 0px;
     background: #1e5899;
     color: #ffffff;
     padding: 8px 14px;
@@ -95,7 +96,7 @@ QPushButton#GhostButton {
 QLineEdit, QTextEdit, QListWidget, QComboBox, QSpinBox {
     background: #ffffff;
     border: 1px solid #d5e1ee;
-    border-radius: 10px;
+    border-radius: 0px;
     padding: 6px 10px;
 }
 
@@ -104,8 +105,13 @@ QListWidget {
 }
 
 QListWidget::item {
-    border-radius: 8px;
+    border-radius: 0px;
     padding: 8px;
+}
+
+QSlider {
+    min-height: 16px;
+    background: transparent;
 }
 
 QListWidget::item:selected {
@@ -115,27 +121,27 @@ QListWidget::item:selected {
 
 QSlider::groove:horizontal {
     background: #d8e4f2;
-    height: 6px;
-    border-radius: 3px;
+    height: 4px;
+    border-radius: 0px;
 }
 
 QSlider::sub-page:horizontal {
     background: #1e5899;
-    border-radius: 3px;
+    border-radius: 0px;
 }
 
 QSlider::handle:horizontal {
     background: #ffffff;
-    border: 2px solid #1e5899;
-    width: 14px;
-    margin: -6px 0;
-    border-radius: 7px;
+    border: 1px solid #1e5899;
+    width: 12px;
+    margin: -4px 0;
+    border-radius: 6px;
 }
 
 QFrame#Card {
     background: rgba(255, 255, 255, 0.92);
     border: 1px solid #dce6f3;
-    border-radius: 16px;
+    border-radius: 0px;
 }
 
 QLabel#TitleLabel {
@@ -161,7 +167,7 @@ QToolButton#CompactTopButton {
     min-height: 30px;
     max-width: 30px;
     max-height: 30px;
-    border-radius: 15px;
+    border-radius: 0px;
     border: 1px solid #c8d8eb;
     background: #ffffff;
 }
@@ -199,7 +205,7 @@ QToolButton#SidebarToggle {
     max-width: 22px;
     min-height: 54px;
     max-height: 54px;
-    border-radius: 11px;
+    border-radius: 0px;
     border: 1px solid #c7d9ec;
     background: #ffffff;
 }
@@ -224,7 +230,7 @@ QLabel#VolumeValueLabel {
 QWidget#CompactTopBar {
     background: rgba(255, 255, 255, 0.72);
     border: 1px solid #d5e2f1;
-    border-radius: 10px;
+    border-radius: 0px;
 }
 
 QToolButton#CompactTopButton {
@@ -232,30 +238,34 @@ QToolButton#CompactTopButton {
     min-height: 24px;
     max-width: 24px;
     max-height: 24px;
-    border-radius: 12px;
+    border-radius: 0px;
 }
 
 QToolButton#TrackDeleteButton {
-    min-width: 20px;
-    min-height: 20px;
-    max-width: 20px;
-    max-height: 20px;
-    border-radius: 10px;
-    border: 1px solid #e4c6cc;
-    background: #fff6f7;
+    min-width: 12px;
+    min-height: 12px;
+    max-width: 12px;
+    max-height: 12px;
+    border: none;
+    background: transparent;
+    color: #c62f2f;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 0px;
 }
 
 QToolButton#TrackDeleteButton:hover {
-    border-color: #d896a0;
-    background: #ffecee;
+    color: #991f1f;
+    background: transparent;
 }
 
 QLabel#TrackTitleLabel {
     color: #132033;
+    background: transparent;
 }
 
 QLabel#CompactTitleLabel {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
     color: #15385f;
 }
@@ -263,6 +273,35 @@ QLabel#CompactTitleLabel {
 QLabel#CompactLyricLineLabel {
     font-size: 12px;
     color: #4f6a85;
+}
+
+QLabel#LyricTimeLabel {
+    font-size: 11px;
+    color: #5f7892;
+    background: transparent;
+}
+
+QLabel#LyricTextLabel {
+    font-size: 13px;
+    color: #14273f;
+    background: transparent;
+}
+
+QWidget#TrackRowWidget,
+QWidget#LyricRowWidget {
+    background: transparent;
+}
+
+QListWidget#lyrics_list,
+QListWidget#track_list {
+    background: #ffffff;
+}
+
+QLabel#CompactTopTitle {
+    font-size: 14px;
+    font-weight: 700;
+    color: #15385f;
+    background: transparent;
 }
 
 QSplitter::handle:horizontal {

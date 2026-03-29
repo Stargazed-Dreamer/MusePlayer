@@ -74,24 +74,28 @@ class LyricsListWidget(QListWidget):
 class LyricLineWidget(QWidget):
     def __init__(self, text: str, start_sec: float, end_sec: float, parent=None):
         super().__init__(parent)
+        self.setObjectName("LyricRowWidget")
         self._start_sec = float(start_sec)
         self._end_sec = float(end_sec)
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(6, 2, 6, 2)
-        row.setSpacing(6)
+        row.setContentsMargins(4, 1, 4, 1)
+        row.setSpacing(4)
 
         self.start_label = QLabel(_format_lrc_time(self._start_sec), self)
         self.start_label.setObjectName("LyricTimeLabel")
         self.start_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.start_label.setFixedWidth(38)
 
         self.text_label = QLabel(text or "♪", self)
         self.text_label.setObjectName("LyricTextLabel")
         self.text_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        self.text_label.setWordWrap(False)
 
         self.end_label = QLabel(_format_lrc_time(self._end_sec), self)
         self.end_label.setObjectName("LyricTimeLabel")
         self.end_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.end_label.setFixedWidth(38)
 
         row.addWidget(self.start_label, 0)
         row.addWidget(self.text_label, 1)
@@ -109,6 +113,11 @@ class LyricLineWidget(QWidget):
         self.start_label.hide()
         self.end_label.hide()
         super().leaveEvent(event)
+
+    def sizeHint(self) -> QSize:
+        fm = self.text_label.fontMetrics()
+        height = max(24, fm.height() + 8)
+        return QSize(260, height)
 
 
 class ClickJumpSlider(QSlider):
@@ -176,23 +185,26 @@ class TrackListItemWidget(QWidget):
 
     def __init__(self, track_id: str, text: str, parent=None):
         super().__init__(parent)
+        self.setObjectName("TrackRowWidget")
         self._track_id = str(track_id)
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(4, 0, 2, 0)
-        row.setSpacing(8)
+        row.setContentsMargins(2, 0, 2, 0)
+        row.setSpacing(4)
 
         self.remove_slot = QWidget(self)
-        self.remove_slot.setFixedWidth(20)
+        self.remove_slot.setFixedWidth(14)
         remove_slot_layout = QVBoxLayout(self.remove_slot)
         remove_slot_layout.setContentsMargins(0, 0, 0, 0)
         remove_slot_layout.setSpacing(0)
 
         self.remove_btn = QToolButton(self.remove_slot)
         self.remove_btn.setObjectName("TrackDeleteButton")
-        self.remove_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxCritical))
+        self.remove_btn.setText("×")
         self.remove_btn.setToolTip("从当前歌单移除")
         self.remove_btn.setAutoRaise(True)
+        self.remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.remove_btn.setFixedSize(12, 12)
         self.remove_btn.hide()
         remove_slot_layout.addWidget(self.remove_btn, 0, Qt.AlignmentFlag.AlignCenter)
 
@@ -216,6 +228,11 @@ class TrackListItemWidget(QWidget):
     def _emit_remove(self) -> None:
         self.remove_clicked.emit(self._track_id)
 
+    def sizeHint(self) -> QSize:
+        fm = self.text_label.fontMetrics()
+        height = max(24, fm.height() + 8)
+        return QSize(260, height)
+
 
 class MainWindow(QMainWindow):
     def __init__(self, controller: AppController):
@@ -230,7 +247,7 @@ class MainWindow(QMainWindow):
         self._drag_offset: QPoint | None = None
         self._sidebar_collapsed = False
         self._sidebar_was_collapsed_before_compact = False
-        self._sidebar_last_width = 240
+        self._sidebar_last_width = 408
         self._width_before_compact = 0
         self._height_before_compact = 0
         self._min_width_before_compact = self.minimumWidth()
@@ -310,7 +327,7 @@ class MainWindow(QMainWindow):
         self.cover_label.setFixedSize(230, 230)
         self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cover_label.setStyleSheet(
-            "background:#d9e6f5; border-radius:12px; color:#406180; font-weight:600;"
+            "background:#d9e6f5; border-radius:0px; color:#406180; font-weight:600;"
         )
         now_layout.addWidget(self.cover_label)
 
@@ -327,6 +344,7 @@ class MainWindow(QMainWindow):
         self.path_label.setWordWrap(True)
 
         self.lyrics_list = LyricsListWidget()
+        self.lyrics_list.setObjectName("lyrics_list")
         self.lyrics_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.lyrics_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.lyrics_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -344,7 +362,7 @@ class MainWindow(QMainWindow):
         self.card_controls = QFrame(left_container)
         self.card_controls.setObjectName("Card")
         self._controls_normal_margins = (14, 12, 14, 12)
-        self._controls_compact_margins = (14, 58, 14, 12)
+        self._controls_compact_margins = (12, 8, 12, 8)
         self.controls_layout = QVBoxLayout(self.card_controls)
         self.controls_layout.setContentsMargins(*self._controls_normal_margins)
         self.controls_layout.setSpacing(8)
@@ -352,8 +370,8 @@ class MainWindow(QMainWindow):
         self.compact_info_widget = QWidget(self.card_controls)
         compact_info_layout = QVBoxLayout(self.compact_info_widget)
         compact_info_layout.setContentsMargins(0, 0, 0, 0)
-        compact_info_layout.setSpacing(2)
-        self.compact_song_label = QLabel("♪")
+        compact_info_layout.setSpacing(0)
+        self.compact_song_label = QLabel("")
         self.compact_song_label.setObjectName("CompactLyricLineLabel")
         self.compact_song_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         compact_info_layout.addWidget(self.compact_song_label)
@@ -368,7 +386,7 @@ class MainWindow(QMainWindow):
         self.current_time_label = QLabel("00:00")
         self.current_time_label.setObjectName("CaptionLabel")
         self.progress_center_label = QLabel("")
-        self.progress_center_label.setObjectName("CompactTitleLabel")
+        self.progress_center_label.setObjectName("CompactLyricLineLabel")
         self.progress_center_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.progress_center_label.hide()
         self.total_time_label = QLabel("00:00")
@@ -442,8 +460,8 @@ class MainWindow(QMainWindow):
         control_row.addSpacing(6)
         control_row.addWidget(self.volume_panel)
         control_row.addWidget(self.volume_slider, 1)
-        control_row.addWidget(self.compact_btn)
         control_row.addWidget(self.speed_combo)
+        control_row.addWidget(self.compact_btn)
 
         self.controls_layout.addLayout(control_row)
         left_col.addWidget(self.card_controls, 0)
@@ -460,6 +478,7 @@ class MainWindow(QMainWindow):
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("搜索当前歌单（标题 / 歌手 / 专辑）")
         self.track_list = QListWidget()
+        self.track_list.setObjectName("track_list")
 
         side_layout.addWidget(side_title)
         side_layout.addWidget(self.playlist_combo)
@@ -479,8 +498,8 @@ class MainWindow(QMainWindow):
         self.compact_top_bar = QWidget(self)
         self.compact_top_bar.setObjectName("CompactTopBar")
         compact_bar_layout = QHBoxLayout(self.compact_top_bar)
-        compact_bar_layout.setContentsMargins(8, 8, 8, 8)
-        compact_bar_layout.setSpacing(8)
+        compact_bar_layout.setContentsMargins(6, 3, 6, 3)
+        compact_bar_layout.setSpacing(6)
 
         self.opacity_slider = ClickJumpSlider(Qt.Orientation.Horizontal, self.compact_top_bar)
         self.opacity_slider.setRange(35, 100)
@@ -490,15 +509,20 @@ class MainWindow(QMainWindow):
 
         self.lock_btn = self._new_icon_button("CompactTopButton")
         self.pin_btn = self._new_icon_button("CompactTopButton")
-        self._compact_top_right_spacer = QWidget(self.compact_top_bar)
-        self._compact_top_right_spacer.setFixedWidth(self.opacity_slider.width())
+        self.compact_top_title_label = QLabel("未选择歌曲", self.compact_top_bar)
+        self.compact_top_title_label.setObjectName("CompactTopTitle")
+        self.compact_top_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.compact_top_title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.compact_close_btn = self._new_icon_button("CompactTopButton")
+        self.compact_close_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarCloseButton))
+        self.compact_close_btn.setToolTip("返回丰富模式")
+        self.compact_close_btn.clicked.connect(self._exit_compact_mode)
         compact_bar_layout.addWidget(self.opacity_slider, 0, Qt.AlignmentFlag.AlignLeft)
         compact_bar_layout.addStretch(1)
         compact_bar_layout.addWidget(self.lock_btn)
         compact_bar_layout.addWidget(self.pin_btn)
-        compact_bar_layout.addStretch(1)
-        compact_bar_layout.addWidget(self._compact_top_right_spacer, 0, Qt.AlignmentFlag.AlignRight)
-        self.compact_top_bar.setMinimumHeight(42)
+        compact_bar_layout.addWidget(self.compact_close_btn)
+        self.compact_top_bar.setMinimumHeight(30)
         self.compact_top_bar.hide()
         self._refresh_compact_top_buttons()
 
@@ -516,19 +540,18 @@ class MainWindow(QMainWindow):
         menu_file.addSeparator()
         action_exit = menu_file.addAction("退出")
 
-        menu_playlist = self.menuBar().addMenu("歌单")
-        action_manage_playlist = menu_playlist.addAction("歌单管理")
+        action_playlist = self.menuBar().addAction("歌单")
 
         action_settings = self.menuBar().addAction("设置")
 
-        for menu in (menu_file, menu_playlist):
+        for menu in (menu_file,):
             menu.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
             menu.setMouseTracking(True)
 
         action_import_folder.triggered.connect(self._menu_import_folder)
         action_open_file.triggered.connect(self._menu_open_file)
         action_exit.triggered.connect(self.close)
-        action_manage_playlist.triggered.connect(self._open_playlist_dialog)
+        action_playlist.triggered.connect(self._open_playlist_dialog)
         action_settings.triggered.connect(self._open_settings_dialog)
 
     def _bind_signals(self) -> None:
@@ -621,12 +644,12 @@ class MainWindow(QMainWindow):
 
         for idx, track in enumerate(tracks):
             text = f"{track.title}  -  {track.artist}"
-            item = QListWidgetItem(text)
+            item = QListWidgetItem("")
             item.setData(0x0100, track.id)
-            item.setSizeHint(QSize(280, 34))
             self.track_list.addItem(item)
             widget = TrackListItemWidget(track.id, text, self.track_list)
             widget.remove_clicked.connect(self._on_remove_track_clicked)
+            item.setSizeHint(widget.sizeHint())
             self.track_list.setItemWidget(item, widget)
             if track.id == current_id:
                 row_to_select = idx
@@ -641,8 +664,8 @@ class MainWindow(QMainWindow):
             self.album_label.setText("专辑")
             self.path_label.setText("")
             self._current_track_title = "未选择歌曲"
-            self.compact_song_label.setText("♪")
-            self.progress_center_label.setText(self._current_track_title if self._compact_mode else "")
+            self.compact_top_title_label.setText(self._current_track_title)
+            self.progress_center_label.setText("♪" if self._compact_mode else "")
             self._set_cover(None)
             self._load_lyrics("")
             return
@@ -652,7 +675,9 @@ class MainWindow(QMainWindow):
         self.artist_label.setText(f"歌手: {track.artist or '未知歌手'}")
         self.album_label.setText(f"专辑: {track.album or '未知专辑'}")
         self.path_label.setText(track.path)
-        self.progress_center_label.setText(self._current_track_title if self._compact_mode else "")
+        self.compact_top_title_label.setText(self._current_track_title)
+        if not self._compact_mode:
+            self.progress_center_label.setText("")
 
         lyrics = self.controller.get_current_lyrics()
         self._load_lyrics(lyrics)
@@ -696,9 +721,8 @@ class MainWindow(QMainWindow):
 
         if entries:
             for idx, (_, text) in enumerate(entries):
-                item = QListWidgetItem(text or "♪")
+                item = QListWidgetItem("")
                 item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                item.setSizeHint(QSize(300, 28))
                 self.lyrics_list.addItem(item)
                 widget = LyricLineWidget(
                     text=text,
@@ -706,6 +730,7 @@ class MainWindow(QMainWindow):
                     end_sec=self._lyrics_end_times[idx],
                     parent=self.lyrics_list,
                 )
+                item.setSizeHint(widget.sizeHint())
                 self.lyrics_list.setItemWidget(item, widget)
             self._sync_lyrics_with_position(0.0)
             return
@@ -717,9 +742,11 @@ class MainWindow(QMainWindow):
         for line in lines:
             item = QListWidgetItem(line)
             item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            fm = self.lyrics_list.fontMetrics()
+            item.setSizeHint(QSize(260, max(24, fm.height() + 8)))
             self.lyrics_list.addItem(item)
         if self._compact_mode:
-            self.compact_song_label.setText(lines[0] if lines else "(暂无歌词)")
+            self.progress_center_label.setText(lines[0] if lines else "(暂无歌词)")
 
     def _build_lyrics_end_times(self, entries: list[tuple[float, str]]) -> list[float]:
         if not entries:
@@ -776,7 +803,7 @@ class MainWindow(QMainWindow):
 
         self._lyrics_current_index = idx
         if self._compact_mode:
-            self.compact_song_label.setText(self._lyrics_entries[idx][1] or "♪")
+            self.progress_center_label.setText(self._lyrics_entries[idx][1] or "♪")
         self._lyrics_auto_adjusting = True
         self.lyrics_list.setCurrentRow(idx)
         item = self.lyrics_list.item(idx)
@@ -805,7 +832,7 @@ class MainWindow(QMainWindow):
         item = self.lyrics_list.currentItem()
         if item is None:
             return
-        text = (item.text() or "").strip()
+        text = self._lyric_text_of_item(item)
         if not text:
             return
         clipboard = QGuiApplication.clipboard()
@@ -971,7 +998,7 @@ class MainWindow(QMainWindow):
             return
         active_search = bool(self.search_edit.text().strip())
         self.player.play_track(str(track_id), auto_play=True, manual_select=True, active_request=active_search)
-        self.statusBar().showMessage(f"播放歌曲：{item.text()}", 2500)
+        self.statusBar().showMessage(f"播放歌曲：{self._track_text_of_item(item)}", 2500)
 
     def _on_remove_track_clicked(self, track_id: str) -> None:
         playlist_id = self.player.current_playlist_id or "all_songs"
@@ -1075,21 +1102,22 @@ class MainWindow(QMainWindow):
             self.setMinimumSize(0, 0)
             self.setMaximumSize(16777215, 16777215)
             self.controls_layout.setContentsMargins(*self._controls_compact_margins)
+            self.controls_layout.setSpacing(4)
             self.card_now.hide()
             self.side_card.hide()
             self.sidebar_toggle_btn.hide()
             self.menuBar().hide()
             self.statusBar().hide()
-            self.compact_info_widget.show()
+            self.compact_info_widget.hide()
             self.progress_center_label.show()
             self.compact_top_bar.show()
-            self.progress_center_label.setText(self._current_track_title)
+            self.compact_top_title_label.setText(self._current_track_title)
             if 0 <= self._lyrics_current_index < len(self._lyrics_entries):
-                self.compact_song_label.setText(self._lyrics_entries[self._lyrics_current_index][1] or "♪")
+                self.progress_center_label.setText(self._lyrics_entries[self._lyrics_current_index][1] or "♪")
             elif self._lyrics_entries:
-                self.compact_song_label.setText(self._lyrics_entries[0][1] or "♪")
+                self.progress_center_label.setText(self._lyrics_entries[0][1] or "♪")
             else:
-                self.compact_song_label.setText("♪")
+                self.progress_center_label.setText("♪")
             self._refresh_window_flags()
             self._on_opacity_changed(self.opacity_slider.value())
             self._layout_compact_top_bar()
@@ -1106,8 +1134,14 @@ class MainWindow(QMainWindow):
             client_width = m.left() + control_width + m.right()
             frame_height = self.frameGeometry().height() - self.geometry().height()
             frame_width = self.frameGeometry().width() - self.geometry().width()
-            target_height = max(220, client_height + frame_height)
-            target_width = max(460, client_width + frame_width)
+            target_height = client_height + frame_height
+            target_width = client_width + frame_width
+
+            screen = self.windowHandle().screen() if self.windowHandle() else QGuiApplication.primaryScreen()
+            if screen is not None:
+                avail = screen.availableGeometry()
+                target_width = min(max(1, target_width), avail.width())
+                target_height = min(max(1, target_height), avail.height())
 
             self.resize(target_width, target_height)
             controls_pos_after = self.card_controls.mapToGlobal(QPoint(0, 0))
@@ -1120,12 +1154,13 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("已进入简洁模式", 2500)
             return
 
-        controls_pos_before = self.card_controls.mapToGlobal(QPoint(0, 0))
+        rich_anchor = self.frameGeometry().topLeft()
 
         self.compact_info_widget.hide()
         self.progress_center_label.hide()
         self.compact_top_bar.hide()
         self.controls_layout.setContentsMargins(*self._controls_normal_margins)
+        self.controls_layout.setSpacing(8)
         self.setWindowOpacity(1.0)
         self.setMinimumSize(0, 0)
         self.setMaximumSize(16777215, 16777215)
@@ -1140,23 +1175,24 @@ class MainWindow(QMainWindow):
         self.compact_btn.setIcon(_make_plus_minus_icon(False))
         self.compact_btn.setToolTip("切换到简洁模式")
 
-        self.setMinimumWidth(max(0, int(self._min_width_before_compact)))
-        self.setMaximumWidth(max(16777215 if self._max_width_before_compact <= 0 else int(self._max_width_before_compact), self.minimumWidth()))
-        self.setMinimumHeight(max(0, int(self._min_height_before_compact)))
-        self.setMaximumHeight(max(16777215 if self._max_height_before_compact <= 0 else int(self._max_height_before_compact), self.minimumHeight()))
+        self.centralWidget().layout().activate()
+        self.controls_layout.activate()
+        min_hint = self.minimumSizeHint()
+        min_w = max(int(min_hint.width()), max(0, int(self._min_width_before_compact)))
+        min_h = max(int(min_hint.height()), max(0, int(self._min_height_before_compact)))
+        self.setMinimumWidth(min_w)
+        self.setMinimumHeight(min_h)
+        self.setMaximumWidth(16777215)
+        self.setMaximumHeight(16777215)
         restore_width = self._width_before_compact if self._width_before_compact > 0 else self.width()
         restore_height = self._height_before_compact if self._height_before_compact > 0 else self.height()
         screen = self.windowHandle().screen() if self.windowHandle() else QGuiApplication.primaryScreen()
         if screen is not None:
             avail = screen.availableGeometry()
-            restore_width = min(restore_width, max(480, avail.width()))
-            restore_height = min(restore_height, max(240, avail.height()))
+            restore_width = min(max(restore_width, min_w), max(480, avail.width()))
+            restore_height = min(max(restore_height, min_h), max(240, avail.height()))
         self.resize(restore_width, restore_height)
-        controls_pos_after = self.card_controls.mapToGlobal(QPoint(0, 0))
-        self.move(
-            self.x() + (controls_pos_before.x() - controls_pos_after.x()),
-            self.y() + (controls_pos_before.y() - controls_pos_after.y()),
-        )
+        self.move(rich_anchor)
 
         total = max(1, sum(self.main_splitter.sizes()))
         if self._sidebar_was_collapsed_before_compact:
@@ -1171,6 +1207,11 @@ class MainWindow(QMainWindow):
         self._reposition_sidebar_toggle()
         self._ensure_window_inside_screen()
         self.statusBar().showMessage("已退出简洁模式", 3000)
+
+    def _exit_compact_mode(self) -> None:
+        if not self._compact_mode:
+            return
+        self._toggle_compact_mode()
 
     def _refresh_window_flags(self) -> None:
         was_visible = self.isVisible()
@@ -1192,11 +1233,21 @@ class MainWindow(QMainWindow):
             return
         if not self.compact_top_bar.isVisible():
             return
-        margin = 8
+        margin = 4
         width = max(220, self.width() - margin * 2)
         height = max(self.compact_top_bar.minimumHeight(), self.compact_top_bar.sizeHint().height())
         self.compact_top_bar.resize(width, height)
         self.compact_top_bar.move(margin, margin)
+        title_h = self.compact_top_title_label.sizeHint().height()
+        right_controls_width = (
+            self.lock_btn.width() + self.pin_btn.width() + self.compact_close_btn.width() + 12
+        )
+        left_controls_width = self.opacity_slider.width() + 12
+        max_title_width = max(80, width - left_controls_width - right_controls_width - 16)
+        title_w = min(max_title_width, self.compact_top_title_label.sizeHint().width())
+        self.compact_top_title_label.resize(title_w, title_h)
+        self.compact_top_title_label.move((width - title_w) // 2, (height - title_h) // 2)
+        self.compact_top_title_label.raise_()
         self.compact_top_bar.raise_()
 
     def _reposition_volume_value_label(self) -> None:
@@ -1306,10 +1357,8 @@ class MainWindow(QMainWindow):
             super().wheelEvent(event)
             return
 
-        steps = max(1, abs(int(delta)) // 120)
         increase = delta > 0
-        for _ in range(steps):
-            self.player.adjust_gain_by_key(increase)
+        self.player.adjust_gain_by_key(increase)
         self._refresh_volume_ui()
         self.statusBar().showMessage(f"音量：{self.player.gain_percent()}%", 1200)
         event.accept()
@@ -1386,6 +1435,24 @@ class MainWindow(QMainWindow):
             return QSize(0, 0)
         return super().minimumSizeHint()
 
+    def _lyric_text_of_item(self, item: QListWidgetItem) -> str:
+        text = (item.text() or "").strip()
+        if text:
+            return text
+        widget = self.lyrics_list.itemWidget(item)
+        if isinstance(widget, LyricLineWidget):
+            return (widget.text_label.text() or "").strip()
+        return ""
+
+    def _track_text_of_item(self, item: QListWidgetItem) -> str:
+        text = (item.text() or "").strip()
+        if text:
+            return text
+        widget = self.track_list.itemWidget(item)
+        if isinstance(widget, TrackListItemWidget):
+            return (widget.text_label.text() or "").strip()
+        return "未知歌曲"
+
     def closeEvent(self, event: QCloseEvent) -> None:
         try:
             self.controller.shutdown()
@@ -1404,9 +1471,10 @@ def _format_time(sec: float) -> str:
 
 def _format_lrc_time(sec: float) -> str:
     safe = max(0.0, float(sec))
-    minutes = int(safe // 60)
-    seconds = safe - minutes * 60
-    return f"{minutes:02d}:{seconds:05.2f}"
+    total = int(safe)
+    minutes = total // 60
+    seconds = total % 60
+    return f"{minutes:02d}:{seconds:02d}"
 
 
 def _parse_lrc_entries(raw: str) -> list[tuple[float, str]]:
@@ -1519,10 +1587,11 @@ def _make_pin_icon(pinned: bool) -> QIcon:
     pen = QPen(QColor("#1e5899"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
 
-    painter.drawEllipse(QRectF(8.2, 4.0, 7.6, 4.6))
-    painter.drawLine(12, 8, 12, 15)
+    painter.drawEllipse(QRectF(7.2, 3.6, 9.6, 4.8))
+    painter.drawLine(12, 8, 12, 16)
     painter.drawLine(9, 10, 15, 10)
-    painter.drawLine(12, 15, 9.5, 19)
+    painter.drawLine(10, 13, 14, 13)
+    painter.drawLine(12, 16, 9.2, 20)
 
     if not pinned:
         strike = QPen(QColor("#9cb6d4"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
