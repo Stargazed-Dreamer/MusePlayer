@@ -280,8 +280,11 @@ class TrackItemDelegate(QStyledItemDelegate):
         if opt.state & QStyle.StateFlag.State_Selected:
             text_pen = opt.palette.color(opt.palette.ColorRole.HighlightedText)
         painter.setPen(text_pen)
-        elided = opt.fontMetrics.elidedText(text, Qt.TextElideMode.ElideRight, max(10, text_rect.width()))
-        painter.drawText(text_rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), elided)
+        painter.drawText(
+            text_rect,
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere),
+            text,
+        )
         painter.restore()
 
     def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
@@ -415,7 +418,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
 
         main_layout = QHBoxLayout(root)
-        main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout.setContentsMargins(12, 12, 12, 8)
         main_layout.setSpacing(0)
 
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal, root)
@@ -476,8 +479,8 @@ class MainWindow(QMainWindow):
 
         self.card_controls = QFrame(left_container)
         self.card_controls.setObjectName("Card")
-        self._controls_normal_margins = (14, 12, 14, 12)
-        self._controls_compact_margins = (12, 8, 12, 8)
+        self._controls_normal_margins = (14, 8, 14, 4)
+        self._controls_compact_margins = (12, 6, 12, 4)
         self.controls_layout = QVBoxLayout(self.card_controls)
         self.controls_layout.setContentsMargins(*self._controls_normal_margins)
         self.controls_layout.setSpacing(8)
@@ -596,7 +599,7 @@ class MainWindow(QMainWindow):
         self.track_list.setObjectName("track_list")
         self.track_list.setMouseTracking(True)
         self.track_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
-        self.track_list.setUniformItemSizes(True)
+        self.track_list.setUniformItemSizes(False)
         self.track_delegate = TrackItemDelegate(self.track_list)
         self.track_list.setItemDelegate(self.track_delegate)
         self.track_list.viewport().installEventFilter(self)
@@ -765,6 +768,7 @@ class MainWindow(QMainWindow):
         self.track_list.clear()
         current_id = self.player.current_track_id
         row_to_select = -1
+        total = len(tracks)
 
         for idx, track in enumerate(tracks):
             text = f"{track.title}  -  {track.artist}"
@@ -774,6 +778,9 @@ class MainWindow(QMainWindow):
             self.track_list.addItem(item)
             if track.id == current_id:
                 row_to_select = idx
+            if total > 600 and idx > 0 and idx % 300 == 0:
+                self.statusBar().showMessage(f"列表加载中：{idx}/{total}", 1500)
+                QCoreApplication.processEvents()
 
         if row_to_select >= 0:
             self.track_list.setCurrentRow(row_to_select)
@@ -854,6 +861,7 @@ class MainWindow(QMainWindow):
         self.lyrics_delegate.set_hover_row(-1)
 
         if entries:
+            self.lyrics_list.show()
             for idx, (_, text) in enumerate(entries):
                 item = QListWidgetItem(text or "♪")
                 item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -865,8 +873,12 @@ class MainWindow(QMainWindow):
 
         lines = [html.unescape(x.strip()) for x in clean.split("\n") if x.strip()]
         if not lines:
-            lines = ["(暂无歌词)"]
+            self.lyrics_list.hide()
+            if self._compact_mode:
+                self.progress_center_label.setText("")
+            return
 
+        self.lyrics_list.show()
         for line in lines:
             item = QListWidgetItem(line)
             item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -1124,9 +1136,10 @@ class MainWindow(QMainWindow):
         track_id = item.data(0x0100)
         if not track_id:
             return
+        display_text = self._track_text_of_item(item)
         active_search = bool(self.search_edit.text().strip())
         self.player.play_track(str(track_id), auto_play=True, manual_select=True, active_request=active_search)
-        self.statusBar().showMessage(f"播放歌曲：{self._track_text_of_item(item)}", 2500)
+        self.statusBar().showMessage(f"播放歌曲：{display_text}", 2500)
 
     def _on_remove_track_clicked(self, track_id: str) -> None:
         playlist_id = self.player.current_playlist_id or "all_songs"
@@ -1517,17 +1530,33 @@ class MainWindow(QMainWindow):
                 self.lyrics_list.viewport().update()
         return super().eventFilter(watched, event)
 
+    def _adjust_volume_from_wheel_delta(self, delta: int) -> None:
+        if delta == 0:
+            return
+        increase = delta > 0
+        self.player.adjust_gain_by_key(increase)
+        self._refresh_volume_ui()
+        self.statusBar().showMessage(f"音量：{self.player.gain_percent()}%", 1200)
+
+    def _is_inside_playback_controls(self, pos: QPoint) -> bool:
+        child = self.childAt(pos)
+        while child is not None and child is not self:
+            if child is self.card_controls:
+                return True
+            child = child.parentWidget()
+        return False
+
     def wheelEvent(self, event) -> None:
         delta = event.angleDelta().y()
         if delta == 0:
             super().wheelEvent(event)
             return
 
-        increase = delta > 0
-        self.player.adjust_gain_by_key(increase)
-        self._refresh_volume_ui()
-        self.statusBar().showMessage(f"音量：{self.player.gain_percent()}%", 1200)
-        event.accept()
+        if self._is_inside_playback_controls(event.position().toPoint()):
+            self._adjust_volume_from_wheel_delta(delta)
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def mousePressEvent(self, event) -> None:
         if (
@@ -1595,6 +1624,14 @@ class MainWindow(QMainWindow):
         self._reposition_sidebar_toggle()
         self._layout_compact_top_bar()
         self._reposition_volume_value_label()
+        self._update_track_item_heights()
+
+    def _update_track_item_heights(self) -> None:
+        for row in range(self.track_list.count()):
+            item = self.track_list.item(row)
+            if item is None:
+                continue
+            item.setSizeHint(QSize(0, self._track_item_height_for_text(item.text() or "")))
 
     def minimumSizeHint(self) -> QSize:
         if self._compact_mode:

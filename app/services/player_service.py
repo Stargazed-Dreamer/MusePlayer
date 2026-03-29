@@ -34,6 +34,7 @@ class PlayerService(QObject):
     playback_rate_changed = Signal(float)
     _LAZY_PLAY_THRESHOLD_SEC = 5.0
     _LAZY_WINDOW_SEC = 6.2
+    _GLOBAL_GAIN_BOOST = 1.35
 
     def __init__(
         self,
@@ -252,7 +253,7 @@ class PlayerService(QObject):
         value = max(0, min(max_value, int(percent)))
         self._gain_percent = value
         try:
-            self._core.set_volume(self._gain_percent / 100.0)
+            self._apply_core_volume()
         except Exception:
             pass
         return self._gain_percent
@@ -264,7 +265,7 @@ class PlayerService(QObject):
         elif cur < 20:
             step = 2
         elif cur < 100:
-            step = 10
+            step = 5
         else:
             step = 20
 
@@ -568,7 +569,7 @@ class PlayerService(QObject):
                 self._lazy_window_base_sec = 0.0
                 self._lazy_elapsed_play_sec = 0.0
                 self._lazy_promoted_to_full = True
-            self._core.set_volume(self._gain_percent / 100.0)
+            self._apply_core_volume()
             self._core.set_playback_rate(self._playback_rate)
             if auto_play:
                 self._core.play(0.0 if self._lazy_window_mode else target_start)
@@ -681,7 +682,7 @@ class PlayerService(QObject):
             return
         source = Path(track.path)
         self._core.load(source, start_sec=max(0.0, target_sec), window_sec=self._LAZY_WINDOW_SEC)
-        self._core.set_volume(self._gain_percent / 100.0)
+        self._apply_core_volume()
         self._core.set_playback_rate(self._playback_rate)
         self._lazy_window_mode = True
         self._lazy_window_base_sec = max(0.0, target_sec)
@@ -711,11 +712,12 @@ class PlayerService(QObject):
         target = max(0.0, float(position))
         try:
             self._core.load(source)
-            self._core.set_volume(self._gain_percent / 100.0)
+            self._apply_core_volume()
             self._core.set_playback_rate(self._playback_rate)
-            self._core.seek(target)
             if keep_playing:
                 self._core.play(target)
+            else:
+                self._core.seek(target)
         except Exception as exc:
             self.error_occurred.emit(f"提升为完整读取失败: {source} -> {exc}")
             return
@@ -725,6 +727,10 @@ class PlayerService(QObject):
         self._lazy_window_base_sec = 0.0
         self._stats_skip_next_delta = True
         self._stats_last_position = target
+
+    def _apply_core_volume(self) -> None:
+        core_gain = (self._gain_percent / 100.0) * self._GLOBAL_GAIN_BOOST
+        self._core.set_volume(core_gain)
 
     def _collect_stats_enabled(self) -> bool:
         if self._stats is None:

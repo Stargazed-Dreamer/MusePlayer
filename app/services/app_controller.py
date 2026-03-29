@@ -181,20 +181,48 @@ class AppController(QObject):
 
     def remove_track_from_playlist(self, playlist_id: str, track_id: str) -> None:
         was_playing = self.player_service.is_playing()
-        removed_current_from_active = (
-            self.player_service.current_playlist_id == playlist_id
-            and self.player_service.current_track_id == track_id
-        )
+        active_playlist = self.player_service.current_playlist_id
+        current_track_id = self.player_service.current_track_id
+        removed_current_from_active = active_playlist == playlist_id and current_track_id == track_id
+
+        next_candidate_id: str | None = None
+        prev_candidate_id: str | None = None
+        if removed_current_from_active:
+            active_tracks = self.library_service.get_playlist_tracks(playlist_id)
+            ordered_ids = [t.id for t in active_tracks]
+            if track_id in ordered_ids:
+                idx = ordered_ids.index(track_id)
+                if idx + 1 < len(ordered_ids):
+                    next_candidate_id = ordered_ids[idx + 1]
+                if idx - 1 >= 0:
+                    prev_candidate_id = ordered_ids[idx - 1]
 
         removed_ids = self.library_service.remove_track_from_playlist(playlist_id, track_id)
         for removed_id in removed_ids:
             self.playback_stats_service.remove_track(removed_id)
         if self.player_service.current_playlist_id == playlist_id:
-            if removed_current_from_active and was_playing:
+            if removed_current_from_active:
                 self.player_service.pause()
             self.player_service.set_playlist(self.player_service.current_playlist_id)
-            if removed_current_from_active and was_playing and self.player_service.current_track_id:
-                self.player_service.play()
+
+            if removed_current_from_active:
+                playlist_track_ids = [t.id for t in self.player_service.playlist_tracks()]
+                selected_candidate = None
+                if next_candidate_id and next_candidate_id in playlist_track_ids:
+                    selected_candidate = next_candidate_id
+                elif prev_candidate_id and prev_candidate_id in playlist_track_ids:
+                    selected_candidate = prev_candidate_id
+
+                if selected_candidate is not None:
+                    self.player_service.play_track(
+                        selected_candidate,
+                        auto_play=was_playing,
+                        start_sec=0.0,
+                        manual_select=False,
+                        active_request=False,
+                    )
+                else:
+                    self.player_service.pause()
         if self.player_service.current_track_id and self.player_service.current_track_id not in self.library_service.tracks:
             self.player_service.pause()
             self.player_service.set_playlist(self.player_service.current_playlist_id)

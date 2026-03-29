@@ -324,10 +324,18 @@ class LibraryService:
 
         plan: list[tuple[Playlist, list[Path]]] = []
         if playlist_id and playlist_id in self.playlists and playlist_id != ALL_SONGS_ID:
-            target_playlist = self.playlists[playlist_id]
-            files = self._scan_audio_files(target, recursive=recursive)
-            if files:
-                plan.append((target_playlist, files))
+            root_playlist = self.playlists[playlist_id]
+            root_files = self._scan_audio_files(target, recursive=False)
+            if root_files:
+                plan.append((root_playlist, root_files))
+            children = [p for p in target.iterdir() if p.is_dir()]
+            children.sort(key=lambda p: p.name.casefold())
+            for child in children:
+                child_files = self._scan_audio_files(child, recursive=False)
+                if not child_files:
+                    continue
+                child_playlist = self._resolve_target_playlist_for_folder_import(child, None)
+                plan.append((child_playlist, child_files))
         else:
             root_files = self._scan_audio_files(target, recursive=False)
             if root_files:
