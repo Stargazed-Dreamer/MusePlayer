@@ -1,0 +1,1 @@
+"""MusePlayer application package."""
