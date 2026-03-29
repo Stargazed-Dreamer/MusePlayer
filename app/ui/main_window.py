@@ -33,6 +33,8 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QSizePolicy,
+    QSpacerItem,
     QSlider,
     QSplitter,
     QStyle,
@@ -449,6 +451,8 @@ class MainWindow(QMainWindow):
         meta_col.setSpacing(6)
         self.title_label = QLabel("未选择歌曲")
         self.title_label.setObjectName("TitleLabel")
+        self.title_label.setWordWrap(True)
+        self.title_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.artist_label = QLabel("歌手")
         self.artist_label.setObjectName("MetaLabel")
         self.album_label = QLabel("专辑")
@@ -456,6 +460,9 @@ class MainWindow(QMainWindow):
         self.path_label = QLabel("")
         self.path_label.setObjectName("CaptionLabel")
         self.path_label.setWordWrap(True)
+        self.path_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._meta_top_spacer = QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        self._meta_bottom_spacer = QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
         self.lyrics_list = LyricsListWidget()
         self.lyrics_list.setObjectName("lyrics_list")
@@ -468,11 +475,13 @@ class MainWindow(QMainWindow):
         self.lyrics_list.setItemDelegate(self.lyrics_delegate)
         self.lyrics_list.viewport().installEventFilter(self)
 
+        meta_col.addItem(self._meta_top_spacer)
         meta_col.addWidget(self.title_label)
         meta_col.addWidget(self.artist_label)
         meta_col.addWidget(self.album_label)
         meta_col.addWidget(self.path_label)
         meta_col.addWidget(self.lyrics_list, 1)
+        meta_col.addItem(self._meta_bottom_spacer)
         now_layout.addLayout(meta_col, 1)
 
         left_col.addWidget(self.card_now, 1)
@@ -603,6 +612,12 @@ class MainWindow(QMainWindow):
         self.track_delegate = TrackItemDelegate(self.track_list)
         self.track_list.setItemDelegate(self.track_delegate)
         self.track_list.viewport().installEventFilter(self)
+        self.locate_current_btn = self._new_icon_button("LocateCurrentButton")
+        self.locate_current_btn.setParent(self.track_list.viewport())
+        self.locate_current_btn.setIcon(_make_crosshair_icon())
+        self.locate_current_btn.setToolTip("定位到当前播放歌曲")
+        self.locate_current_btn.clicked.connect(self._locate_current_track_in_list)
+        self.locate_current_btn.hide()
 
         side_layout.addWidget(side_title)
         side_layout.addWidget(self.playlist_combo)
@@ -697,6 +712,7 @@ class MainWindow(QMainWindow):
         self.playlist_combo.currentIndexChanged.connect(self._on_playlist_combo_changed)
         self.search_edit.textChanged.connect(lambda _: self._reload_track_list())
         self.track_list.itemDoubleClicked.connect(self._on_track_double_clicked)
+        self.track_list.verticalScrollBar().valueChanged.connect(lambda _: self._update_locate_current_button())
 
         self.player.track_changed.connect(self._refresh_current_track_ui)
         self.player.progress_changed.connect(self._on_progress_changed)
@@ -784,7 +800,12 @@ class MainWindow(QMainWindow):
 
         if row_to_select >= 0:
             self.track_list.setCurrentRow(row_to_select)
+            current_item = self.track_list.item(row_to_select)
+            if current_item is not None:
+                self.track_list.scrollToItem(current_item, QListWidget.ScrollHint.PositionAtCenter)
         self.track_list.setUpdatesEnabled(True)
+        self._position_locate_current_button()
+        self._update_locate_current_button()
 
     def _track_item_height_for_text(self, text: str) -> int:
         fm = self.track_list.fontMetrics()
@@ -807,6 +828,7 @@ class MainWindow(QMainWindow):
             self.progress_center_label.setText("♪" if self._compact_mode else "")
             self._set_cover(None)
             self._load_lyrics("")
+            self._refresh_now_card_layout()
             return
 
         self._current_track_title = track.title or "未知标题"
@@ -821,6 +843,7 @@ class MainWindow(QMainWindow):
         lyrics = self.controller.get_current_lyrics()
         self._load_lyrics(lyrics)
         self._set_cover(self.controller.get_current_cover())
+        self._refresh_now_card_layout()
 
         self._reload_track_list()
         self.statusBar().showMessage(f"播放歌曲：{self._current_track_title}", 3000)
@@ -900,6 +923,31 @@ class MainWindow(QMainWindow):
                 fallback = duration if duration > start_sec else start_sec + 3.0
                 end_times.append(fallback)
         return end_times
+
+    def _refresh_now_card_layout(self) -> None:
+        has_cover = self.cover_label.isVisible()
+        has_lyrics = self.lyrics_list.isVisible() and self.lyrics_list.count() > 0
+        compact_center = not has_cover and not has_lyrics
+
+        if compact_center:
+            self.path_label.hide()
+            self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.artist_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.album_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._meta_top_spacer.changeSize(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
+            self._meta_bottom_spacer.changeSize(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
+        else:
+            self.path_label.show()
+            self.title_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.artist_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.album_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self._meta_top_spacer.changeSize(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+            self._meta_bottom_spacer.changeSize(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+
+        layout = self.card_now.layout()
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
 
     def _on_progress_pressed(self) -> None:
         self._dragging_progress = True
@@ -1133,10 +1181,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"当前歌单：{self.playlist_combo.currentText()}", 2500)
 
     def _on_track_double_clicked(self, item: QListWidgetItem) -> None:
-        track_id = item.data(0x0100)
+        try:
+            track_id = item.data(0x0100)
+            display_text = self._track_text_of_item(item)
+        except RuntimeError:
+            return
         if not track_id:
             return
-        display_text = self._track_text_of_item(item)
         active_search = bool(self.search_edit.text().strip())
         self.player.play_track(str(track_id), auto_play=True, manual_select=True, active_request=active_search)
         self.statusBar().showMessage(f"播放歌曲：{display_text}", 2500)
@@ -1625,6 +1676,8 @@ class MainWindow(QMainWindow):
         self._layout_compact_top_bar()
         self._reposition_volume_value_label()
         self._update_track_item_heights()
+        self._position_locate_current_button()
+        self._update_locate_current_button()
 
     def _update_track_item_heights(self) -> None:
         for row in range(self.track_list.count()):
@@ -1632,6 +1685,55 @@ class MainWindow(QMainWindow):
             if item is None:
                 continue
             item.setSizeHint(QSize(0, self._track_item_height_for_text(item.text() or "")))
+
+    def _position_locate_current_button(self) -> None:
+        if not hasattr(self, "locate_current_btn"):
+            return
+        vp = self.track_list.viewport()
+        x = max(2, vp.width() - self.locate_current_btn.width() - 4)
+        y = max(2, vp.height() - self.locate_current_btn.height() - 4)
+        self.locate_current_btn.move(x, y)
+        self.locate_current_btn.raise_()
+
+    def _find_current_track_row(self) -> int:
+        current_id = self.player.current_track_id
+        if not current_id:
+            return -1
+        for row in range(self.track_list.count()):
+            item = self.track_list.item(row)
+            if item is not None and item.data(0x0100) == current_id:
+                return row
+        return -1
+
+    def _is_track_row_visible(self, row: int) -> bool:
+        if row < 0:
+            return False
+        item = self.track_list.item(row)
+        if item is None:
+            return False
+        rect = self.track_list.visualItemRect(item)
+        if not rect.isValid():
+            return False
+        vp = self.track_list.viewport().rect()
+        return rect.top() >= vp.top() and rect.bottom() <= vp.bottom()
+
+    def _update_locate_current_button(self) -> None:
+        if not hasattr(self, "locate_current_btn"):
+            return
+        row = self._find_current_track_row()
+        should_show = row >= 0 and not self._is_track_row_visible(row)
+        self.locate_current_btn.setVisible(bool(should_show))
+        self._position_locate_current_button()
+
+    def _locate_current_track_in_list(self) -> None:
+        row = self._find_current_track_row()
+        if row < 0:
+            return
+        self.track_list.setCurrentRow(row)
+        item = self.track_list.item(row)
+        if item is not None:
+            self.track_list.scrollToItem(item, QListWidget.ScrollHint.PositionAtCenter)
+        self._update_locate_current_button()
 
     def minimumSizeHint(self) -> QSize:
         if self._compact_mode:
@@ -1746,6 +1848,23 @@ def _make_plus_minus_icon(is_plus: bool) -> QIcon:
     if is_plus:
         painter.drawLine(12, 6, 12, 18)
 
+    painter.end()
+    return QIcon(pix)
+
+
+def _make_crosshair_icon() -> QIcon:
+    pix = QPixmap(24, 24)
+    pix.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pix)
+    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor("#1e5899"), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.drawEllipse(QRectF(6, 6, 12, 12))
+    painter.drawLine(12, 4, 12, 8)
+    painter.drawLine(12, 16, 12, 20)
+    painter.drawLine(4, 12, 8, 12)
+    painter.drawLine(16, 12, 20, 12)
     painter.end()
     return QIcon(pix)
 

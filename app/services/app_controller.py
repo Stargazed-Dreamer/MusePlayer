@@ -48,6 +48,8 @@ class AppController(QObject):
             self.library_service,
             playback_stats_service=self.playback_stats_service,
             collect_stats_getter=lambda: bool(self.settings.collect_playback_data),
+            gain_boost_getter=lambda: float(self.settings.global_gain_boost),
+            read_strategy_getter=lambda: str(self.settings.read_strategy),
         )
         self.player_service.set_playlist_loop_mode_enabled(self.settings.enable_playlist_loop_mode)
         self.player_service.error_occurred.connect(self.error_occurred)
@@ -58,9 +60,8 @@ class AppController(QObject):
         self.control_server.listening_changed.connect(self.runtime_status_changed)
 
         self._session_save_timer = QTimer(self)
-        self._session_save_timer.setInterval(4000)
         self._session_save_timer.timeout.connect(self.save_session)
-        self._session_save_timer.start()
+        self._apply_save_timer_settings()
 
         if self.settings.auto_restore_session:
             self.player_service.restore_session(self.session_store.load())
@@ -86,6 +87,15 @@ class AppController(QObject):
         self.session_store.save(state)
         self.playback_stats_service.save_if_dirty()
 
+    def _apply_save_timer_settings(self) -> None:
+        enabled = bool(self.settings.timed_save_enabled)
+        minutes = max(1, min(1440, int(self.settings.timed_save_minutes)))
+        if enabled:
+            self._session_save_timer.setInterval(minutes * 60 * 1000)
+            self._session_save_timer.start()
+        else:
+            self._session_save_timer.stop()
+
     def start_runtime_server(self) -> bool:
         if not self.settings.control_interface_enabled:
             self.control_server.stop()
@@ -110,6 +120,8 @@ class AppController(QObject):
         self.settings = settings
         self.settings_store.save(settings)
         self.player_service.set_playlist_loop_mode_enabled(self.settings.enable_playlist_loop_mode)
+        self.player_service.refresh_output_gain()
+        self._apply_save_timer_settings()
         self.settings_changed.emit(settings)
 
         self.log_file_path = configure_logging(self.data_dir, self.settings.logging_enabled)

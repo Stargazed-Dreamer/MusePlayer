@@ -41,12 +41,16 @@ class PlayerService(QObject):
         library_service: LibraryService,
         playback_stats_service: PlaybackStatsService | None = None,
         collect_stats_getter: Callable[[], bool] | None = None,
+        gain_boost_getter: Callable[[], float] | None = None,
+        read_strategy_getter: Callable[[], str] | None = None,
         parent: QObject | None = None,
     ):
         super().__init__(parent)
         self.library = library_service
         self._stats = playback_stats_service
         self._collect_stats_getter = collect_stats_getter or (lambda: True)
+        self._gain_boost_getter = gain_boost_getter or (lambda: self._GLOBAL_GAIN_BOOST)
+        self._read_strategy_getter = read_strategy_getter or (lambda: "window")
         self._core = PyAVPlayerCore()
 
         self._mode = PlayMode.SINGLE_LOOP
@@ -283,6 +287,12 @@ class PlayerService(QObject):
 
     def playback_rate(self) -> float:
         return float(self._playback_rate)
+
+    def refresh_output_gain(self) -> None:
+        try:
+            self._apply_core_volume()
+        except Exception:
+            pass
 
     def is_playing(self) -> bool:
         try:
@@ -556,8 +566,9 @@ class PlayerService(QObject):
             return False
         source = Path(track.path)
         target_start = max(0.0, float(start_sec))
+        strategy = self._read_strategy()
         try:
-            if auto_play:
+            if auto_play and strategy == "window":
                 self._core.load(source, start_sec=target_start, window_sec=self._LAZY_WINDOW_SEC)
                 self._lazy_window_mode = True
                 self._lazy_window_base_sec = target_start
@@ -694,43 +705,27 @@ class PlayerService(QObject):
             self._expecting_natural_end = False
 
     def _maybe_promote_lazy_full_decode(self, *, position: float, playing: bool) -> None:
-        if not self._lazy_window_mode or self._lazy_promoted_to_full:
-            return
-        if not playing:
-            return
-
-        self._lazy_elapsed_play_sec += self._timer.interval() / 1000.0
-        if self._lazy_elapsed_play_sec < self._LAZY_PLAY_THRESHOLD_SEC:
-            return
-
-        track = self.current_track()
-        if track is None:
-            return
-        source = Path(track.path)
-
-        keep_playing = self.is_playing()
-        target = max(0.0, float(position))
-        try:
-            self._core.load(source)
-            self._apply_core_volume()
-            self._core.set_playback_rate(self._playback_rate)
-            if keep_playing:
-                self._core.play(target)
-            else:
-                self._core.seek(target)
-        except Exception as exc:
-            self.error_occurred.emit(f"提升为完整读取失败: {source} -> {exc}")
-            return
-
-        self._lazy_promoted_to_full = True
-        self._lazy_window_mode = False
-        self._lazy_window_base_sec = 0.0
-        self._stats_skip_next_delta = True
-        self._stats_last_position = target
+        return
 
     def _apply_core_volume(self) -> None:
-        core_gain = (self._gain_percent / 100.0) * self._GLOBAL_GAIN_BOOST
+        core_gain = (self._gain_percent / 100.0) * self._effective_gain_boost()
         self._core.set_volume(core_gain)
+
+    def _effective_gain_boost(self) -> float:
+        try:
+            value = float(self._gain_boost_getter())
+        except Exception:
+            value = self._GLOBAL_GAIN_BOOST
+        return max(0.5, min(5.0, value))
+
+    def _read_strategy(self) -> str:
+        try:
+            mode = str(self._read_strategy_getter() or "window").strip().lower()
+        except Exception:
+            mode = "window"
+        if mode not in {"window", "full"}:
+            mode = "window"
+        return mode
 
     def _collect_stats_enabled(self) -> bool:
         if self._stats is None:

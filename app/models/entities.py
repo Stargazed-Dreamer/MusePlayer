@@ -99,6 +99,10 @@ class Settings:
     logging_enabled: bool = False
     enable_playlist_loop_mode: bool = False
     collect_playback_data: bool = True
+    global_gain_boost: float = 1.35
+    read_strategy: str = "window"
+    timed_save_enabled: bool = False
+    timed_save_minutes: int = 5
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -109,10 +113,17 @@ class Settings:
             "logging_enabled": bool(self.logging_enabled),
             "enable_playlist_loop_mode": bool(self.enable_playlist_loop_mode),
             "collect_playback_data": bool(self.collect_playback_data),
+            "global_gain_boost": float(self.global_gain_boost),
+            "read_strategy": self.read_strategy,
+            "timed_save_enabled": bool(self.timed_save_enabled),
+            "timed_save_minutes": int(self.timed_save_minutes),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Settings":
+        read_strategy = str(data.get("read_strategy", "window")).strip().lower()
+        if read_strategy not in {"window", "full"}:
+            read_strategy = "window"
         return cls(
             control_host=str(data.get("control_host", "127.0.0.1")),
             control_port=max(1, min(65535, int(data.get("control_port", 43121)))),
@@ -121,6 +132,10 @@ class Settings:
             logging_enabled=bool(data.get("logging_enabled", False)),
             enable_playlist_loop_mode=bool(data.get("enable_playlist_loop_mode", False)),
             collect_playback_data=bool(data.get("collect_playback_data", True)),
+            global_gain_boost=max(0.5, min(5.0, float(data.get("global_gain_boost", 1.35)))),
+            read_strategy=read_strategy,
+            timed_save_enabled=bool(data.get("timed_save_enabled", False)),
+            timed_save_minutes=max(1, min(1440, int(data.get("timed_save_minutes", 5)))),
         )
 
 

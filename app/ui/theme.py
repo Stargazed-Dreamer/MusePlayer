@@ -259,6 +259,21 @@ QToolButton#TrackDeleteButton:hover {
     background: transparent;
 }
 
+QToolButton#LocateCurrentButton {
+    min-width: 20px;
+    min-height: 20px;
+    max-width: 20px;
+    max-height: 20px;
+    border: 1px solid #9dbce0;
+    border-radius: 10px;
+    background: #ffffff;
+}
+
+QToolButton#LocateCurrentButton:hover {
+    background: #eff5fb;
+    border-color: #7fa7d4;
+}
+
 QLabel#TrackTitleLabel {
     color: #132033;
     background: transparent;
