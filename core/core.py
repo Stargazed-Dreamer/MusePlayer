@@ -81,6 +81,48 @@ class PyAVPlayerCore:
             self._reopen_stream()
             return self.meta()
 
+    def decode_window(self, source: Path, *, start_sec: float = 0.0, window_sec: float | None = None) -> tuple[np.ndarray, int, int]:
+        source = Path(source).resolve()
+        if not source.exists():
+            raise FileNotFoundError(source)
+        return self._decode_to_pcm(
+            source,
+            start_sec=max(0.0, float(start_sec)),
+            window_sec=window_sec,
+        )
+
+    def load_decoded_pcm(
+        self,
+        source: Path,
+        pcm: np.ndarray,
+        sample_rate: int,
+        channels: int,
+        *,
+        reopen_stream: bool = True,
+    ) -> AudioMeta:
+        source = Path(source).resolve()
+        if not source.exists():
+            raise FileNotFoundError(source)
+        if pcm.ndim != 2:
+            raise PlayerCoreError("Decoded PCM must be 2D array")
+        with self._lock:
+            self._source_path = source
+            self._buffer = np.ascontiguousarray(pcm.astype(np.float32, copy=False))
+            self._sample_rate = max(8_000, int(sample_rate))
+            self._channels = max(1, int(channels))
+            self._frame_cursor = 0
+            self._segment_end_frame = None
+            self._playing = False
+            if reopen_stream:
+                self._reopen_stream()
+            return AudioMeta(
+                source_path=self._source_path,
+                duration_sec=(self._buffer.shape[0] / self._sample_rate) if self._sample_rate > 0 else 0.0,
+                sample_rate=self._sample_rate,
+                channels=self._channels,
+                frame_count=self._buffer.shape[0],
+            )
+
     def unload(self) -> None:
         with self._lock:
             self._playing = False

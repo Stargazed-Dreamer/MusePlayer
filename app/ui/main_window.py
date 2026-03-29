@@ -364,6 +364,10 @@ class MainWindow(QMainWindow):
         self._sidebar_collapsed = False
         self._sidebar_was_collapsed_before_compact = False
         self._sidebar_last_width = 408
+        self._sidebar_min_width = 180
+        self._sidebar_max_width = 720
+        self._last_window_width = 0
+        self._resize_adjusting_splitter = False
         self._width_before_compact = 0
         self._height_before_compact = 0
         self._min_width_before_compact = self.minimumWidth()
@@ -399,6 +403,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("MusePlayer")
         self.resize(1280, 780)
         self.setAcceptDrops(True)
+        self._last_window_width = self.width()
 
         self._build_ui()
         self._build_menu()
@@ -420,7 +425,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
 
         main_layout = QHBoxLayout(root)
-        main_layout.setContentsMargins(12, 12, 12, 8)
+        main_layout.setContentsMargins(8, 8, 8, 2)
         main_layout.setSpacing(0)
 
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal, root)
@@ -488,8 +493,8 @@ class MainWindow(QMainWindow):
 
         self.card_controls = QFrame(left_container)
         self.card_controls.setObjectName("Card")
-        self._controls_normal_margins = (14, 8, 14, 4)
-        self._controls_compact_margins = (12, 6, 12, 4)
+        self._controls_normal_margins = (14, 8, 14, 10)
+        self._controls_compact_margins = (12, 6, 12, 8)
         self.controls_layout = QVBoxLayout(self.card_controls)
         self.controls_layout.setContentsMargins(*self._controls_normal_margins)
         self.controls_layout.setSpacing(8)
@@ -625,8 +630,8 @@ class MainWindow(QMainWindow):
         side_layout.addWidget(self.track_list, 1)
 
         self.main_splitter.setSizes([980, self._sidebar_last_width])
-        self.main_splitter.setStretchFactor(0, 1)
-        self.main_splitter.setStretchFactor(1, 0)
+        self.main_splitter.setStretchFactor(0, 0)
+        self.main_splitter.setStretchFactor(1, 1)
 
         self.sidebar_toggle_btn = QToolButton(root)
         self.sidebar_toggle_btn.setObjectName("SidebarToggle")
@@ -807,6 +812,17 @@ class MainWindow(QMainWindow):
         self._position_locate_current_button()
         self._update_locate_current_button()
 
+    def _sync_current_track_row(self, *, center: bool) -> None:
+        row = self._find_current_track_row()
+        if row < 0:
+            return
+        self.track_list.setCurrentRow(row)
+        item = self.track_list.item(row)
+        if item is None:
+            return
+        hint = QListWidget.ScrollHint.PositionAtCenter if center else QListWidget.ScrollHint.EnsureVisible
+        self.track_list.scrollToItem(item, hint)
+
     def _track_item_height_for_text(self, text: str) -> int:
         fm = self.track_list.fontMetrics()
         width = max(80, self.track_list.viewport().width() - TrackItemDelegate.REMOVE_WIDTH - 12)
@@ -845,7 +861,8 @@ class MainWindow(QMainWindow):
         self._set_cover(self.controller.get_current_cover())
         self._refresh_now_card_layout()
 
-        self._reload_track_list()
+        self._sync_current_track_row(center=True)
+        self._update_locate_current_button()
         self.statusBar().showMessage(f"播放歌曲：{self._current_track_title}", 3000)
 
     def _set_cover(self, cover_data: bytes | None) -> None:
@@ -1297,7 +1314,7 @@ class MainWindow(QMainWindow):
 
             sizes = self.main_splitter.sizes()
             if len(sizes) == 2:
-                self._sidebar_last_width = max(180, sizes[1])
+                self._sidebar_last_width = max(self._sidebar_min_width, sizes[1])
                 self.main_splitter.setSizes([sizes[0] + sizes[1], 0])
 
             self.setMinimumSize(0, 0)
@@ -1400,12 +1417,14 @@ class MainWindow(QMainWindow):
             self.main_splitter.setSizes([total, 0])
             self._sidebar_collapsed = True
         else:
-            target = min(max(180, self._sidebar_last_width), max(180, total - 360))
+            target = self._clamp_sidebar_width(total, self._sidebar_last_width)
             self.main_splitter.setSizes([total - target, target])
             self._sidebar_collapsed = False
 
         self._update_sidebar_toggle_icon()
         self._reposition_sidebar_toggle()
+        self._sync_current_track_row(center=True)
+        self._update_locate_current_button()
         self._ensure_window_inside_screen()
         self.statusBar().showMessage("已退出简洁模式", 3000)
 
@@ -1497,11 +1516,11 @@ class MainWindow(QMainWindow):
         total = max(1, sizes[0] + sizes[1])
 
         if not self._sidebar_collapsed and sizes[1] > 0:
-            self._sidebar_last_width = max(180, sizes[1])
+            self._sidebar_last_width = max(self._sidebar_min_width, sizes[1])
             self.main_splitter.setSizes([total, 0])
             self._sidebar_collapsed = True
         else:
-            target = min(max(180, self._sidebar_last_width), max(180, total - 360))
+            target = self._clamp_sidebar_width(total, self._sidebar_last_width)
             self.main_splitter.setSizes([total - target, target])
             self._sidebar_collapsed = False
 
@@ -1516,7 +1535,7 @@ class MainWindow(QMainWindow):
                 self._sidebar_collapsed = True
             else:
                 self._sidebar_collapsed = False
-                self._sidebar_last_width = max(180, sizes[1])
+                self._sidebar_last_width = max(self._sidebar_min_width, sizes[1])
         self._update_sidebar_toggle_icon()
         self._reposition_sidebar_toggle()
 
@@ -1547,6 +1566,33 @@ class MainWindow(QMainWindow):
         y = geo.y() + (geo.height() - self.sidebar_toggle_btn.height()) // 2
         self.sidebar_toggle_btn.move(x, y)
         self.sidebar_toggle_btn.raise_()
+
+    def _clamp_sidebar_width(self, total_width: int, preferred: int) -> int:
+        total = max(1, int(total_width))
+        hard_max = max(self._sidebar_min_width, total - 360)
+        upper = min(self._sidebar_max_width, hard_max)
+        return max(self._sidebar_min_width, min(int(preferred), upper))
+
+    def _prefer_resize_to_sidebar(
+        self,
+        delta_width: int,
+        *,
+        old_sidebar_width: int | None = None,
+        total_width: int | None = None,
+    ) -> None:
+        if delta_width == 0 or self._compact_mode or self._sidebar_collapsed:
+            return
+        sizes = self.main_splitter.sizes()
+        if len(sizes) != 2:
+            return
+        total = max(1, int(total_width) if total_width is not None else sizes[0] + sizes[1])
+        base_side = self._sidebar_last_width if old_sidebar_width is None else int(old_sidebar_width)
+        previous_side = max(self._sidebar_min_width, base_side)
+        target_side = self._clamp_sidebar_width(total, previous_side + int(delta_width))
+        if target_side == sizes[1]:
+            return
+        self.main_splitter.setSizes([max(0, total - target_side), target_side])
+        self._sidebar_last_width = target_side
 
     def eventFilter(self, watched, event):
         track_view = self.track_list.viewport() if hasattr(self, "track_list") else None
@@ -1671,13 +1717,33 @@ class MainWindow(QMainWindow):
         return False
 
     def resizeEvent(self, event) -> None:
+        old_sizes = self.main_splitter.sizes() if hasattr(self, "main_splitter") else []
+        old_total = old_sizes[0] + old_sizes[1] if len(old_sizes) == 2 else 0
+        old_sidebar_width = old_sizes[1] if len(old_sizes) == 2 else None
         super().resizeEvent(event)
+        new_sizes = self.main_splitter.sizes() if hasattr(self, "main_splitter") else []
+        new_total = new_sizes[0] + new_sizes[1] if len(new_sizes) == 2 else 0
+        if old_total > 0 and new_total > 0:
+            delta_width = int(new_total - old_total)
+        else:
+            delta_width = int(event.size().width() - event.oldSize().width())
+        if not self._resize_adjusting_splitter:
+            self._resize_adjusting_splitter = True
+            try:
+                self._prefer_resize_to_sidebar(
+                    delta_width,
+                    old_sidebar_width=old_sidebar_width,
+                    total_width=new_total if new_total > 0 else None,
+                )
+            finally:
+                self._resize_adjusting_splitter = False
         self._reposition_sidebar_toggle()
         self._layout_compact_top_bar()
         self._reposition_volume_value_label()
         self._update_track_item_heights()
         self._position_locate_current_button()
         self._update_locate_current_button()
+        self._last_window_width = self.width()
 
     def _update_track_item_heights(self) -> None:
         for row in range(self.track_list.count()):
