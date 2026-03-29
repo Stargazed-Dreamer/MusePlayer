@@ -42,11 +42,10 @@ QMenu {
     background: #ffffff;
     border: 1px solid #dbe5f2;
     padding: 6px;
-    border-radius: 10px;
 }
 
 QMenu::item {
-    padding: 8px 14px;
+    padding: 7px 14px;
     border-radius: 8px;
     background: transparent;
     color: #132033;
