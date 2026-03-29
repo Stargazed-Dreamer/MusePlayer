@@ -6,7 +6,7 @@ import subprocess
 from bisect import bisect_right
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt, QRectF, QSize, Signal, QPoint
+from PySide6.QtCore import QCoreApplication, QEvent, QTimer, Qt, QRect, QRectF, QSize, Signal, QPoint
 from PySide6.QtGui import (
     QCloseEvent,
     QColor,
@@ -22,6 +22,7 @@ from PySide6.QtGui import (
     QShortcut,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -36,6 +37,8 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStyle,
     QStyleOptionSlider,
+    QStyleOptionViewItem,
+    QStyledItemDelegate,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -121,9 +124,10 @@ class LyricLineWidget(QWidget):
 
 
 class ClickJumpSlider(QSlider):
-    def __init__(self, orientation: Qt.Orientation, parent=None):
+    def __init__(self, orientation: Qt.Orientation, parent=None, *, volume_wheel: bool = False):
         super().__init__(orientation, parent)
         self._mouse_pressed = False
+        self._volume_wheel = bool(volume_wheel)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -178,6 +182,113 @@ class ClickJumpSlider(QSlider):
         )
         self.setValue(value)
         self.sliderMoved.emit(value)
+
+    def wheelEvent(self, event):
+        if self._volume_wheel:
+            win = self.window()
+            if hasattr(win, "_adjust_volume_from_wheel_delta"):
+                win._adjust_volume_from_wheel_delta(event.angleDelta().y())
+                event.accept()
+                return
+        super().wheelEvent(event)
+
+
+class LyricsItemDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._hover_row = -1
+        self._start_times: list[float] = []
+        self._end_times: list[float] = []
+
+    def set_times(self, starts: list[float], ends: list[float]) -> None:
+        self._start_times = list(starts)
+        self._end_times = list(ends)
+
+    def set_hover_row(self, row: int) -> None:
+        self._hover_row = int(row)
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        style = opt.widget.style() if opt.widget is not None else QApplication.style()
+        style.drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, opt, painter, opt.widget)
+
+        painter.save()
+        row = index.row()
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "♪")
+        rect = opt.rect.adjusted(4, 0, -4, 0)
+        is_hover = row == self._hover_row and row < len(self._start_times) and row < len(self._end_times)
+
+        if is_hover:
+            time_w = max(36, opt.fontMetrics.horizontalAdvance("00:00") + 6)
+            left_rect = QRect(rect.left(), rect.top(), time_w, rect.height())
+            right_rect = QRect(rect.right() - time_w + 1, rect.top(), time_w, rect.height())
+            text_rect = QRect(left_rect.right() + 4, rect.top(), max(1, rect.width() - time_w * 2 - 8), rect.height())
+
+            painter.setPen(QColor("#5f7892"))
+            painter.drawText(left_rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), _format_lrc_time(self._start_times[row]))
+            painter.drawText(right_rect, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), _format_lrc_time(self._end_times[row]))
+        else:
+            text_rect = rect
+
+        text_pen = opt.palette.color(opt.palette.ColorRole.Text)
+        if opt.state & QStyle.StateFlag.State_Selected:
+            text_pen = opt.palette.color(opt.palette.ColorRole.HighlightedText)
+        painter.setPen(text_pen)
+        painter.drawText(text_rect, int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), text)
+        painter.restore()
+
+    def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        h = max(24, option.fontMetrics.height() + 8)
+        w = max(160, option.fontMetrics.horizontalAdvance(text) + 20)
+        return QSize(w, h)
+
+
+class TrackItemDelegate(QStyledItemDelegate):
+    REMOVE_WIDTH = 14
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._hover_row = -1
+
+    def set_hover_row(self, row: int) -> None:
+        self._hover_row = int(row)
+
+    @classmethod
+    def remove_rect(cls, row_rect: QRect) -> QRect:
+        return QRect(row_rect.left() + 2, row_rect.top() + max(0, (row_rect.height() - 12) // 2), cls.REMOVE_WIDTH, 12)
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        style = opt.widget.style() if opt.widget is not None else QApplication.style()
+        style.drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, opt, painter, opt.widget)
+
+        painter.save()
+        row = index.row()
+        rect = opt.rect
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+
+        text_rect = rect.adjusted(self.REMOVE_WIDTH + 6, 0, -6, 0)
+        if row == self._hover_row:
+            rm_rect = self.remove_rect(rect)
+            painter.setPen(QColor("#c62f2f"))
+            painter.drawText(rm_rect, int(Qt.AlignmentFlag.AlignCenter), "×")
+
+        text_pen = opt.palette.color(opt.palette.ColorRole.Text)
+        if opt.state & QStyle.StateFlag.State_Selected:
+            text_pen = opt.palette.color(opt.palette.ColorRole.HighlightedText)
+        painter.setPen(text_pen)
+        elided = opt.fontMetrics.elidedText(text, Qt.TextElideMode.ElideRight, max(10, text_rect.width()))
+        painter.drawText(text_rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), elided)
+        painter.restore()
+
+    def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        h = max(24, option.fontMetrics.height() + 8)
+        w = max(180, option.fontMetrics.horizontalAdvance(text) + self.REMOVE_WIDTH + 20)
+        return QSize(w, h)
 
 
 class TrackListItemWidget(QWidget):
@@ -349,6 +460,10 @@ class MainWindow(QMainWindow):
         self.lyrics_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.lyrics_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.lyrics_list.setSpacing(2)
+        self.lyrics_list.setMouseTracking(True)
+        self.lyrics_delegate = LyricsItemDelegate(self.lyrics_list)
+        self.lyrics_list.setItemDelegate(self.lyrics_delegate)
+        self.lyrics_list.viewport().installEventFilter(self)
 
         meta_col.addWidget(self.title_label)
         meta_col.addWidget(self.artist_label)
@@ -377,7 +492,7 @@ class MainWindow(QMainWindow):
         compact_info_layout.addWidget(self.compact_song_label)
         self.compact_info_widget.hide()
 
-        self.progress_slider = ClickJumpSlider(Qt.Orientation.Horizontal)
+        self.progress_slider = ClickJumpSlider(Qt.Orientation.Horizontal, volume_wheel=True)
         self.progress_slider.setRange(0, 1000)
         self.progress_slider.sliderPressed.connect(self._on_progress_pressed)
         self.progress_slider.sliderReleased.connect(self._on_progress_released)
@@ -437,7 +552,7 @@ class MainWindow(QMainWindow):
         self.volume_value_label.setFixedHeight(18)
         self.volume_value_label.setFixedWidth(self.volume_value_label.fontMetrics().horizontalAdvance("500%") + 8)
 
-        self.volume_slider = ClickJumpSlider(Qt.Orientation.Horizontal)
+        self.volume_slider = ClickJumpSlider(Qt.Orientation.Horizontal, volume_wheel=True)
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(self.player.slider_gain_percent())
         self.volume_slider.setMinimumWidth(150)
@@ -479,6 +594,12 @@ class MainWindow(QMainWindow):
         self.search_edit.setPlaceholderText("搜索当前歌单（标题 / 歌手 / 专辑）")
         self.track_list = QListWidget()
         self.track_list.setObjectName("track_list")
+        self.track_list.setMouseTracking(True)
+        self.track_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.track_list.setUniformItemSizes(True)
+        self.track_delegate = TrackItemDelegate(self.track_list)
+        self.track_list.setItemDelegate(self.track_delegate)
+        self.track_list.viewport().installEventFilter(self)
 
         side_layout.addWidget(side_title)
         side_layout.addWidget(self.playlist_combo)
@@ -495,7 +616,7 @@ class MainWindow(QMainWindow):
         self.sidebar_toggle_btn.clicked.connect(self._toggle_sidebar)
         self._update_sidebar_toggle_icon()
 
-        self.compact_top_bar = QWidget(self)
+        self.compact_top_bar = QFrame(self.card_controls)
         self.compact_top_bar.setObjectName("CompactTopBar")
         compact_bar_layout = QHBoxLayout(self.compact_top_bar)
         compact_bar_layout.setContentsMargins(6, 3, 6, 3)
@@ -523,6 +644,7 @@ class MainWindow(QMainWindow):
         compact_bar_layout.addWidget(self.pin_btn)
         compact_bar_layout.addWidget(self.compact_close_btn)
         self.compact_top_bar.setMinimumHeight(30)
+        self.controls_layout.insertWidget(0, self.compact_top_bar)
         self.compact_top_bar.hide()
         self._refresh_compact_top_buttons()
 
@@ -638,24 +760,34 @@ class MainWindow(QMainWindow):
         keyword = self.search_edit.text().strip()
         tracks = self.player.search_playlist_tracks(keyword)
 
+        self.track_delegate.set_hover_row(-1)
+        self.track_list.setUpdatesEnabled(False)
         self.track_list.clear()
         current_id = self.player.current_track_id
         row_to_select = -1
 
         for idx, track in enumerate(tracks):
             text = f"{track.title}  -  {track.artist}"
-            item = QListWidgetItem("")
+            item = QListWidgetItem(text)
             item.setData(0x0100, track.id)
+            item.setSizeHint(QSize(0, self._track_item_height_for_text(text)))
             self.track_list.addItem(item)
-            widget = TrackListItemWidget(track.id, text, self.track_list)
-            widget.remove_clicked.connect(self._on_remove_track_clicked)
-            item.setSizeHint(widget.sizeHint())
-            self.track_list.setItemWidget(item, widget)
             if track.id == current_id:
                 row_to_select = idx
 
         if row_to_select >= 0:
             self.track_list.setCurrentRow(row_to_select)
+        self.track_list.setUpdatesEnabled(True)
+
+    def _track_item_height_for_text(self, text: str) -> int:
+        fm = self.track_list.fontMetrics()
+        width = max(80, self.track_list.viewport().width() - TrackItemDelegate.REMOVE_WIDTH - 12)
+        bounds = fm.boundingRect(
+            QRect(0, 0, width, 2000),
+            int(Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere),
+            text,
+        )
+        return max(24, bounds.height() + 8)
 
     def _refresh_current_track_ui(self, track: Track | None) -> None:
         if track is None:
@@ -718,20 +850,16 @@ class MainWindow(QMainWindow):
         self._lyrics_auto_adjusting = False
 
         self.lyrics_list.clear()
+        self.lyrics_delegate.set_times(self._lyrics_times, self._lyrics_end_times)
+        self.lyrics_delegate.set_hover_row(-1)
 
         if entries:
             for idx, (_, text) in enumerate(entries):
-                item = QListWidgetItem("")
+                item = QListWidgetItem(text or "♪")
                 item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                fm = self.lyrics_list.fontMetrics()
+                item.setSizeHint(QSize(0, max(24, fm.height() + 8)))
                 self.lyrics_list.addItem(item)
-                widget = LyricLineWidget(
-                    text=text,
-                    start_sec=self._lyrics_times[idx],
-                    end_sec=self._lyrics_end_times[idx],
-                    parent=self.lyrics_list,
-                )
-                item.setSizeHint(widget.sizeHint())
-                self.lyrics_list.setItemWidget(item, widget)
             self._sync_lyrics_with_position(0.0)
             return
 
@@ -1035,8 +1163,17 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "导入音乐文件夹")
         if not folder:
             return
+        self.statusBar().showMessage("开始导入，请稍候…", 4000)
+
+        def _progress(done: int, total: int, current: str) -> None:
+            if total <= 0:
+                return
+            name = Path(current).name if current else "完成"
+            self.statusBar().showMessage(f"导入进度：{done}/{total}  {name}", 6000)
+            QCoreApplication.processEvents()
+
         try:
-            count = self.controller.import_folder(Path(folder), playlist_id=None)
+            count = self.controller.import_folder(Path(folder), playlist_id=None, progress_callback=_progress)
         except Exception as exc:
             QMessageBox.critical(self, "导入失败", str(exc))
             return
@@ -1233,11 +1370,8 @@ class MainWindow(QMainWindow):
             return
         if not self.compact_top_bar.isVisible():
             return
-        margin = 4
-        width = max(220, self.width() - margin * 2)
-        height = max(self.compact_top_bar.minimumHeight(), self.compact_top_bar.sizeHint().height())
-        self.compact_top_bar.resize(width, height)
-        self.compact_top_bar.move(margin, margin)
+        width = max(220, self.compact_top_bar.width())
+        height = max(self.compact_top_bar.minimumHeight(), self.compact_top_bar.height())
         title_h = self.compact_top_title_label.sizeHint().height()
         right_controls_width = (
             self.lock_btn.width() + self.pin_btn.width() + self.compact_close_btn.width() + 12
@@ -1248,7 +1382,6 @@ class MainWindow(QMainWindow):
         self.compact_top_title_label.resize(title_w, title_h)
         self.compact_top_title_label.move((width - title_w) // 2, (height - title_h) // 2)
         self.compact_top_title_label.raise_()
-        self.compact_top_bar.raise_()
 
     def _reposition_volume_value_label(self) -> None:
         if not hasattr(self, "mute_btn") or not hasattr(self, "volume_value_label"):
@@ -1351,6 +1484,39 @@ class MainWindow(QMainWindow):
         self.sidebar_toggle_btn.move(x, y)
         self.sidebar_toggle_btn.raise_()
 
+    def eventFilter(self, watched, event):
+        track_view = self.track_list.viewport() if hasattr(self, "track_list") else None
+        lyric_view = self.lyrics_list.viewport() if hasattr(self, "lyrics_list") else None
+
+        if track_view is not None and watched is track_view:
+            if event.type() == QEvent.Type.MouseMove:
+                idx = self.track_list.indexAt(event.pos())
+                self.track_delegate.set_hover_row(idx.row() if idx.isValid() else -1)
+                self.track_list.viewport().update()
+            elif event.type() == QEvent.Type.Leave:
+                self.track_delegate.set_hover_row(-1)
+                self.track_list.viewport().update()
+            elif event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                idx = self.track_list.indexAt(event.pos())
+                if idx.isValid():
+                    row_rect = self.track_list.visualRect(idx)
+                    if TrackItemDelegate.remove_rect(row_rect).contains(event.pos()):
+                        item = self.track_list.item(idx.row())
+                        if item is not None:
+                            track_id = item.data(0x0100)
+                            if track_id:
+                                self._on_remove_track_clicked(str(track_id))
+                                return True
+        elif lyric_view is not None and watched is lyric_view:
+            if event.type() == QEvent.Type.MouseMove:
+                idx = self.lyrics_list.indexAt(event.pos())
+                self.lyrics_delegate.set_hover_row(idx.row() if idx.isValid() else -1)
+                self.lyrics_list.viewport().update()
+            elif event.type() == QEvent.Type.Leave:
+                self.lyrics_delegate.set_hover_row(-1)
+                self.lyrics_list.viewport().update()
+        return super().eventFilter(watched, event)
+
     def wheelEvent(self, event) -> None:
         delta = event.angleDelta().y()
         if delta == 0:
@@ -1436,22 +1602,11 @@ class MainWindow(QMainWindow):
         return super().minimumSizeHint()
 
     def _lyric_text_of_item(self, item: QListWidgetItem) -> str:
-        text = (item.text() or "").strip()
-        if text:
-            return text
-        widget = self.lyrics_list.itemWidget(item)
-        if isinstance(widget, LyricLineWidget):
-            return (widget.text_label.text() or "").strip()
-        return ""
+        return (item.text() or "").strip()
 
     def _track_text_of_item(self, item: QListWidgetItem) -> str:
         text = (item.text() or "").strip()
-        if text:
-            return text
-        widget = self.track_list.itemWidget(item)
-        if isinstance(widget, TrackListItemWidget):
-            return (widget.text_label.text() or "").strip()
-        return "未知歌曲"
+        return text or "未知歌曲"
 
     def closeEvent(self, event: QCloseEvent) -> None:
         try:

@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -131,8 +132,18 @@ class AppController(QObject):
             return None
         return self.metadata_service.read_cover_bytes(Path(track.path))
 
-    def import_folder(self, folder: Path, playlist_id: str | None = None) -> int:
-        imported = self.library_service.import_folder(folder=folder, playlist_id=playlist_id, recursive=True)
+    def import_folder(
+        self,
+        folder: Path,
+        playlist_id: str | None = None,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> int:
+        imported = self.library_service.import_folder(
+            folder=folder,
+            playlist_id=playlist_id,
+            recursive=True,
+            progress_callback=progress_callback,
+        )
         self.library_changed.emit()
         return len(imported)
 

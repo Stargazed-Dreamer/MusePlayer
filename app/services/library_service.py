@@ -2,6 +2,8 @@
 
 import logging
 from pathlib import Path
+import time
+from typing import Callable
 
 from app.models.entities import Playlist, Track, new_id
 from app.models.library_store import LibraryStore
@@ -309,48 +311,97 @@ class LibraryService:
             return None
         return self.tracks.get(track_id)
 
-    def import_folder(self, folder: Path, playlist_id: str | None = None, recursive: bool = True) -> list[Track]:
+    def import_folder(
+        self,
+        folder: Path,
+        playlist_id: str | None = None,
+        recursive: bool = True,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> list[Track]:
         target = Path(folder).resolve()
         if not target.exists() or not target.is_dir():
             raise FileNotFoundError(str(target))
 
-        files = self._scan_audio_files(target, recursive=recursive)
-        if not files:
+        plan: list[tuple[Playlist, list[Path]]] = []
+        if playlist_id and playlist_id in self.playlists and playlist_id != ALL_SONGS_ID:
+            target_playlist = self.playlists[playlist_id]
+            files = self._scan_audio_files(target, recursive=recursive)
+            if files:
+                plan.append((target_playlist, files))
+        else:
+            root_files = self._scan_audio_files(target, recursive=False)
+            if root_files:
+                root_playlist = self._resolve_target_playlist_for_folder_import(target, None)
+                plan.append((root_playlist, root_files))
+
+            children = [p for p in target.iterdir() if p.is_dir()]
+            children.sort(key=lambda p: p.name.casefold())
+            for child in children:
+                child_files = self._scan_audio_files(child, recursive=False)
+                if not child_files:
+                    continue
+                child_playlist = self._resolve_target_playlist_for_folder_import(child, None)
+                plan.append((child_playlist, child_files))
+
+        if not plan:
             return []
 
-        target_playlist = self._resolve_target_playlist_for_folder_import(target, playlist_id)
+        flat_files: list[Path] = []
+        for _, files in plan:
+            flat_files.extend(files)
+        total = len(flat_files)
+
         path_map = {Path(track.path).resolve(): track for track in self.tracks.values()}
-
-        imported: list[Track] = []
-        for file_path in files:
-            existing = path_map.get(file_path)
-            if existing is None:
-                track = self._metadata.extract_track(file_path)
-                self.tracks[track.id] = track
-                path_map[file_path] = track
-                imported.append(track)
-            else:
-                imported.append(existing)
-
+        imported_by_id: dict[str, Track] = {}
         all_songs = self.playlists[ALL_SONGS_ID]
-        all_existing = set(all_songs.track_ids)
-        for track in imported:
-            if track.id not in all_existing:
-                all_songs.track_ids.append(track.id)
-                all_existing.add(track.id)
+        all_ids = set(all_songs.track_ids)
+        playlist_ids_map: dict[str, set[str]] = {pl.id: set(pl.track_ids) for pl in self.playlists.values()}
+        touched_playlists: set[str] = set()
+
+        last_tick = time.monotonic()
+        processed = 0
+        for playlist, files in plan:
+            existing_ids = playlist_ids_map.setdefault(playlist.id, set(playlist.track_ids))
+            for file_path in files:
+                existing = path_map.get(file_path)
+                if existing is None:
+                    track = self._metadata.extract_track(file_path)
+                    self.tracks[track.id] = track
+                    path_map[file_path] = track
+                else:
+                    track = existing
+
+                imported_by_id[track.id] = track
+                if track.id not in existing_ids:
+                    playlist.track_ids.append(track.id)
+                    existing_ids.add(track.id)
+                    touched_playlists.add(playlist.id)
+                if track.id not in all_ids:
+                    all_songs.track_ids.append(track.id)
+                    all_ids.add(track.id)
+
+                processed += 1
+                if progress_callback is not None:
+                    now = time.monotonic()
+                    if now - last_tick >= 5.0:
+                        progress_callback(processed, total, str(file_path))
+                        last_tick = now
+
+        for pid in touched_playlists:
+            pl = self.playlists.get(pid)
+            if pl is not None:
+                pl.touch()
         all_songs.touch()
 
-        target_existing = set(target_playlist.track_ids)
-        for track in imported:
-            if track.id not in target_existing:
-                target_playlist.track_ids.append(track.id)
-                target_existing.add(track.id)
-        target_playlist.touch()
-
-        self.active_playlist_id = target_playlist.id
-
+        active_playlist = plan[0][0]
+        self.active_playlist_id = active_playlist.id
         self.save()
-        logger.info("导入文件夹: %s -> 歌单=%s, 新增/纳入歌曲=%s", target, target_playlist.name, len(imported))
+
+        if progress_callback is not None:
+            progress_callback(total, total, "")
+
+        imported = list(imported_by_id.values())
+        logger.info("导入文件夹: %s, 新增/纳入歌曲=%s, 歌单数=%s", target, len(imported), len(plan))
         return imported
 
     def import_file(self, file_path: Path, playlist_id: str | None = None) -> Track:
