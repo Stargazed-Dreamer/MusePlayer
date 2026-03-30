@@ -140,6 +140,13 @@ class AppController(QObject):
         self.settings_store.save(self.settings)
         self.settings_changed.emit(self.settings)
 
+    def persist_window_geometry(self, *, x: int, y: int, width: int, height: int) -> None:
+        self.settings.window_x = int(x)
+        self.settings.window_y = int(y)
+        self.settings.window_width = max(0, int(width))
+        self.settings.window_height = max(0, int(height))
+        self.settings_store.save(self.settings)
+
     def get_current_lyrics(self) -> str:
         track = self.player_service.current_track()
         if track is None:

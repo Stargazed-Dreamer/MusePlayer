@@ -104,6 +104,11 @@ class Settings:
     timed_save_enabled: bool = False
     timed_save_minutes: int = 5
     dark_theme: bool = True
+    remember_window_geometry: bool = True
+    window_x: int = -1
+    window_y: int = -1
+    window_width: int = 0
+    window_height: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -119,6 +124,11 @@ class Settings:
             "timed_save_enabled": bool(self.timed_save_enabled),
             "timed_save_minutes": int(self.timed_save_minutes),
             "dark_theme": bool(self.dark_theme),
+            "remember_window_geometry": bool(self.remember_window_geometry),
+            "window_x": int(self.window_x),
+            "window_y": int(self.window_y),
+            "window_width": int(self.window_width),
+            "window_height": int(self.window_height),
         }
 
     @classmethod
@@ -139,6 +149,11 @@ class Settings:
             timed_save_enabled=bool(data.get("timed_save_enabled", False)),
             timed_save_minutes=max(1, min(1440, int(data.get("timed_save_minutes", 5)))),
             dark_theme=bool(data.get("dark_theme", True)),
+            remember_window_geometry=bool(data.get("remember_window_geometry", True)),
+            window_x=int(data.get("window_x", -1)),
+            window_y=int(data.get("window_y", -1)),
+            window_width=max(0, int(data.get("window_width", 0))),
+            window_height=max(0, int(data.get("window_height", 0))),
         )
 
 

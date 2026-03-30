@@ -74,6 +74,11 @@ class SettingsDialog(QDialog):
         self.dark_theme_check = QCheckBox("默认夜间主题")
         self.dark_theme_check.setChecked(bool(getattr(self._settings, "dark_theme", True)))
 
+        self.remember_window_geometry_check = QCheckBox("记住上次窗口大小和位置")
+        self.remember_window_geometry_check.setChecked(
+            bool(getattr(self._settings, "remember_window_geometry", True))
+        )
+
         form.addRow("控制接口主机", self.host_edit)
         form.addRow("控制接口端口", self.port_spin)
         form.addRow("全局音量放大倍数", self.gain_boost_spin)
@@ -87,6 +92,7 @@ class SettingsDialog(QDialog):
         root.addWidget(self.timed_save_check)
         root.addWidget(self.logging_check)
         root.addWidget(self.dark_theme_check)
+        root.addWidget(self.remember_window_geometry_check)
         self._on_control_interface_toggled(self.control_interface_check.isChecked())
         self._on_timed_save_toggled(self.timed_save_check.isChecked())
 
@@ -117,6 +123,11 @@ class SettingsDialog(QDialog):
             timed_save_enabled=bool(self.timed_save_check.isChecked()),
             timed_save_minutes=int(self.timed_save_spin.value()),
             dark_theme=bool(self.dark_theme_check.isChecked()),
+            remember_window_geometry=bool(self.remember_window_geometry_check.isChecked()),
+            window_x=int(getattr(self._settings, "window_x", -1)),
+            window_y=int(getattr(self._settings, "window_y", -1)),
+            window_width=int(getattr(self._settings, "window_width", 0)),
+            window_height=int(getattr(self._settings, "window_height", 0)),
         )
 
     def _on_control_interface_toggled(self, enabled: bool) -> None:

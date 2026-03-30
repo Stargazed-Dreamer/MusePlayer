@@ -7,7 +7,7 @@ APP_STYLE_LIGHT = f"""
 QWidget {{
     background: #f6f7f6;
     color: #1d221f;
-    font-family: "Noto Sans SC", "Segoe UI", "Microsoft YaHei";
+    font-family: "Microsoft YaHei", "Segoe UI", "Noto Sans SC";
     font-size: 13px;
 }}
 
@@ -22,7 +22,7 @@ QFrame#RichTitleBar {{
 
 QLabel#RichTitleLabel {{
     color: #1c211e;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
 }}
 
@@ -131,6 +131,12 @@ QLineEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
     padding: 6px 10px;
 }}
 
+QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{
+    background: #ecefed;
+    color: #9aa39c;
+    border: 1px solid #dde2de;
+}}
+
 QListWidget#lyrics_list, QListWidget#track_list, QListWidget {{
     background: transparent;
     border: none;
@@ -176,9 +182,9 @@ QToolButton#VolumeIconButton {{
     max-width: 30px;
     max-height: 30px;
     border-radius: 8px;
-    border: 1px solid #505050;
-    background: #2a2a2a;
-    color: #ffffff;
+    border: 1px solid #d2d8d3;
+    background: #ffffff;
+    color: #1f2521;
 }}
 
 QToolButton#ControlIconButton:hover,
@@ -195,9 +201,9 @@ QToolButton#SidebarToggle {{
     min-height: 54px;
     max-height: 54px;
     border-radius: 10px;
-    border: 1px solid #505050;
-    background: #2a2a2a;
-    color: #ffffff;
+    border: 1px solid #d2d8d3;
+    background: #ffffff;
+    color: #1f2521;
 }}
 
 QToolButton#SidebarToggle:hover {{
@@ -210,9 +216,9 @@ QToolButton#LocateCurrentButton {{
     max-width: 20px;
     max-height: 20px;
     border-radius: 10px;
-    border: 1px solid #505050;
-    background: #2a2a2a;
-    color: #ffffff;
+    border: 1px solid #d2d8d3;
+    background: #ffffff;
+    color: #1f2521;
 }}
 
 QToolButton#LocateCurrentButton:hover {{
@@ -283,6 +289,15 @@ QSpinBox::up-button:hover, QSpinBox::down-button:hover, QDoubleSpinBox::up-butto
     background: rgba(167, 192, 128, 0.55);
 }}
 
+QCheckBox:disabled {{
+    color: #9aa39c;
+}}
+
+QCheckBox::indicator:disabled {{
+    border-color: #c8cfca;
+    background: #ecefed;
+}}
+
 QSplitter::handle:horizontal {{
     width: 6px;
     background: transparent;
@@ -291,13 +306,55 @@ QSplitter::handle:horizontal {{
 QSplitter::handle:horizontal:hover {{
     background: rgba(167, 192, 128, 0.30);
 }}
+
+QScrollBar:vertical {{
+    background: transparent;
+    width: 10px;
+    margin: 2px 0px 2px 0px;
+    border: none;
+}}
+
+QScrollBar::handle:vertical {{
+    background: rgba(167, 192, 128, 0.68);
+    border-radius: 5px;
+    min-height: 26px;
+}}
+
+QScrollBar::handle:vertical:hover {{
+    background: rgba(129, 233, 139, 0.85);
+}}
+
+QScrollBar:horizontal {{
+    background: transparent;
+    height: 10px;
+    margin: 0px 2px 0px 2px;
+    border: none;
+}}
+
+QScrollBar::handle:horizontal {{
+    background: rgba(167, 192, 128, 0.68);
+    border-radius: 5px;
+    min-width: 26px;
+}}
+
+QScrollBar::handle:horizontal:hover {{
+    background: rgba(129, 233, 139, 0.85);
+}}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal,
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal,
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+    background: transparent;
+    border: none;
+}}
 """
 
 APP_STYLE_DARK = f"""
 QWidget {{
     background: #1a1a1a;
     color: #f1f1f1;
-    font-family: "Noto Sans SC", "Segoe UI", "Microsoft YaHei";
+    font-family: "Microsoft YaHei", "Segoe UI", "Noto Sans SC";
     font-size: 13px;
 }}
 
@@ -312,7 +369,7 @@ QFrame#RichTitleBar {{
 
 QLabel#RichTitleLabel {{
     color: #f1f1f1;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
 }}
 
@@ -420,6 +477,12 @@ QLineEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
     border: 1px solid #3b3b3b;
     border-radius: 6px;
     padding: 6px 10px;
+}}
+
+QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{
+    background: #292929;
+    color: #858585;
+    border: 1px solid #3a3a3a;
 }}
 
 QListWidget#lyrics_list, QListWidget#track_list, QListWidget {{
@@ -575,6 +638,15 @@ QSpinBox::up-button:hover, QSpinBox::down-button:hover, QDoubleSpinBox::up-butto
     background: rgba(129, 233, 139, 0.35);
 }}
 
+QCheckBox:disabled {{
+    color: #888888;
+}}
+
+QCheckBox::indicator:disabled {{
+    border-color: #5e5e5e;
+    background: #2c2c2c;
+}}
+
 QSplitter::handle:horizontal {{
     width: 6px;
     background: transparent;
@@ -582,6 +654,48 @@ QSplitter::handle:horizontal {{
 
 QSplitter::handle:horizontal:hover {{
     background: rgba(167, 192, 128, 0.35);
+}}
+
+QScrollBar:vertical {{
+    background: transparent;
+    width: 10px;
+    margin: 2px 0px 2px 0px;
+    border: none;
+}}
+
+QScrollBar::handle:vertical {{
+    background: rgba(167, 192, 128, 0.68);
+    border-radius: 5px;
+    min-height: 26px;
+}}
+
+QScrollBar::handle:vertical:hover {{
+    background: rgba(129, 233, 139, 0.82);
+}}
+
+QScrollBar:horizontal {{
+    background: transparent;
+    height: 10px;
+    margin: 0px 2px 0px 2px;
+    border: none;
+}}
+
+QScrollBar::handle:horizontal {{
+    background: rgba(167, 192, 128, 0.68);
+    border-radius: 5px;
+    min-width: 26px;
+}}
+
+QScrollBar::handle:horizontal:hover {{
+    background: rgba(129, 233, 139, 0.82);
+}}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal,
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal,
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+    background: transparent;
+    border: none;
 }}
 """
 

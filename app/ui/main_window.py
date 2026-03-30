@@ -484,11 +484,12 @@ class MainWindow(QMainWindow):
         self._compact_locked = False
         self._always_on_top = False
         self._drag_offset: QPoint | None = None
+        self._resize_margin = 7
         self._sidebar_collapsed = False
         self._sidebar_was_collapsed_before_compact = False
-        self._sidebar_last_width = 408
-        self._sidebar_min_width = 180
-        self._sidebar_max_width = 720
+        self._sidebar_last_width = 530
+        self._sidebar_min_width = 234
+        self._sidebar_max_width = 936
         self._last_window_width = 0
         self._resize_adjusting_splitter = False
         self._width_before_compact = 0
@@ -522,6 +523,7 @@ class MainWindow(QMainWindow):
         self._dark_theme = bool(getattr(self.controller.settings, "dark_theme", True))
         self._taskbar_progress = _WindowsTaskbarProgress()
         self._rich_drag_offset: QPoint | None = None
+        self._top_stack_widget: QWidget | None = None
         self._lyrics_resume_timer = QTimer(self)
         self._lyrics_resume_timer.setSingleShot(True)
         self._lyrics_resume_timer.setInterval(2200)
@@ -536,6 +538,7 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._bind_signals()
         self._bind_shortcuts()
+        self._restore_window_geometry()
 
         self._reload_playlist_combo()
         self._reload_track_list()
@@ -568,7 +571,7 @@ class MainWindow(QMainWindow):
         title_row.setSpacing(6)
         self.rich_title_label = QLabel("MusePlayer")
         self.rich_title_label.setObjectName("RichTitleLabel")
-        self.rich_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.rich_title_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.rich_min_btn = self._new_icon_button("RichTitleButton")
         self.rich_max_btn = self._new_icon_button("RichTitleButton")
         self.rich_close_btn = self._new_icon_button("RichTitleButton")
@@ -588,7 +591,6 @@ class MainWindow(QMainWindow):
         title_row.addWidget(self.rich_min_btn, 0)
         title_row.addWidget(self.rich_max_btn, 0)
         title_row.addWidget(self.rich_close_btn, 0)
-        main_layout.addWidget(self.rich_title_bar, 0)
         self.rich_title_bar.installEventFilter(self)
         self.rich_title_label.installEventFilter(self)
         self.rich_min_btn.clicked.connect(self.showMinimized)
@@ -607,18 +609,10 @@ class MainWindow(QMainWindow):
 
         self.card_now = QFrame(left_container)
         self.card_now.setObjectName("Card")
-        now_layout = QHBoxLayout(self.card_now)
-        now_layout.setContentsMargins(16, 16, 16, 16)
-        now_layout.setSpacing(16)
+        now_layout = QVBoxLayout(self.card_now)
+        now_layout.setContentsMargins(14, 12, 14, 10)
+        now_layout.setSpacing(6)
 
-        self.cover_label = QLabel("暂无封面")
-        self.cover_label.setFixedSize(230, 230)
-        self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cover_label.setStyleSheet("")
-        now_layout.addWidget(self.cover_label)
-
-        meta_col = QVBoxLayout()
-        meta_col.setSpacing(6)
         self.title_label = QLabel("未选择歌曲")
         self.title_label.setObjectName("TitleLabel")
         self.title_label.setWordWrap(True)
@@ -634,6 +628,11 @@ class MainWindow(QMainWindow):
         self._meta_top_spacer = QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         self._meta_bottom_spacer = QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
+        self.cover_label = QLabel("暂无封面")
+        self.cover_label.setFixedSize(170, 170)
+        self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cover_label.setStyleSheet("")
+
         self.lyrics_list = LyricsListWidget()
         self.lyrics_list.setObjectName("lyrics_list")
         self.lyrics_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
@@ -645,14 +644,20 @@ class MainWindow(QMainWindow):
         self.lyrics_list.setItemDelegate(self.lyrics_delegate)
         self.lyrics_list.viewport().installEventFilter(self)
 
-        meta_col.addItem(self._meta_top_spacer)
-        meta_col.addWidget(self.title_label)
-        meta_col.addWidget(self.artist_label)
-        meta_col.addWidget(self.album_label)
-        meta_col.addWidget(self.path_label)
-        meta_col.addWidget(self.lyrics_list, 1)
-        meta_col.addItem(self._meta_bottom_spacer)
-        now_layout.addLayout(meta_col, 1)
+        self.info_media_row_widget = QWidget(self.card_now)
+        media_row = QHBoxLayout(self.info_media_row_widget)
+        media_row.setContentsMargins(0, 0, 0, 0)
+        media_row.setSpacing(12)
+        media_row.addWidget(self.cover_label, 0, Qt.AlignmentFlag.AlignTop)
+        media_row.addWidget(self.lyrics_list, 1)
+
+        now_layout.addItem(self._meta_top_spacer)
+        now_layout.addWidget(self.title_label)
+        now_layout.addWidget(self.artist_label)
+        now_layout.addWidget(self.album_label)
+        now_layout.addWidget(self.path_label)
+        now_layout.addItem(self._meta_bottom_spacer)
+        now_layout.addWidget(self.info_media_row_widget, 1)
 
         left_col.addWidget(self.card_now, 1)
 
@@ -705,20 +710,20 @@ class MainWindow(QMainWindow):
         self.theme_btn.setToolTip("切换到日间模式")
 
         self.locate_file_btn = self._new_icon_button("ControlIconButton")
-        self.locate_file_btn.setIcon(_make_folder_icon())
+        self.locate_file_btn.setIcon(_make_folder_icon(color=self._control_icon_color()))
         self.locate_file_btn.setToolTip("在资源管理器中定位当前文件")
 
         self.mode_btn = self._new_icon_button("ModeButton")
 
         self.prev_btn = self._new_icon_button("ControlIconButton")
-        self.prev_btn.setIcon(_make_media_icon("prev"))
+        self.prev_btn.setIcon(_make_media_icon("prev", color=self._control_icon_color()))
         self.prev_btn.setToolTip("上一首")
 
         self.play_btn = self._new_icon_button("ControlIconButton")
         self.play_btn.setToolTip("播放 / 暂停")
 
         self.next_btn = self._new_icon_button("ControlIconButton")
-        self.next_btn.setIcon(_make_media_icon("next"))
+        self.next_btn.setIcon(_make_media_icon("next", color=self._control_icon_color()))
         self.next_btn.setToolTip("下一首")
 
         self.volume_panel = QWidget()
@@ -743,7 +748,7 @@ class MainWindow(QMainWindow):
         self.volume_slider.setMinimumWidth(150)
 
         self.compact_btn = self._new_icon_button("CompactButton")
-        self.compact_btn.setIcon(_make_plus_minus_icon(False))
+        self.compact_btn.setIcon(_make_plus_minus_icon(False, color=self._control_icon_color()))
         self.compact_btn.setToolTip("切换到简洁模式")
 
         self.speed_combo = QComboBox()
@@ -787,7 +792,7 @@ class MainWindow(QMainWindow):
         self.track_list.viewport().installEventFilter(self)
         self.locate_current_btn = self._new_icon_button("LocateCurrentButton")
         self.locate_current_btn.setParent(self.track_list.viewport())
-        self.locate_current_btn.setIcon(_make_crosshair_icon())
+        self.locate_current_btn.setIcon(_make_crosshair_icon(color=self._control_icon_color()))
         self.locate_current_btn.setToolTip("定位到当前播放歌曲")
         self.locate_current_btn.clicked.connect(self._locate_current_track_in_list)
         self.locate_current_btn.hide()
@@ -797,7 +802,7 @@ class MainWindow(QMainWindow):
         side_layout.addWidget(self.search_edit)
         side_layout.addWidget(self.track_list, 1)
 
-        self.main_splitter.setSizes([980, self._sidebar_last_width])
+        self.main_splitter.setSizes([720, self._sidebar_last_width])
         self.main_splitter.setStretchFactor(0, 0)
         self.main_splitter.setStretchFactor(1, 1)
 
@@ -875,6 +880,21 @@ class MainWindow(QMainWindow):
         action_exit.triggered.connect(self.close)
         action_playlist.triggered.connect(self._open_playlist_dialog)
         action_settings.triggered.connect(self._open_settings_dialog)
+        self._stack_title_and_menu()
+
+    def _stack_title_and_menu(self) -> None:
+        if self._top_stack_widget is not None:
+            return
+        stack = QWidget(self)
+        stack.setObjectName("TopStackWidget")
+        stack_layout = QVBoxLayout(stack)
+        stack_layout.setContentsMargins(0, 0, 0, 0)
+        stack_layout.setSpacing(0)
+        self.rich_title_bar.setParent(stack)
+        stack_layout.addWidget(self.rich_title_bar, 0)
+        stack_layout.addWidget(self.menuBar(), 0)
+        self.setMenuWidget(stack)
+        self._top_stack_widget = stack
 
     def _bind_signals(self) -> None:
         self.theme_btn.clicked.connect(self._toggle_theme)
@@ -1130,6 +1150,9 @@ class MainWindow(QMainWindow):
         has_lyrics = self.lyrics_list.isVisible() and self.lyrics_list.count() > 0
         compact_center = not has_cover and not has_lyrics
 
+        if hasattr(self, "info_media_row_widget"):
+            self.info_media_row_widget.setVisible(has_cover or has_lyrics)
+
         if compact_center:
             self.path_label.hide()
             self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1240,7 +1263,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"跳转到歌词时间：{_format_lrc_time(target)}", 2500)
 
     def _on_playback_changed(self, playing: bool) -> None:
-        icon = _make_media_icon("pause" if playing else "play")
+        icon = _make_media_icon("pause" if playing else "play", color=self._control_icon_color())
         self.play_btn.setIcon(icon)
         state = "播放" if playing else "暂停"
         self.statusBar().showMessage(f"{state}：{self._current_track_title}", 2000)
@@ -1283,6 +1306,7 @@ class MainWindow(QMainWindow):
         if app is None:
             return
         app.setStyleSheet(APP_STYLE_DARK if self._dark_theme else APP_STYLE_LIGHT)
+        self._refresh_control_icons()
 
     def _refresh_theme_button(self) -> None:
         if not hasattr(self, "theme_btn"):
@@ -1293,6 +1317,28 @@ class MainWindow(QMainWindow):
         else:
             self.theme_btn.setIcon(_make_moon_icon())
             self.theme_btn.setToolTip("切换到夜间模式")
+
+    def _control_icon_color(self) -> QColor:
+        return QColor("#f4f4f4") if self._dark_theme else QColor("#1f2521")
+
+    def _refresh_control_icons(self) -> None:
+        if not hasattr(self, "play_btn"):
+            return
+        color = self._control_icon_color()
+        self._mode_icons = {
+            PlayMode.SINGLE_LOOP.value: _make_mode_icon(PlayMode.SINGLE_LOOP.value, color=color),
+            PlayMode.PLAYLIST_LOOP.value: _make_mode_icon(PlayMode.PLAYLIST_LOOP.value, color=color),
+            PlayMode.RANDOM.value: _make_mode_icon(PlayMode.RANDOM.value, color=color),
+        }
+        self.prev_btn.setIcon(_make_media_icon("prev", color=color))
+        self.next_btn.setIcon(_make_media_icon("next", color=color))
+        self.play_btn.setIcon(_make_media_icon("pause" if self.player.is_playing() else "play", color=color))
+        self.locate_file_btn.setIcon(_make_folder_icon(color=color))
+        self.compact_btn.setIcon(_make_plus_minus_icon(self._compact_mode, color=color))
+        self.locate_current_btn.setIcon(_make_crosshair_icon(color=color))
+        self._refresh_compact_top_buttons()
+        self._refresh_volume_ui()
+        self._on_mode_changed(self.player.mode.value)
 
     def _on_random_state_changed(self, seed: int, idx: int) -> None:
         _ = seed, idx
@@ -1373,7 +1419,7 @@ class MainWindow(QMainWindow):
         self.volume_slider.blockSignals(False)
         self.volume_value_label.setText(f"{gain}%")
         muted = gain <= 0
-        icon = _make_volume_icon(muted=muted)
+        icon = _make_volume_icon(muted=muted, color=self._control_icon_color())
         self.mute_btn.setIcon(icon)
         self.mute_btn.setToolTip("取消静音" if muted else "静音")
         self._reposition_volume_value_label()
@@ -1585,8 +1631,8 @@ class MainWindow(QMainWindow):
             self.side_card.hide()
             self.main_splitter.hide()
             self.sidebar_toggle_btn.hide()
-            self.rich_title_bar.hide()
-            self.menuBar().hide()
+            if self._top_stack_widget is not None:
+                self._top_stack_widget.hide()
             self.statusBar().hide()
             self.compact_info_widget.hide()
             self.progress_center_label.show()
@@ -1602,7 +1648,7 @@ class MainWindow(QMainWindow):
             self._on_opacity_changed(self.opacity_slider.value())
             self._layout_compact_top_bar()
 
-            self.compact_btn.setIcon(_make_plus_minus_icon(True))
+            self.compact_btn.setIcon(_make_plus_minus_icon(True, color=self._control_icon_color()))
             self.compact_btn.setToolTip("切换到丰富模式")
 
             self.centralWidget().layout().activate()
@@ -1650,11 +1696,11 @@ class MainWindow(QMainWindow):
         self.side_card.show()
         self.main_splitter.show()
         self.sidebar_toggle_btn.show()
-        self.rich_title_bar.show()
-        self.menuBar().show()
+        if self._top_stack_widget is not None:
+            self._top_stack_widget.show()
         self.statusBar().show()
 
-        self.compact_btn.setIcon(_make_plus_minus_icon(False))
+        self.compact_btn.setIcon(_make_plus_minus_icon(False, color=self._control_icon_color()))
         self.compact_btn.setToolTip("切换到简洁模式")
 
         self.centralWidget().layout().activate()
@@ -1716,9 +1762,10 @@ class MainWindow(QMainWindow):
                 self.raise_()
 
     def _refresh_compact_top_buttons(self) -> None:
-        self.lock_btn.setIcon(_make_lock_icon(self._compact_locked))
+        color = self._control_icon_color()
+        self.lock_btn.setIcon(_make_lock_icon(self._compact_locked, color=color))
         self.lock_btn.setToolTip("已锁定窗口位置" if self._compact_locked else "锁定窗口位置")
-        self.pin_btn.setIcon(_make_pin_icon(self._always_on_top))
+        self.pin_btn.setIcon(_make_pin_icon(self._always_on_top, color=color))
         self.pin_btn.setToolTip("取消置顶" if self._always_on_top else "置顶窗口")
 
     def _layout_compact_top_bar(self) -> None:
@@ -1778,6 +1825,33 @@ class MainWindow(QMainWindow):
 
         if target_x != geo.x() or target_y != geo.y():
             self.move(target_x, target_y)
+
+    def _restore_window_geometry(self) -> None:
+        settings = self.controller.settings
+        if not bool(getattr(settings, "remember_window_geometry", True)):
+            return
+        width = max(0, int(getattr(settings, "window_width", 0)))
+        height = max(0, int(getattr(settings, "window_height", 0)))
+        x = int(getattr(settings, "window_x", -1))
+        y = int(getattr(settings, "window_y", -1))
+
+        if width > 0 and height > 0:
+            self.resize(width, height)
+        if x >= 0 and y >= 0:
+            self.move(x, y)
+        self._ensure_window_inside_screen()
+
+    def _persist_window_geometry(self) -> None:
+        settings = self.controller.settings
+        if not bool(getattr(settings, "remember_window_geometry", True)):
+            return
+        geo = self.frameGeometry()
+        self.controller.persist_window_geometry(
+            x=int(geo.x()),
+            y=int(geo.y()),
+            width=int(geo.width()),
+            height=int(geo.height()),
+        )
 
     def _ensure_taskbar_progress_initialized(self) -> None:
         hwnd = int(self.winId()) if sys.platform.startswith("win") else 0
@@ -1854,7 +1928,7 @@ class MainWindow(QMainWindow):
 
     def _clamp_sidebar_width(self, total_width: int, preferred: int) -> int:
         total = max(1, int(total_width))
-        hard_max = max(self._sidebar_min_width, total - 360)
+        hard_max = max(self._sidebar_min_width, total - 252)
         upper = min(self._sidebar_max_width, hard_max)
         return max(self._sidebar_min_width, min(int(preferred), upper))
 
@@ -1878,6 +1952,46 @@ class MainWindow(QMainWindow):
             return
         self.main_splitter.setSizes([max(0, total - target_side), target_side])
         self._sidebar_last_width = target_side
+
+    def _hit_test_resize_edges(self, pos: QPoint):
+        if self._compact_mode or self.isMaximized():
+            return None
+        margin = max(4, int(self._resize_margin))
+        x = int(pos.x())
+        y = int(pos.y())
+        w = max(1, self.width())
+        h = max(1, self.height())
+        if x < 0 or y < 0 or x > w or y > h:
+            return None
+
+        edges = Qt.Edge(0)
+        if x <= margin:
+            edges |= Qt.Edge.LeftEdge
+        elif x >= w - margin:
+            edges |= Qt.Edge.RightEdge
+        if y <= margin:
+            edges |= Qt.Edge.TopEdge
+        elif y >= h - margin:
+            edges |= Qt.Edge.BottomEdge
+        return edges if edges else None
+
+    @staticmethod
+    def _cursor_for_resize_edges(edges) -> Qt.CursorShape:
+        if edges is None:
+            return Qt.CursorShape.ArrowCursor
+        has_left = bool(edges & Qt.Edge.LeftEdge)
+        has_right = bool(edges & Qt.Edge.RightEdge)
+        has_top = bool(edges & Qt.Edge.TopEdge)
+        has_bottom = bool(edges & Qt.Edge.BottomEdge)
+        if (has_left and has_top) or (has_right and has_bottom):
+            return Qt.CursorShape.SizeFDiagCursor
+        if (has_right and has_top) or (has_left and has_bottom):
+            return Qt.CursorShape.SizeBDiagCursor
+        if has_left or has_right:
+            return Qt.CursorShape.SizeHorCursor
+        if has_top or has_bottom:
+            return Qt.CursorShape.SizeVerCursor
+        return Qt.CursorShape.ArrowCursor
 
     def eventFilter(self, watched, event):
         track_view = self.track_list.viewport() if hasattr(self, "track_list") else None
@@ -1962,6 +2076,13 @@ class MainWindow(QMainWindow):
         super().wheelEvent(event)
 
     def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and not self._compact_mode:
+            edges = self._hit_test_resize_edges(event.position().toPoint())
+            if edges is not None:
+                handle = self.windowHandle()
+                if handle is not None and handle.startSystemResize(edges):
+                    event.accept()
+                    return
         if (
             self._compact_mode
             and not self._compact_locked
@@ -1978,6 +2099,8 @@ class MainWindow(QMainWindow):
             self.move(event.globalPosition().toPoint() - self._drag_offset)
             event.accept()
             return
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            self.setCursor(self._cursor_for_resize_edges(self._hit_test_resize_edges(event.position().toPoint())))
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
@@ -1985,7 +2108,13 @@ class MainWindow(QMainWindow):
             self._drag_offset = None
             event.accept()
             return
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setCursor(self._cursor_for_resize_edges(self._hit_test_resize_edges(event.position().toPoint())))
         super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().leaveEvent(event)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         mime = event.mimeData()
@@ -2130,6 +2259,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         try:
+            self._persist_window_geometry()
             self._taskbar_progress.clear()
             self._taskbar_progress.close()
             self.controller.shutdown()
@@ -2260,13 +2390,14 @@ def _parse_lrc_entries(raw: str) -> list[tuple[float, str]]:
     return result
 
 
-def _make_mode_icon(mode: str) -> QIcon:
+def _make_mode_icon(mode: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(pix)
     painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor("#f4f4f4"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    icon_color = QColor(color)
+    pen = QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
 
     if mode == PlayMode.PLAYLIST_LOOP.value:
@@ -2294,13 +2425,13 @@ def _make_mode_icon(mode: str) -> QIcon:
     return QIcon(pix)
 
 
-def _make_plus_minus_icon(is_plus: bool) -> QIcon:
+def _make_plus_minus_icon(is_plus: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(pix)
     painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor("#f4f4f4"), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+    pen = QPen(QColor(color), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
     painter.setPen(pen)
 
     painter.drawLine(6, 12, 18, 12)
@@ -2311,13 +2442,13 @@ def _make_plus_minus_icon(is_plus: bool) -> QIcon:
     return QIcon(pix)
 
 
-def _make_crosshair_icon() -> QIcon:
+def _make_crosshair_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(pix)
     painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor("#f4f4f4"), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    pen = QPen(QColor(color), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
     painter.drawEllipse(QRectF(6, 6, 12, 12))
     painter.drawLine(12, 4, 12, 8)
@@ -2328,14 +2459,15 @@ def _make_crosshair_icon() -> QIcon:
     return QIcon(pix)
 
 
-def _make_media_icon(kind: str) -> QIcon:
+def _make_media_icon(kind: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pix)
     painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor("#f4f4f4"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    icon_color = QColor(color)
+    pen = QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
-    painter.setBrush(QColor("#f4f4f4"))
+    painter.setBrush(icon_color)
 
     k = (kind or "").strip().lower()
     if k == "play":
@@ -2355,14 +2487,15 @@ def _make_media_icon(kind: str) -> QIcon:
     return QIcon(pix)
 
 
-def _make_volume_icon(*, muted: bool) -> QIcon:
+def _make_volume_icon(*, muted: bool, color: QColor | str = "#f4f4f4") -> QIcon:
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pix)
     painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor("#f4f4f4"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    icon_color = QColor(color)
+    pen = QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
-    painter.setBrush(QColor("#f4f4f4"))
+    painter.setBrush(icon_color)
     painter.drawPolygon([QPoint(6, 10), QPoint(9, 10), QPoint(13, 6), QPoint(13, 18), QPoint(9, 14), QPoint(6, 14)])
     if muted:
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -2375,12 +2508,12 @@ def _make_volume_icon(*, muted: bool) -> QIcon:
     return QIcon(pix)
 
 
-def _make_folder_icon() -> QIcon:
+def _make_folder_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pix)
     painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor("#f4f4f4"), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    pen = QPen(QColor(color), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
     painter.setBrush(Qt.BrushStyle.NoBrush)
     painter.drawRoundedRect(QRectF(4, 8, 16, 11), 2.0, 2.0)
@@ -2431,13 +2564,13 @@ def _make_sun_icon() -> QIcon:
     return QIcon(pix)
 
 
-def _make_lock_icon(locked: bool) -> QIcon:
+def _make_lock_icon(locked: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(pix)
     painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor("#f4f4f4"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    pen = QPen(QColor(color), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
 
     painter.drawRoundedRect(QRectF(7, 11, 10, 8), 2.0, 2.0)
@@ -2451,13 +2584,13 @@ def _make_lock_icon(locked: bool) -> QIcon:
     return QIcon(pix)
 
 
-def _make_pin_icon(pinned: bool) -> QIcon:
+def _make_pin_icon(pinned: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(pix)
     painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor("#f4f4f4"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    pen = QPen(QColor(color), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
 
     painter.drawEllipse(QRectF(7.2, 3.6, 9.6, 4.8))
