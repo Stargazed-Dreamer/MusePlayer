@@ -14,6 +14,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QTimer, Qt, QRect, QRectF, 
 from PySide6.QtGui import (
     QCloseEvent,
     QColor,
+    QCursor,
     QDragEnterEvent,
     QDropEvent,
     QFont,
@@ -57,6 +58,7 @@ from app.services.player_service import PlayMode
 from app.ui.playlist_dialog import PlaylistDialog
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.theme import APP_STYLE_DARK, APP_STYLE_LIGHT
+from app.version import APP_VERSION
 
 try:
     import comtypes
@@ -77,6 +79,16 @@ TBPF_PAUSED = 0x00000004
 
 CLSID_TASKBAR_LIST = "{56FDF344-FD6D-11d0-958A-006097C9A090}"
 IID_ITASKBAR_LIST3 = "{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}"
+
+WM_NCHITTEST = 0x0084
+HTLEFT = 10
+HTRIGHT = 11
+HTTOP = 12
+HTTOPLEFT = 13
+HTTOPRIGHT = 14
+HTBOTTOM = 15
+HTBOTTOMLEFT = 16
+HTBOTTOMRIGHT = 17
 
 
 if comtypes is not None and COMMETHOD is not None and GUID is not None:
@@ -519,6 +531,9 @@ class MainWindow(QMainWindow):
         self._dark_theme = bool(getattr(self.controller.settings, "dark_theme", True))
         self._taskbar_progress = _WindowsTaskbarProgress()
         self._rich_drag_offset: QPoint | None = None
+        self._rich_drag_restore_ratio = 0.5
+        self._snap_docked = False
+        self._geometry_before_snap: QRect | None = None
         self._top_stack_widget: QWidget | None = None
         self._lyrics_resume_timer = QTimer(self)
         self._lyrics_resume_timer.setSingleShot(True)
@@ -574,15 +589,12 @@ class MainWindow(QMainWindow):
         self.rich_min_btn.setToolTip("最小化")
         self.rich_max_btn.setToolTip("最大化 / 还原")
         self.rich_close_btn.setToolTip("关闭")
-        self.rich_min_btn.setText("—")
-        self.rich_max_btn.setText("□")
-        self.rich_close_btn.setText("×")
-        self.rich_min_btn.setIcon(QIcon())
-        self.rich_max_btn.setIcon(QIcon())
-        self.rich_close_btn.setIcon(QIcon())
-        self.rich_min_btn.setIconSize(QSize(0, 0))
-        self.rich_max_btn.setIconSize(QSize(0, 0))
-        self.rich_close_btn.setIconSize(QSize(0, 0))
+        self.rich_min_btn.setText("")
+        self.rich_max_btn.setText("")
+        self.rich_close_btn.setText("")
+        self.rich_min_btn.setIconSize(QSize(14, 14))
+        self.rich_max_btn.setIconSize(QSize(14, 14))
+        self.rich_close_btn.setIconSize(QSize(14, 14))
         title_row.addWidget(self.rich_title_label, 1)
         title_row.addWidget(self.rich_min_btn, 0)
         title_row.addWidget(self.rich_max_btn, 0)
@@ -829,7 +841,7 @@ class MainWindow(QMainWindow):
         self.compact_top_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.compact_top_title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.compact_close_btn = self._new_icon_button("CompactTopButton")
-        self.compact_close_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarCloseButton))
+        self.compact_close_btn.setIcon(_make_rich_title_icon("close", color=self._control_icon_color()))
         self.compact_close_btn.setToolTip("返回丰富模式")
         self.compact_close_btn.clicked.connect(self._exit_compact_mode)
         compact_bar_layout.addWidget(self.opacity_slider, 0, Qt.AlignmentFlag.AlignLeft)
@@ -863,8 +875,21 @@ class MainWindow(QMainWindow):
         self.random_state_label = QLabel("")
         self.random_state_label.setObjectName("RandomStateHintLabel")
         self.random_state_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.random_state_label.setMinimumWidth(170)
-        self.menuBar().setCornerWidget(self.random_state_label, Qt.Corner.TopRightCorner)
+        self.random_state_label.setMinimumWidth(120)
+        self.version_label = QLabel(f"v{APP_VERSION}")
+        self.version_label.setObjectName("VersionHintLabel")
+        self.version_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.version_label.setMinimumWidth(58)
+        self.version_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+
+        self.menu_hint_widget = QWidget(self.menuBar())
+        hint_layout = QHBoxLayout(self.menu_hint_widget)
+        hint_layout.setContentsMargins(0, 0, 0, 0)
+        hint_layout.setSpacing(8)
+        hint_layout.addWidget(self.version_label, 0)
+        hint_layout.addWidget(self.random_state_label, 0)
+
+        self.menuBar().setCornerWidget(self.menu_hint_widget, Qt.Corner.TopRightCorner)
         self.random_state_label.hide()
 
         for menu in (menu_file,):
@@ -1317,11 +1342,12 @@ class MainWindow(QMainWindow):
     def _refresh_theme_button(self) -> None:
         if not hasattr(self, "theme_btn"):
             return
+        color = self._control_icon_color()
         if self._dark_theme:
-            self.theme_btn.setIcon(_make_sun_icon())
+            self.theme_btn.setIcon(_make_sun_icon(color=color))
             self.theme_btn.setToolTip("切换到日间模式")
         else:
-            self.theme_btn.setIcon(_make_moon_icon())
+            self.theme_btn.setIcon(_make_moon_icon(color=color))
             self.theme_btn.setToolTip("切换到夜间模式")
 
     def _control_icon_color(self) -> QColor:
@@ -1342,6 +1368,9 @@ class MainWindow(QMainWindow):
         self.locate_file_btn.setIcon(_make_folder_icon(color=color))
         self.compact_btn.setIcon(_make_plus_minus_icon(self._compact_mode, color=color))
         self.locate_current_btn.setIcon(_make_crosshair_icon(color=color))
+        self._refresh_rich_title_icons()
+        self._refresh_theme_button()
+        self._update_sidebar_toggle_icon()
         self._refresh_compact_top_buttons()
         self._refresh_volume_ui()
         self._on_mode_changed(self.player.mode.value)
@@ -1357,7 +1386,7 @@ class MainWindow(QMainWindow):
             self.random_state_label.setText("")
             self.random_state_label.hide()
             return
-        self.random_state_label.setText(f"seed:{self.player.random_seed}  idx:{self.player.random_index}")
+        self.random_state_label.setText(f"seed:{self.player.random_seed} idx:{self.player.random_index}")
         self.random_state_label.show()
 
     def _update_window_title(self) -> None:
@@ -1756,9 +1785,39 @@ class MainWindow(QMainWindow):
             return
         if self.isMaximized():
             self.showNormal()
+            self._snap_docked = False
+        elif self._snap_docked:
+            self._restore_from_snap()
         else:
             self.showMaximized()
-        self.rich_max_btn.setText("❐" if self.isMaximized() else "□")
+            self._snap_docked = False
+        self._refresh_rich_title_icons()
+
+    def _is_rich_restore_state(self) -> bool:
+        return bool(self.isMaximized() or self._snap_docked)
+
+    def _remember_geometry_before_snap(self) -> None:
+        if self.isMaximized() or self._snap_docked:
+            return
+        self._geometry_before_snap = QRect(self.geometry())
+
+    def _restore_from_snap(self) -> None:
+        if not self._snap_docked:
+            return
+        geo = QRect(self._geometry_before_snap) if self._geometry_before_snap is not None else None
+        self._snap_docked = False
+        self._geometry_before_snap = None
+        if geo is not None and geo.isValid():
+            self.setGeometry(geo)
+        self._ensure_window_inside_screen()
+
+    def _refresh_rich_title_icons(self) -> None:
+        if not hasattr(self, "rich_min_btn"):
+            return
+        color = self._control_icon_color()
+        self.rich_min_btn.setIcon(_make_rich_title_icon("min", color=color))
+        self.rich_max_btn.setIcon(_make_rich_title_icon("restore" if self._is_rich_restore_state() else "max", color=color))
+        self.rich_close_btn.setIcon(_make_rich_title_icon("close", color=color))
 
     def _refresh_window_flags(self) -> None:
         was_visible = self.isVisible()
@@ -1775,6 +1834,7 @@ class MainWindow(QMainWindow):
         self.lock_btn.setToolTip("已锁定窗口位置" if self._compact_locked else "锁定窗口位置")
         self.pin_btn.setIcon(_make_pin_icon(self._always_on_top, color=color))
         self.pin_btn.setToolTip("取消置顶" if self._always_on_top else "置顶窗口")
+        self.compact_close_btn.setIcon(_make_rich_title_icon("close", color=color))
 
     def _layout_compact_top_bar(self) -> None:
         if not hasattr(self, "compact_top_bar"):
@@ -1907,12 +1967,9 @@ class MainWindow(QMainWindow):
         self._reposition_sidebar_toggle()
 
     def _update_sidebar_toggle_icon(self) -> None:
-        icon = (
-            QStyle.StandardPixmap.SP_ArrowLeft
-            if self._sidebar_collapsed
-            else QStyle.StandardPixmap.SP_ArrowRight
+        self.sidebar_toggle_btn.setIcon(
+            _make_sidebar_toggle_icon(collapsed=self._sidebar_collapsed, color=self._control_icon_color())
         )
-        self.sidebar_toggle_btn.setIcon(self.style().standardIcon(icon))
 
     def _reposition_sidebar_toggle(self) -> None:
         if not hasattr(self, "sidebar_toggle_btn"):
@@ -2001,6 +2058,84 @@ class MainWindow(QMainWindow):
             return Qt.CursorShape.SizeVerCursor
         return Qt.CursorShape.ArrowCursor
 
+    def _screen_for_global_pos(self, global_pos: QPoint):
+        screen = QGuiApplication.screenAt(global_pos)
+        if screen is not None:
+            return screen
+        handle = self.windowHandle()
+        return handle.screen() if handle is not None else QGuiApplication.primaryScreen()
+
+    def _apply_titlebar_snap(self, global_pos: QPoint) -> None:
+        if self._compact_mode:
+            return
+        screen = self._screen_for_global_pos(global_pos)
+        if screen is None:
+            return
+        avail = screen.availableGeometry()
+        threshold = 10
+        if global_pos.y() <= avail.top() + threshold:
+            self.showMaximized()
+            self._snap_docked = False
+            self._refresh_rich_title_icons()
+            return
+        if global_pos.x() <= avail.left() + threshold:
+            self._remember_geometry_before_snap()
+            self.setGeometry(avail.left(), avail.top(), avail.width() // 2, avail.height())
+            self._snap_docked = True
+            self._refresh_rich_title_icons()
+            return
+        if global_pos.x() >= avail.right() - threshold:
+            self._remember_geometry_before_snap()
+            self.setGeometry(avail.left() + avail.width() // 2, avail.top(), avail.width() - avail.width() // 2, avail.height())
+            self._snap_docked = True
+            self._refresh_rich_title_icons()
+
+    def nativeEvent(self, eventType, message):
+        if not sys.platform.startswith("win"):
+            return super().nativeEvent(eventType, message)
+        if self._compact_mode or self.isMaximized():
+            return super().nativeEvent(eventType, message)
+
+        if str(eventType) not in {"windows_generic_MSG", "windows_dispatcher_MSG"}:
+            return super().nativeEvent(eventType, message)
+        try:
+            msg_ptr = int(message)
+            msg = ctypes.wintypes.MSG.from_address(msg_ptr)  # type: ignore[attr-defined]
+        except Exception:
+            return super().nativeEvent(eventType, message)
+        if int(msg.message) != WM_NCHITTEST:
+            return super().nativeEvent(eventType, message)
+
+        local = self.mapFromGlobal(QCursor.pos())
+        w = self.width()
+        h = self.height()
+        if local.x() < 0 or local.y() < 0 or local.x() >= w or local.y() >= h:
+            return super().nativeEvent(eventType, message)
+
+        margin = max(4, int(self._resize_margin))
+        left = local.x() <= margin
+        right = local.x() >= (w - margin - 1)
+        top = local.y() <= margin
+        bottom = local.y() >= (h - margin - 1)
+
+        if top and left:
+            return True, HTTOPLEFT
+        if top and right:
+            return True, HTTOPRIGHT
+        if bottom and left:
+            return True, HTBOTTOMLEFT
+        if bottom and right:
+            return True, HTBOTTOMRIGHT
+        if left:
+            return True, HTLEFT
+        if right:
+            return True, HTRIGHT
+        if top:
+            return True, HTTOP
+        if bottom:
+            return True, HTBOTTOM
+        return super().nativeEvent(eventType, message)
+
     def eventFilter(self, watched, event):
         track_view = self.track_list.viewport() if hasattr(self, "track_list") else None
         lyric_view = self.lyrics_list.viewport() if hasattr(self, "lyrics_list") else None
@@ -2013,17 +2148,25 @@ class MainWindow(QMainWindow):
                 self._toggle_rich_maximize()
                 return True
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
-                if not self.isMaximized():
-                    self._rich_drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                gpos = event.globalPosition().toPoint()
+                if self.isMaximized() or self._snap_docked:
+                    frame = self.frameGeometry()
+                    if frame.width() > 0:
+                        ratio = (gpos.x() - frame.x()) / frame.width()
+                        self._rich_drag_restore_ratio = max(0.0, min(1.0, float(ratio)))
+                    if self.isMaximized():
+                        self.showNormal()
+                    else:
+                        self._restore_from_snap()
+                    self._snap_docked = False
+                    self._refresh_rich_title_icons()
+                    frame = self.frameGeometry()
+                    offset_x = max(0, min(frame.width() - 1, int(round(frame.width() * self._rich_drag_restore_ratio))))
+                    offset_y = max(1, min(self.rich_title_bar.height() - 1, self.rich_title_bar.height() // 2))
+                    self._rich_drag_offset = QPoint(offset_x, offset_y)
+                    self.move(gpos - self._rich_drag_offset)
                 else:
-                    self._rich_drag_offset = None
-                return True
-            if event.type() == QEvent.Type.MouseMove and (event.buttons() & Qt.MouseButton.LeftButton):
-                if self._rich_drag_offset is not None:
-                    self.move(event.globalPosition().toPoint() - self._rich_drag_offset)
-                    return True
-            if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
-                self._rich_drag_offset = None
+                    self._rich_drag_offset = gpos - self.frameGeometry().topLeft()
                 return True
 
         if track_view is not None and watched is track_view:
@@ -2103,6 +2246,10 @@ class MainWindow(QMainWindow):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
+        if self._rich_drag_offset is not None and (event.buttons() & Qt.MouseButton.LeftButton):
+            self.move(event.globalPosition().toPoint() - self._rich_drag_offset)
+            event.accept()
+            return
         if self._drag_offset is not None and (event.buttons() & Qt.MouseButton.LeftButton):
             self.move(event.globalPosition().toPoint() - self._drag_offset)
             event.accept()
@@ -2112,6 +2259,11 @@ class MainWindow(QMainWindow):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
+        if self._rich_drag_offset is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._apply_titlebar_snap(event.globalPosition().toPoint())
+            self._rich_drag_offset = None
+            event.accept()
+            return
         if self._drag_offset is not None and event.button() == Qt.MouseButton.LeftButton:
             self._drag_offset = None
             event.accept()
@@ -2195,7 +2347,9 @@ class MainWindow(QMainWindow):
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange and hasattr(self, "rich_max_btn"):
-            self.rich_max_btn.setText("❐" if self.isMaximized() else "□")
+            if self.isMaximized():
+                self._snap_docked = False
+            self._refresh_rich_title_icons()
 
     def _update_track_item_heights(self) -> None:
         for row in range(self.track_list.count()):
@@ -2530,44 +2684,89 @@ def _make_folder_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
     return QIcon(pix)
 
 
-def _make_moon_icon() -> QIcon:
+def _make_rich_title_icon(kind: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(pix)
     painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor("#f0c95a"), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    pen = QPen(QColor(color), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
-    painter.setBrush(QColor("#f0c95a"))
-    painter.drawEllipse(QRectF(6, 4, 12, 12))
-    painter.setBrush(QColor("#1a2434"))
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.drawEllipse(QRectF(10, 4, 10, 12))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    k = (kind or "").strip().lower()
+    if k == "min":
+        # 80% of previous visual length
+        painter.drawLine(QPoint(8, 16), QPoint(16, 16))
+    elif k == "restore":
+        painter.drawRect(QRectF(7.2, 8.2, 9.2, 9.2))
+        painter.drawRect(QRectF(9.8, 5.8, 9.2, 9.2))
+    elif k == "close":
+        # 150% visual size
+        painter.drawLine(QPoint(6, 6), QPoint(18, 18))
+        painter.drawLine(QPoint(18, 6), QPoint(6, 18))
+    else:
+        # 160% visual size for maximize square
+        painter.drawRect(QRectF(6.4, 6.4, 11.2, 11.2))
+
     painter.end()
     return QIcon(pix)
 
 
-def _make_sun_icon() -> QIcon:
+def _make_moon_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(pix)
     painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor("#e89a2d"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    pen = QPen(QColor(color), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
-    painter.setBrush(QColor("#f7c45c"))
-    painter.drawEllipse(QRectF(7, 7, 10, 10))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    # Crescent arc pair (simple curved moon)
+    painter.drawArc(5, 4, 13, 16, 65 * 16, 230 * 16)
+    painter.drawArc(9, 5, 10, 14, 110 * 16, 190 * 16)
+    painter.end()
+    return QIcon(pix)
+
+
+def _make_sun_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
+    pix = QPixmap(24, 24)
+    pix.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pix)
+    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(color), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawEllipse(QRectF(8, 8, 8, 8))
     for x1, y1, x2, y2 in (
         (12, 2.5, 12, 5.2),
         (12, 18.8, 12, 21.5),
         (2.5, 12, 5.2, 12),
         (18.8, 12, 21.5, 12),
-        (5.0, 5.0, 6.8, 6.8),
-        (17.0, 17.0, 18.8, 18.8),
-        (5.0, 19.0, 6.8, 17.2),
-        (17.0, 7.0, 18.8, 5.2),
+        (5.1, 5.1, 6.9, 6.9),
+        (17.1, 17.1, 18.9, 18.9),
+        (5.1, 18.9, 6.9, 17.1),
+        (17.1, 6.9, 18.9, 5.1),
     ):
         painter.drawLine(QPoint(int(round(x1)), int(round(y1))), QPoint(int(round(x2)), int(round(y2))))
+    painter.end()
+    return QIcon(pix)
+
+
+def _make_sidebar_toggle_icon(*, collapsed: bool, color: QColor | str = "#f4f4f4") -> QIcon:
+    pix = QPixmap(24, 24)
+    pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(color), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    # Show next action direction:
+    # expanded -> ">" (collapse), collapsed -> "<" (expand)
+    if collapsed:
+        painter.drawPolyline([QPoint(15, 7), QPoint(9, 12), QPoint(15, 17)])
+    else:
+        painter.drawPolyline([QPoint(9, 7), QPoint(15, 12), QPoint(9, 17)])
     painter.end()
     return QIcon(pix)
 

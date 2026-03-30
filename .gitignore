@@ -1,5 +1,6 @@
 **/__pycache__/
 .venv
+.build
 test*
 _library_test_*
 *.log

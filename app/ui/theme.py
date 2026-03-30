@@ -16,14 +16,15 @@ QMainWindow {{
 }}
 
 QFrame#RichTitleBar {{
-    background: transparent;
-    border: none;
+    background: rgba(167, 192, 128, 0.22);
+    border: 1px solid rgba(128, 146, 103, 0.45);
 }}
 
 QLabel#RichTitleLabel {{
     color: #1c211e;
     font-size: 14px;
     font-weight: 600;
+    padding-left: 4px;
 }}
 
 QToolButton#RichTitleButton {{
@@ -73,10 +74,18 @@ QLabel#CaptionLabel {{
 }}
 
 QLabel#RandomStateHintLabel {{
-    color: #748276;
+    color: #5f6c5f;
     background: transparent;
     padding: 0px 6px;
     font-size: 12px;
+}}
+
+QLabel#VersionHintLabel {{
+    color: #4f6442;
+    background: transparent;
+    padding: 0px 4px;
+    font-size: 12px;
+    font-weight: 600;
 }}
 
 QMenuBar {{
@@ -363,14 +372,15 @@ QMainWindow {{
 }}
 
 QFrame#RichTitleBar {{
-    background: transparent;
-    border: none;
+    background: rgba(129, 233, 139, 0.12);
+    border: 1px solid rgba(129, 233, 139, 0.30);
 }}
 
 QLabel#RichTitleLabel {{
     color: #f1f1f1;
     font-size: 14px;
     font-weight: 600;
+    padding-left: 4px;
 }}
 
 QToolButton#RichTitleButton {{
@@ -420,10 +430,18 @@ QLabel#CaptionLabel {{
 }}
 
 QLabel#RandomStateHintLabel {{
-    color: #9fae9f;
+    color: #b7c4b7;
     background: transparent;
     padding: 0px 6px;
     font-size: 12px;
+}}
+
+QLabel#VersionHintLabel {{
+    color: #d0ddc6;
+    background: transparent;
+    padding: 0px 4px;
+    font-size: 12px;
+    font-weight: 600;
 }}
 
 QMenuBar {{

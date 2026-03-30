@@ -94,12 +94,12 @@ class Playlist:
 class Settings:
     control_host: str = "127.0.0.1"
     control_port: int = 43121
-    control_interface_enabled: bool = True
+    control_interface_enabled: bool = False
     auto_restore_session: bool = True
     logging_enabled: bool = False
     enable_playlist_loop_mode: bool = False
     collect_playback_data: bool = True
-    global_gain_boost: float = 1.35
+    global_gain_boost: float = 1.0
     read_strategy: str = "window"
     timed_save_enabled: bool = False
     timed_save_minutes: int = 5
@@ -139,12 +139,12 @@ class Settings:
         return cls(
             control_host=str(data.get("control_host", "127.0.0.1")),
             control_port=max(1, min(65535, int(data.get("control_port", 43121)))),
-            control_interface_enabled=bool(data.get("control_interface_enabled", True)),
+            control_interface_enabled=bool(data.get("control_interface_enabled", False)),
             auto_restore_session=bool(data.get("auto_restore_session", True)),
             logging_enabled=bool(data.get("logging_enabled", False)),
             enable_playlist_loop_mode=bool(data.get("enable_playlist_loop_mode", False)),
             collect_playback_data=bool(data.get("collect_playback_data", True)),
-            global_gain_boost=max(0.5, min(5.0, float(data.get("global_gain_boost", 1.35)))),
+            global_gain_boost=max(0.5, min(5.0, float(data.get("global_gain_boost", 1.0)))),
             read_strategy=read_strategy,
             timed_save_enabled=bool(data.get("timed_save_enabled", False)),
             timed_save_minutes=max(1, min(1440, int(data.get("timed_save_minutes", 5)))),
@@ -162,7 +162,7 @@ class SessionState:
     current_playlist_id: str | None = None
     current_track_id: str | None = None
     position_sec: float = 0.0
-    volume: float = 0.8
+    volume: float = 1.0
     play_mode: str = "single_loop"
     random_seed: int = 1
     random_index: int = 0
@@ -184,7 +184,7 @@ class SessionState:
             current_playlist_id=data.get("current_playlist_id"),
             current_track_id=data.get("current_track_id"),
             position_sec=max(0.0, float(data.get("position_sec", 0.0))),
-            volume=max(0.0, min(1.0, float(data.get("volume", 0.8)))),
+            volume=max(0.0, min(1.0, float(data.get("volume", 1.0)))),
             play_mode=str(data.get("play_mode", "single_loop")),
             random_seed=max(0, int(data.get("random_seed", 1))),
             random_index=max(0, int(data.get("random_index", 0))),

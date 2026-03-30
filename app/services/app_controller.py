@@ -66,7 +66,7 @@ class AppController(QObject):
         if self.settings.auto_restore_session:
             self.player_service.restore_session(self.session_store.load())
         else:
-            self.player_service.set_volume(0.8)
+            self.player_service.set_volume(1.0)
 
         if self.settings.control_interface_enabled:
             self.start_runtime_server()
