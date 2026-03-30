@@ -103,6 +103,7 @@ class Settings:
     read_strategy: str = "window"
     timed_save_enabled: bool = False
     timed_save_minutes: int = 5
+    dark_theme: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -117,6 +118,7 @@ class Settings:
             "read_strategy": self.read_strategy,
             "timed_save_enabled": bool(self.timed_save_enabled),
             "timed_save_minutes": int(self.timed_save_minutes),
+            "dark_theme": bool(self.dark_theme),
         }
 
     @classmethod
@@ -136,6 +138,7 @@ class Settings:
             read_strategy=read_strategy,
             timed_save_enabled=bool(data.get("timed_save_enabled", False)),
             timed_save_minutes=max(1, min(1440, int(data.get("timed_save_minutes", 5)))),
+            dark_theme=bool(data.get("dark_theme", True)),
         )
 
 

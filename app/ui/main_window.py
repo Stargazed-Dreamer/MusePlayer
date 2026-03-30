@@ -1,9 +1,13 @@
 ﻿from __future__ import annotations
 
+import ctypes
 import html
 import re
 import subprocess
+import sys
+import time
 from bisect import bisect_right
+from ctypes import HRESULT, c_int, c_uint, c_ulonglong, c_void_p
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QEvent, QTimer, Qt, QRect, QRectF, QSize, Signal, QPoint
@@ -35,6 +39,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QSizePolicy,
     QSpacerItem,
+    QStatusBar,
     QSlider,
     QSplitter,
     QStyle,
@@ -51,8 +56,125 @@ from app.services.app_controller import AppController
 from app.services.player_service import PlayMode
 from app.ui.playlist_dialog import PlaylistDialog
 from app.ui.settings_dialog import SettingsDialog
+from app.ui.theme import APP_STYLE_DARK, APP_STYLE_LIGHT
+
+try:
+    import comtypes
+    from comtypes import COMMETHOD, GUID, IUnknown
+except Exception:
+    comtypes = None
+    COMMETHOD = None
+    GUID = None
+    IUnknown = object
 
 _LRC_RE = re.compile(r"\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]")
+
+TBPF_NOPROGRESS = 0x00000000
+TBPF_INDETERMINATE = 0x00000001
+TBPF_NORMAL = 0x00000002
+TBPF_ERROR = 0x00000003
+TBPF_PAUSED = 0x00000004
+
+CLSID_TASKBAR_LIST = "{56FDF344-FD6D-11d0-958A-006097C9A090}"
+IID_ITASKBAR_LIST3 = "{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEA84}"
+
+
+if comtypes is not None and COMMETHOD is not None and GUID is not None:
+    class ITaskbarList3(IUnknown):
+        _iid_ = GUID(IID_ITASKBAR_LIST3)
+        _methods_ = [
+            COMMETHOD([], HRESULT, "HrInit"),
+            COMMETHOD([], HRESULT, "AddTab", (["in"], c_void_p, "hwnd")),
+            COMMETHOD([], HRESULT, "DeleteTab", (["in"], c_void_p, "hwnd")),
+            COMMETHOD([], HRESULT, "ActivateTab", (["in"], c_void_p, "hwnd")),
+            COMMETHOD([], HRESULT, "SetActiveAlt", (["in"], c_void_p, "hwnd")),
+            COMMETHOD([], HRESULT, "MarkFullscreenWindow", (["in"], c_void_p, "hwnd"), (["in"], c_int, "fFullscreen")),
+            COMMETHOD([], HRESULT, "SetProgressValue", (["in"], c_void_p, "hwnd"), (["in"], c_ulonglong, "ullCompleted"), (["in"], c_ulonglong, "ullTotal")),
+            COMMETHOD([], HRESULT, "SetProgressState", (["in"], c_void_p, "hwnd"), (["in"], c_int, "tbpFlags")),
+            COMMETHOD([], HRESULT, "RegisterTab", (["in"], c_void_p, "h1"), (["in"], c_void_p, "h2")),
+            COMMETHOD([], HRESULT, "UnregisterTab", (["in"], c_void_p, "h")),
+            COMMETHOD([], HRESULT, "SetTabOrder", (["in"], c_void_p, "h1"), (["in"], c_void_p, "h2")),
+            COMMETHOD([], HRESULT, "SetTabActive", (["in"], c_void_p, "h1"), (["in"], c_void_p, "h2"), (["in"], c_int, "f")),
+            COMMETHOD([], HRESULT, "ThumbBarAddButtons", (["in"], c_void_p, "h"), (["in"], c_uint, "n"), (["in"], c_void_p, "p")),
+            COMMETHOD([], HRESULT, "ThumbBarUpdateButtons", (["in"], c_void_p, "h"), (["in"], c_uint, "n"), (["in"], c_void_p, "p")),
+            COMMETHOD([], HRESULT, "ThumbBarSetImageList", (["in"], c_void_p, "h"), (["in"], c_void_p, "p")),
+            COMMETHOD([], HRESULT, "SetOverlayIcon", (["in"], c_void_p, "h"), (["in"], c_void_p, "p1"), (["in"], c_void_p, "p2")),
+            COMMETHOD([], HRESULT, "SetThumbnailTooltip", (["in"], c_void_p, "h"), (["in"], c_void_p, "p")),
+            COMMETHOD([], HRESULT, "SetThumbnailClip", (["in"], c_void_p, "h"), (["in"], c_void_p, "p")),
+        ]
+else:
+    class ITaskbarList3:
+        pass
+
+
+class MultiHintStatusBar(QStatusBar):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._hints: dict[str, tuple[str, float | None, int]] = {}
+        self._order_counter = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(160)
+        self._timer.timeout.connect(self._prune_and_render)
+        self._timer.start()
+
+    def showMessage(self, message: str, timeout: int = 0) -> None:
+        key = self._infer_key(message)
+        self.set_hint(key=key, text=message, timeout_ms=timeout)
+
+    def clearMessage(self) -> None:
+        self._hints.clear()
+        QStatusBar.showMessage(self, "", 0)
+
+    def set_hint(self, key: str, text: str, timeout_ms: int = 0) -> None:
+        if not text:
+            self.clear_hint(key)
+            return
+        now = self._now_sec()
+        expire = (now + max(0, int(timeout_ms)) / 1000.0) if timeout_ms > 0 else None
+        order = self._hints[key][2] if key in self._hints else self._next_order()
+        self._hints[key] = (str(text), expire, order)
+        self._render()
+
+    def clear_hint(self, key: str) -> None:
+        if key in self._hints:
+            self._hints.pop(key, None)
+            self._render()
+
+    def _render(self) -> None:
+        if not self._hints:
+            QStatusBar.showMessage(self, "", 0)
+            return
+        ordered = sorted(self._hints.items(), key=lambda kv: kv[1][2])
+        text = " - ".join(v[0] for _, v in ordered if v[0])
+        QStatusBar.showMessage(self, text, 0)
+
+    def _prune_and_render(self) -> None:
+        now = self._now_sec()
+        expired = [k for k, (_, e, _) in self._hints.items() if e is not None and e <= now]
+        if not expired:
+            return
+        for key in expired:
+            self._hints.pop(key, None)
+        self._render()
+
+    def _infer_key(self, message: str) -> str:
+        text = (message or "").strip()
+        if not text:
+            return "状态"
+        for sep in ("：", ":", " - ", "-", " "):
+            if sep in text:
+                head = text.split(sep, 1)[0].strip()
+                if head:
+                    return head
+        return "状态"
+
+    def _next_order(self) -> int:
+        self._order_counter += 1
+        return self._order_counter
+
+    @staticmethod
+    def _now_sec() -> float:
+        return time.monotonic()
 
 
 class LyricsListWidget(QListWidget):
@@ -353,6 +475,7 @@ class TrackListItemWidget(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self, controller: AppController):
         super().__init__()
+        self.setStatusBar(MultiHintStatusBar(self))
         self.controller = controller
         self.player = controller.player_service
 
@@ -395,6 +518,9 @@ class MainWindow(QMainWindow):
         self._lyrics_auto_adjusting = False
         self._last_nonzero_gain = max(1, int(self.player.gain_percent()))
         self._current_track_title = "未选择歌曲"
+        self._next_track_preview_announced = False
+        self._dark_theme = True
+        self._taskbar_progress = _WindowsTaskbarProgress()
         self._lyrics_resume_timer = QTimer(self)
         self._lyrics_resume_timer.setSingleShot(True)
         self._lyrics_resume_timer.setInterval(2200)
@@ -417,8 +543,13 @@ class MainWindow(QMainWindow):
         self._on_mode_changed(self.player.mode.value)
         self._on_playback_changed(self.player.is_playing())
         self._refresh_volume_ui()
+        self._apply_theme_stylesheet()
+        self._refresh_theme_button()
+        self._refresh_random_state_hint()
+        self._update_window_title()
 
         QTimer.singleShot(0, self._reposition_sidebar_toggle)
+        QTimer.singleShot(0, self._ensure_taskbar_progress_initialized)
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -536,6 +667,9 @@ class MainWindow(QMainWindow):
         control_row = QHBoxLayout()
         control_row.setSpacing(8)
 
+        self.theme_btn = self._new_icon_button("ControlIconButton")
+        self.theme_btn.setToolTip("切换到日间模式")
+
         self.locate_file_btn = self._new_icon_button("ControlIconButton")
         self.locate_file_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.locate_file_btn.setToolTip("在资源管理器中定位当前文件")
@@ -584,6 +718,7 @@ class MainWindow(QMainWindow):
             self.speed_combo.addItem(f"{rate:.2g}x", rate)
         self._sync_speed_combo()
 
+        control_row.addWidget(self.theme_btn)
         control_row.addWidget(self.locate_file_btn)
         control_row.addWidget(self.mode_btn)
         control_row.addWidget(self.prev_btn)
@@ -671,7 +806,7 @@ class MainWindow(QMainWindow):
         self.compact_top_bar.hide()
         self._refresh_compact_top_buttons()
 
-        self.statusBar().showMessage("就绪")
+        self.statusBar().showMessage("就绪", 1800)
         QTimer.singleShot(0, self._reposition_volume_value_label)
 
     def _build_menu(self) -> None:
@@ -689,6 +824,13 @@ class MainWindow(QMainWindow):
 
         action_settings = self.menuBar().addAction("设置")
 
+        self.random_state_label = QLabel("")
+        self.random_state_label.setObjectName("RandomStateHintLabel")
+        self.random_state_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.random_state_label.setMinimumWidth(170)
+        self.menuBar().setCornerWidget(self.random_state_label, Qt.Corner.TopRightCorner)
+        self.random_state_label.hide()
+
         for menu in (menu_file,):
             menu.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
             menu.setMouseTracking(True)
@@ -700,6 +842,7 @@ class MainWindow(QMainWindow):
         action_settings.triggered.connect(self._open_settings_dialog)
 
     def _bind_signals(self) -> None:
+        self.theme_btn.clicked.connect(self._toggle_theme)
         self.locate_file_btn.clicked.connect(self._open_current_in_explorer)
         self.prev_btn.clicked.connect(self._play_previous_track)
         self.play_btn.clicked.connect(self.player.toggle_play_pause)
@@ -723,6 +866,7 @@ class MainWindow(QMainWindow):
         self.player.progress_changed.connect(self._on_progress_changed)
         self.player.playback_changed.connect(self._on_playback_changed)
         self.player.mode_changed.connect(self._on_mode_changed)
+        self.player.random_state_changed.connect(self._on_random_state_changed)
         self.player.playback_rate_changed.connect(self._on_playback_rate_changed)
         self.player.queue_changed.connect(self._on_queue_changed)
 
@@ -834,6 +978,7 @@ class MainWindow(QMainWindow):
         return max(24, bounds.height() + 8)
 
     def _refresh_current_track_ui(self, track: Track | None) -> None:
+        self._next_track_preview_announced = False
         if track is None:
             self.title_label.setText("未选择歌曲")
             self.artist_label.setText("歌手")
@@ -842,9 +987,11 @@ class MainWindow(QMainWindow):
             self._current_track_title = "未选择歌曲"
             self.compact_top_title_label.setText(self._current_track_title)
             self.progress_center_label.setText("♪" if self._compact_mode else "")
+            self._update_window_title()
             self._set_cover(None)
             self._load_lyrics("")
             self._refresh_now_card_layout()
+            self._refresh_random_state_hint()
             return
 
         self._current_track_title = track.title or "未知标题"
@@ -860,6 +1007,8 @@ class MainWindow(QMainWindow):
         self._load_lyrics(lyrics)
         self._set_cover(self.controller.get_current_cover())
         self._refresh_now_card_layout()
+        self._update_window_title()
+        self._refresh_random_state_hint()
 
         self._sync_current_track_row(center=True)
         self._update_locate_current_button()
@@ -981,6 +1130,8 @@ class MainWindow(QMainWindow):
     def _on_progress_changed(self, position: float, duration: float) -> None:
         self.current_time_label.setText(_format_time(position))
         self.total_time_label.setText(_format_time(duration))
+        self._update_taskbar_progress(position, duration)
+        self._maybe_show_next_track_preview(position, duration)
 
         if not self._lyrics_user_scrolling:
             self._sync_lyrics_with_position(position)
@@ -1084,6 +1235,74 @@ class MainWindow(QMainWindow):
         self.mode_btn.setIcon(self._mode_icons.get(mode, self._mode_icons[fallback]))
         title = self._mode_titles.get(mode, self._mode_titles[fallback])
         self.mode_btn.setToolTip(f"播放模式: {title}（点击切换）")
+        self._next_track_preview_announced = False
+        self._refresh_random_state_hint()
+
+    def _toggle_theme(self) -> None:
+        self._dark_theme = not self._dark_theme
+        self._apply_theme_stylesheet()
+        self._refresh_theme_button()
+        self.statusBar().showMessage("主题：夜间模式" if self._dark_theme else "主题：日间模式", 1800)
+
+    def _apply_theme_stylesheet(self) -> None:
+        app = QApplication.instance()
+        if app is None:
+            return
+        app.setStyleSheet(APP_STYLE_DARK if self._dark_theme else APP_STYLE_LIGHT)
+
+    def _refresh_theme_button(self) -> None:
+        if not hasattr(self, "theme_btn"):
+            return
+        if self._dark_theme:
+            self.theme_btn.setIcon(_make_sun_icon())
+            self.theme_btn.setToolTip("切换到日间模式")
+        else:
+            self.theme_btn.setIcon(_make_moon_icon())
+            self.theme_btn.setToolTip("切换到夜间模式")
+
+    def _on_random_state_changed(self, seed: int, idx: int) -> None:
+        _ = seed, idx
+        self._refresh_random_state_hint()
+
+    def _refresh_random_state_hint(self) -> None:
+        if not hasattr(self, "random_state_label"):
+            return
+        if self.player.mode != PlayMode.RANDOM:
+            self.random_state_label.setText("")
+            self.random_state_label.hide()
+            return
+        self.random_state_label.setText(f"seed:{self.player.random_seed}  idx:{self.player.random_index}")
+        self.random_state_label.show()
+
+    def _update_window_title(self) -> None:
+        title = (self._current_track_title or "").strip()
+        if not title or title == "未选择歌曲":
+            self.setWindowTitle("MusePlayer")
+            return
+        self.setWindowTitle(f"{title} - MusePlayer")
+
+    def _maybe_show_next_track_preview(self, position: float, duration: float) -> None:
+        status = self.statusBar()
+        if duration <= 0.0 or not self.player.is_playing():
+            if isinstance(status, MultiHintStatusBar):
+                status.clear_hint("下一首")
+            return
+        remaining = max(0.0, float(duration) - float(position))
+        if remaining > 5.0:
+            if isinstance(status, MultiHintStatusBar):
+                status.clear_hint("下一首")
+            return
+        next_track = self.player.preview_next_track()
+        if next_track is None:
+            if isinstance(status, MultiHintStatusBar):
+                status.clear_hint("下一首")
+            return
+        title = (next_track.title or "未知标题").strip() or "未知标题"
+        left = max(0, int(round(remaining)))
+        if isinstance(status, MultiHintStatusBar):
+            status.set_hint("下一首", f"下一首：{title}（{left}s）", 1200)
+        else:
+            self.statusBar().showMessage(f"下一首：{title}（{left}s）", 1200)
 
     def _toggle_mute(self) -> None:
         gain = self.player.gain_percent()
@@ -1506,6 +1725,18 @@ class MainWindow(QMainWindow):
         if target_x != geo.x() or target_y != geo.y():
             self.move(target_x, target_y)
 
+    def _ensure_taskbar_progress_initialized(self) -> None:
+        hwnd = int(self.winId()) if sys.platform.startswith("win") else 0
+        if hwnd <= 0:
+            return
+        self._taskbar_progress.attach(hwnd)
+
+    def _update_taskbar_progress(self, position: float, duration: float) -> None:
+        if not sys.platform.startswith("win"):
+            return
+        self._ensure_taskbar_progress_initialized()
+        self._taskbar_progress.set_progress(position, duration)
+
     def _toggle_sidebar(self) -> None:
         if self._compact_mode:
             return
@@ -1815,9 +2046,87 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         try:
+            self._taskbar_progress.clear()
+            self._taskbar_progress.close()
             self.controller.shutdown()
         finally:
             super().closeEvent(event)
+
+
+class _WindowsTaskbarProgress:
+    def __init__(self) -> None:
+        self._enabled = bool(sys.platform.startswith("win") and comtypes is not None)
+        self._taskbar = None
+        self._hwnd = 0
+        self._ready = False
+        if not self._enabled:
+            return
+        try:
+            self._shell32 = ctypes.WinDLL("shell32")
+            try:
+                self._shell32.SetCurrentProcessExplicitAppUserModelID(ctypes.c_wchar_p("MusePlayer.Desktop"))
+            except Exception:
+                pass
+        except Exception:
+            self._enabled = False
+
+    def attach(self, hwnd: int) -> bool:
+        if not self._enabled:
+            return False
+        if hwnd <= 0:
+            return False
+        self._hwnd = int(hwnd)
+        if self._ready:
+            return True
+        try:
+            comtypes.CoInitialize()
+        except Exception:
+            return False
+        try:
+            tb = comtypes.CoCreateInstance(
+                GUID(CLSID_TASKBAR_LIST),
+                interface=ITaskbarList3,
+                clsctx=comtypes.CLSCTX_INPROC_SERVER,
+            )
+            tb.HrInit()
+        except Exception:
+            return False
+        self._taskbar = tb
+        self._ready = True
+        if self._ready:
+            self.clear()
+        return self._ready
+
+    def set_progress(self, position: float, duration: float) -> None:
+        if not self._ready or self._hwnd <= 0:
+            return
+        if duration <= 0.0:
+            self.clear()
+            return
+        ratio = max(0.0, min(1.0, float(position) / float(duration)))
+        value = int(round(ratio * 1000.0))
+        try:
+            self._taskbar.SetProgressState(c_void_p(self._hwnd), TBPF_NORMAL)
+            self._taskbar.SetProgressValue(c_void_p(self._hwnd), c_ulonglong(value), c_ulonglong(1000))
+        except Exception:
+            self._ready = False
+
+    def clear(self) -> None:
+        if not self._ready or self._hwnd <= 0:
+            return
+        try:
+            self._taskbar.SetProgressState(c_void_p(self._hwnd), TBPF_NOPROGRESS)
+        except Exception:
+            self._ready = False
+
+    def close(self) -> None:
+        self._taskbar = None
+        self._ready = False
+        if self._enabled and comtypes is not None:
+            try:
+                comtypes.CoUninitialize()
+            except Exception:
+                pass
 
 
 def _format_time(sec: float) -> str:
@@ -1931,6 +2240,48 @@ def _make_crosshair_icon() -> QIcon:
     painter.drawLine(12, 16, 12, 20)
     painter.drawLine(4, 12, 8, 12)
     painter.drawLine(16, 12, 20, 12)
+    painter.end()
+    return QIcon(pix)
+
+
+def _make_moon_icon() -> QIcon:
+    pix = QPixmap(24, 24)
+    pix.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pix)
+    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor("#f0c95a"), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(QColor("#f0c95a"))
+    painter.drawEllipse(QRectF(6, 4, 12, 12))
+    painter.setBrush(QColor("#1a2434"))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.drawEllipse(QRectF(10, 4, 10, 12))
+    painter.end()
+    return QIcon(pix)
+
+
+def _make_sun_icon() -> QIcon:
+    pix = QPixmap(24, 24)
+    pix.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pix)
+    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor("#e89a2d"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(QColor("#f7c45c"))
+    painter.drawEllipse(QRectF(7, 7, 10, 10))
+    for x1, y1, x2, y2 in (
+        (12, 2.5, 12, 5.2),
+        (12, 18.8, 12, 21.5),
+        (2.5, 12, 5.2, 12),
+        (18.8, 12, 21.5, 12),
+        (5.0, 5.0, 6.8, 6.8),
+        (17.0, 17.0, 18.8, 18.8),
+        (5.0, 19.0, 6.8, 17.2),
+        (17.0, 7.0, 18.8, 5.2),
+    ):
+        painter.drawLine(QPoint(int(round(x1)), int(round(y1))), QPoint(int(round(x2)), int(round(y2))))
     painter.end()
     return QIcon(pix)
 

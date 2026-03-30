@@ -345,6 +345,47 @@ class PlayerService(QObject):
     def search_playlist_tracks(self, keyword: str) -> list[Track]:
         return self.library.search_playlist_tracks(self._current_playlist_id, keyword)
 
+    def preview_next_track(self) -> Track | None:
+        track_ids = self._playlist_track_ids()
+        if not track_ids:
+            return None
+
+        current_id = self._current_track_id if self._current_track_id in track_ids else track_ids[0]
+        if not current_id:
+            return None
+
+        if self._mode == PlayMode.SINGLE_LOOP:
+            return self.library.get_track(current_id)
+
+        if self._mode == PlayMode.RANDOM:
+            order = list(self._random_order)
+            if set(order) != set(track_ids) or len(order) != len(track_ids):
+                order = DeterministicShuffle.make_order(track_ids, self._random_seed)
+            if not order:
+                return None
+
+            if current_id in order:
+                idx = order.index(current_id)
+            else:
+                idx = DeterministicShuffle.clamp_index(order, self._random_index)
+
+            if idx + 1 >= len(order):
+                next_seed = self._random_seed + 1
+                next_order = DeterministicShuffle.make_order(track_ids, next_seed)
+                if not next_order:
+                    return None
+                target_id = next_order[0]
+            else:
+                target_id = order[idx + 1]
+            return self.library.get_track(target_id)
+
+        if current_id in track_ids:
+            idx = track_ids.index(current_id)
+        else:
+            idx = 0
+        target_id = track_ids[(idx + 1) % len(track_ids)]
+        return self.library.get_track(target_id)
+
     def play_track(
         self,
         track_id: str,
@@ -607,10 +648,18 @@ class PlayerService(QObject):
         try:
             if auto_play and strategy == "window":
                 self._core.load(source, start_sec=target_start, window_sec=self._LAZY_WINDOW_SEC)
-                self._lazy_window_mode = True
-                self._lazy_window_base_sec = target_start
-                self._lazy_elapsed_play_sec = 0.0
-                self._lazy_promoted_to_full = False
+                loaded_sec = max(0.0, float(self._core.duration()))
+                if loaded_sec <= 0.02:
+                    self._core.load(source)
+                    self._lazy_window_mode = False
+                    self._lazy_window_base_sec = 0.0
+                    self._lazy_elapsed_play_sec = 0.0
+                    self._lazy_promoted_to_full = True
+                else:
+                    self._lazy_window_mode = True
+                    self._lazy_window_base_sec = target_start
+                    self._lazy_elapsed_play_sec = 0.0
+                    self._lazy_promoted_to_full = False
             else:
                 self._core.load(source)
                 self._lazy_window_mode = False
@@ -781,10 +830,26 @@ class PlayerService(QObject):
         source = Path(track.path)
         self._reset_lazy_prefetch(cancel=False)
         self._core.load(source, start_sec=max(0.0, target_sec), window_sec=self._LAZY_WINDOW_SEC)
+        loaded_sec = max(0.0, float(self._core.duration()))
+        if loaded_sec <= 0.02:
+            self._core.load(source)
+            self._apply_core_volume()
+            self._core.set_playback_rate(self._playback_rate)
+            self._lazy_window_mode = False
+            self._lazy_window_base_sec = 0.0
+            self._lazy_promoted_to_full = True
+            if keep_playing:
+                self._core.play(max(0.0, target_sec))
+                self._expecting_natural_end = True
+            else:
+                self._core.seek(max(0.0, target_sec))
+                self._expecting_natural_end = False
+            return
         self._apply_core_volume()
         self._core.set_playback_rate(self._playback_rate)
         self._lazy_window_mode = True
         self._lazy_window_base_sec = max(0.0, target_sec)
+        self._lazy_promoted_to_full = False
         if keep_playing:
             self._core.play(0.0)
             self._expecting_natural_end = True

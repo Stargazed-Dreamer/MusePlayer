@@ -335,6 +335,8 @@ class PyAVPlayerCore:
         start_sec = max(0.0, float(start_sec))
         decode_window = None if window_sec is None else max(0.05, float(window_sec))
         decode_end = None if decode_window is None else start_sec + decode_window
+        seek_target = 0.0
+        seek_used = False
 
         chunks: list[np.ndarray] = []
         try:
@@ -348,6 +350,7 @@ class PyAVPlayerCore:
                     seek_target = max(0.0, start_sec - 0.30)
                     try:
                         container.seek(int(seek_target * av.time_base), stream=stream, backward=True)
+                        seek_used = True
                     except Exception:
                         pass
 
@@ -402,13 +405,15 @@ class PyAVPlayerCore:
 
         if decode_window is not None:
             if start_sec > 0.0:
-                trim_sec = start_sec
-                if 'first_frame_time' in locals() and first_frame_time is not None:
+                trim_sec = 0.0
+                if "first_frame_time" in locals() and first_frame_time is not None:
                     trim_sec = max(0.0, start_sec - first_frame_time)
+                elif seek_used:
+                    trim_sec = max(0.0, start_sec - seek_target)
                 trim_frames = int(round(trim_sec * sample_rate))
                 if trim_frames > 0:
-                    trim_frames = min(trim_frames, pcm.shape[0])
-                    pcm = pcm[trim_frames:]
+                    if trim_frames < pcm.shape[0]:
+                        pcm = pcm[trim_frames:]
             limit_frames = int(round(decode_window * sample_rate))
             if limit_frames > 0 and pcm.shape[0] > limit_frames:
                 pcm = pcm[:limit_frames]
