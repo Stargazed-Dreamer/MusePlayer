@@ -342,22 +342,17 @@ class LyricsItemDelegate(QStyledItemDelegate):
         text = str(index.data(Qt.ItemDataRole.DisplayRole) or "♪")
         rect = opt.rect.adjusted(4, 0, -4, 0)
         is_hover = row == self._hover_row and row < len(self._start_times) and row < len(self._end_times)
+        time_w = max(36, opt.fontMetrics.horizontalAdvance("00:00") + 6)
+        left_rect = QRect(rect.left(), rect.top(), time_w, rect.height())
+        right_rect = QRect(rect.right() - time_w + 1, rect.top(), time_w, rect.height())
+        text_rect = QRect(left_rect.right() + 4, rect.top(), max(1, rect.width() - time_w * 2 - 8), rect.height())
 
         if is_hover:
-            time_w = max(36, opt.fontMetrics.horizontalAdvance("00:00") + 6)
-            left_rect = QRect(rect.left(), rect.top(), time_w, rect.height())
-            right_rect = QRect(rect.right() - time_w + 1, rect.top(), time_w, rect.height())
-            text_rect = QRect(left_rect.right() + 4, rect.top(), max(1, rect.width() - time_w * 2 - 8), rect.height())
-
             painter.setPen(QColor("#5f7892"))
             painter.drawText(left_rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), _format_lrc_time(self._start_times[row]))
             painter.drawText(right_rect, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), _format_lrc_time(self._end_times[row]))
-        else:
-            text_rect = rect
 
         text_pen = opt.palette.color(opt.palette.ColorRole.Text)
-        if opt.state & QStyle.StateFlag.State_Selected:
-            text_pen = opt.palette.color(opt.palette.ColorRole.HighlightedText)
         painter.setPen(text_pen)
         painter.drawText(text_rect, int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), text)
         painter.restore()
@@ -401,8 +396,6 @@ class TrackItemDelegate(QStyledItemDelegate):
             painter.drawText(rm_rect, int(Qt.AlignmentFlag.AlignCenter), "×")
 
         text_pen = opt.palette.color(opt.palette.ColorRole.Text)
-        if opt.state & QStyle.StateFlag.State_Selected:
-            text_pen = opt.palette.color(opt.palette.ColorRole.HighlightedText)
         painter.setPen(text_pen)
         painter.drawText(
             text_rect,
@@ -517,8 +510,11 @@ class MainWindow(QMainWindow):
         self._lyrics_current_index = -1
         self._lyrics_user_scrolling = False
         self._lyrics_auto_adjusting = False
+        self._has_cover_content = False
+        self._has_lyrics_content = False
         self._last_nonzero_gain = max(1, int(self.player.gain_percent()))
         self._current_track_title = "未选择歌曲"
+        self._current_track_artist = "未知歌手"
         self._next_track_preview_announced = False
         self._dark_theme = bool(getattr(self.controller.settings, "dark_theme", True))
         self._taskbar_progress = _WindowsTaskbarProgress()
@@ -648,7 +644,7 @@ class MainWindow(QMainWindow):
         media_row = QHBoxLayout(self.info_media_row_widget)
         media_row.setContentsMargins(0, 0, 0, 0)
         media_row.setSpacing(12)
-        media_row.addWidget(self.cover_label, 0, Qt.AlignmentFlag.AlignTop)
+        media_row.addWidget(self.cover_label, 0, Qt.AlignmentFlag.AlignVCenter)
         media_row.addWidget(self.lyrics_list, 1)
 
         now_layout.addItem(self._meta_top_spacer)
@@ -1040,6 +1036,7 @@ class MainWindow(QMainWindow):
             self.album_label.setText("专辑")
             self.path_label.setText("")
             self._current_track_title = "未选择歌曲"
+            self._current_track_artist = "未知歌手"
             self.compact_top_title_label.setText(self._current_track_title)
             self.progress_center_label.setText("♪" if self._compact_mode else "")
             self._update_window_title()
@@ -1050,8 +1047,9 @@ class MainWindow(QMainWindow):
             return
 
         self._current_track_title = track.title or "未知标题"
+        self._current_track_artist = (track.artist or "未知歌手").strip() or "未知歌手"
         self.title_label.setText(self._current_track_title)
-        self.artist_label.setText(f"歌手: {track.artist or '未知歌手'}")
+        self.artist_label.setText(f"歌手: {self._current_track_artist}")
         self.album_label.setText(f"专辑: {track.album or '未知专辑'}")
         self.path_label.setText(track.path)
         self.compact_top_title_label.setText(self._current_track_title)
@@ -1071,12 +1069,14 @@ class MainWindow(QMainWindow):
 
     def _set_cover(self, cover_data: bytes | None) -> None:
         if not cover_data:
+            self._has_cover_content = False
             self.cover_label.hide()
             return
 
         pixmap = QPixmap()
         ok = pixmap.loadFromData(cover_data)
         if not ok:
+            self._has_cover_content = False
             self.cover_label.hide()
             return
 
@@ -1085,6 +1085,7 @@ class MainWindow(QMainWindow):
             Qt.AspectRatioMode.KeepAspectRatioByExpanding,
             Qt.TransformationMode.SmoothTransformation,
         )
+        self._has_cover_content = True
         self.cover_label.show()
         self.cover_label.setText("")
         self.cover_label.setPixmap(scaled)
@@ -1105,6 +1106,7 @@ class MainWindow(QMainWindow):
         self.lyrics_delegate.set_hover_row(-1)
 
         if entries:
+            self._has_lyrics_content = True
             self.lyrics_list.show()
             for idx, (_, text) in enumerate(entries):
                 item = QListWidgetItem(text or "♪")
@@ -1117,11 +1119,13 @@ class MainWindow(QMainWindow):
 
         lines = [html.unescape(x.strip()) for x in clean.split("\n") if x.strip()]
         if not lines:
+            self._has_lyrics_content = False
             self.lyrics_list.hide()
             if self._compact_mode:
                 self.progress_center_label.setText("")
             return
 
+        self._has_lyrics_content = True
         self.lyrics_list.show()
         for line in lines:
             item = QListWidgetItem(line)
@@ -1146,8 +1150,8 @@ class MainWindow(QMainWindow):
         return end_times
 
     def _refresh_now_card_layout(self) -> None:
-        has_cover = self.cover_label.isVisible()
-        has_lyrics = self.lyrics_list.isVisible() and self.lyrics_list.count() > 0
+        has_cover = bool(self._has_cover_content)
+        has_lyrics = bool(self._has_lyrics_content)
         compact_center = not has_cover and not has_lyrics
 
         if hasattr(self, "info_media_row_widget"):
@@ -1155,16 +1159,18 @@ class MainWindow(QMainWindow):
 
         if compact_center:
             self.path_label.hide()
-            self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.artist_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.album_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.title_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+            self.artist_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+            self.album_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+            self.path_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
             self._meta_top_spacer.changeSize(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
             self._meta_bottom_spacer.changeSize(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
         else:
             self.path_label.show()
-            self.title_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            self.artist_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            self.album_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.title_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+            self.artist_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+            self.album_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+            self.path_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
             self._meta_top_spacer.changeSize(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
             self._meta_bottom_spacer.changeSize(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
@@ -1361,9 +1367,11 @@ class MainWindow(QMainWindow):
             if hasattr(self, "rich_title_label"):
                 self.rich_title_label.setText("MusePlayer")
             return
-        self.setWindowTitle(f"{title} - MusePlayer")
+        artist = (self._current_track_artist or "").strip() or "未知歌手"
+        title_text = f"{title} - {artist}"
+        self.setWindowTitle(f"{title_text} - MusePlayer")
         if hasattr(self, "rich_title_label"):
-            self.rich_title_label.setText(title)
+            self.rich_title_label.setText(title_text)
 
     def _maybe_show_next_track_preview(self, position: float, duration: float) -> None:
         status = self.statusBar()
