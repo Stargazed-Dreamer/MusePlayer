@@ -132,6 +132,14 @@ class AppController(QObject):
         ok = self.restart_runtime_server()
         return ok
 
+    def set_theme_preference(self, dark_theme: bool) -> None:
+        value = bool(dark_theme)
+        if bool(self.settings.dark_theme) == value:
+            return
+        self.settings.dark_theme = value
+        self.settings_store.save(self.settings)
+        self.settings_changed.emit(self.settings)
+
     def get_current_lyrics(self) -> str:
         track = self.player_service.current_track()
         if track is None:

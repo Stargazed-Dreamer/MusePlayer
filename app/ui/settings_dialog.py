@@ -71,6 +71,9 @@ class SettingsDialog(QDialog):
         self.logging_check = QCheckBox("启用日志（每次启动新建文件，保留最近10个）")
         self.logging_check.setChecked(bool(self._settings.logging_enabled))
 
+        self.dark_theme_check = QCheckBox("默认夜间主题")
+        self.dark_theme_check.setChecked(bool(getattr(self._settings, "dark_theme", True)))
+
         form.addRow("控制接口主机", self.host_edit)
         form.addRow("控制接口端口", self.port_spin)
         form.addRow("全局音量放大倍数", self.gain_boost_spin)
@@ -83,6 +86,7 @@ class SettingsDialog(QDialog):
         root.addWidget(self.collect_playback_data_check)
         root.addWidget(self.timed_save_check)
         root.addWidget(self.logging_check)
+        root.addWidget(self.dark_theme_check)
         self._on_control_interface_toggled(self.control_interface_check.isChecked())
         self._on_timed_save_toggled(self.timed_save_check.isChecked())
 
@@ -112,6 +116,7 @@ class SettingsDialog(QDialog):
             read_strategy=str(self.read_strategy_combo.currentData() or "window"),
             timed_save_enabled=bool(self.timed_save_check.isChecked()),
             timed_save_minutes=int(self.timed_save_spin.value()),
+            dark_theme=bool(self.dark_theme_check.isChecked()),
         )
 
     def _on_control_interface_toggled(self, enabled: bool) -> None:
