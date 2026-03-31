@@ -1498,7 +1498,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("歌曲文件不存在，无法定位", 3000)
             return
         try:
-            subprocess.Popen(["explorer", f"/select,{source}"])
+            # Keep /select and path as separate args to avoid parser issues with unicode/comma paths.
+            subprocess.Popen(["explorer.exe", "/select,", str(source)])
             self.statusBar().showMessage("已在资源管理器定位文件", 2500)
         except Exception as exc:
             self.statusBar().showMessage(f"打开资源管理器失败: {exc}", 5000)
@@ -2635,8 +2636,8 @@ def _make_media_icon(kind: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
     if k == "play":
         painter.drawPolygon([QPoint(8, 6), QPoint(18, 12), QPoint(8, 18)])
     elif k == "pause":
-        painter.drawRoundedRect(QRectF(7, 6, 4, 12), 1.5, 1.5)
-        painter.drawRoundedRect(QRectF(13, 6, 4, 12), 1.5, 1.5)
+        painter.drawRoundedRect(QRectF(7, 6, 3, 12), 1, 1)
+        painter.drawRoundedRect(QRectF(13, 6, 3, 12), 1, 1)
     elif k == "next":
         painter.drawPolygon([QPoint(6, 7), QPoint(12, 12), QPoint(6, 17)])
         painter.drawPolygon([QPoint(12, 7), QPoint(18, 12), QPoint(12, 17)])

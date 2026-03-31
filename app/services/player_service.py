@@ -33,10 +33,11 @@ class PlayerService(QObject):
     error_occurred = Signal(str)
     random_state_changed = Signal(int, int)
     playback_rate_changed = Signal(float)
-    _LAZY_PLAY_THRESHOLD_SEC = 5.0
     _LAZY_WINDOW_SEC = 6.2
-    _LAZY_PREFETCH_OVERLAP_SEC = 0.35
-    _LAZY_SWITCH_AHEAD_SEC = 0.08
+    # Keep a small overlap to reduce decode churn while still allowing seamless cutover.
+    _LAZY_PREFETCH_OVERLAP_SEC = 0.50
+    # Switch shortly before window end to reduce stop/reload fallback.
+    _LAZY_SWITCH_AHEAD_SEC = 0.12
     _GLOBAL_GAIN_BOOST = 1.35
 
     def __init__(
@@ -77,7 +78,6 @@ class PlayerService(QObject):
         self._stats_skip_next_delta = False
         self._lazy_window_mode = False
         self._lazy_window_base_sec = 0.0
-        self._lazy_elapsed_play_sec = 0.0
         self._lazy_promoted_to_full = False
         self._prefetch_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="museplayer-prefetch")
         self._prefetch_future: Future | None = None
@@ -86,7 +86,7 @@ class PlayerService(QObject):
         self._prefetch_transition_sec = 0.0
 
         self._timer = QTimer(self)
-        self._timer.setInterval(30)
+        self._timer.setInterval(20)
         self._timer.timeout.connect(self._on_tick)
         self._timer.start()
 
@@ -162,6 +162,7 @@ class PlayerService(QObject):
 
     def set_playlist(self, playlist_id: str | None) -> None:
         self._reset_lazy_prefetch(cancel=True)
+        was_playing = self.is_playing()
         playlist = self.library.get_playlist(playlist_id)
         self._current_playlist_id = playlist.id
         self.library.set_active_playlist(playlist.id)
@@ -169,6 +170,11 @@ class PlayerService(QObject):
         track_ids = self._playlist_track_ids()
         previous_track_id = self._current_track_id
         if not track_ids:
+            try:
+                self._core.pause()
+                self._core.unload()
+            except Exception:
+                pass
             self._current_track_id = None
             self._loaded_track_id = None
             self._stats_last_track_id = None
@@ -176,17 +182,32 @@ class PlayerService(QObject):
             self._lazy_window_mode = False
             self._lazy_promoted_to_full = False
             self._lazy_window_base_sec = 0.0
-            self._lazy_elapsed_play_sec = 0.0
+            self._expecting_natural_end = False
             self.track_changed.emit(None)
             self.queue_changed.emit()
+            self._emit_playback_state(force=True)
             return
 
-        if self._current_track_id not in track_ids:
+        current_in_target = self._current_track_id in track_ids
+        if not current_in_target:
             self._current_track_id = track_ids[0]
-        self._sequential_index = track_ids.index(self._current_track_id)
 
         self._rebuild_random_order(force=True)
+        if not current_in_target and self._mode == PlayMode.RANDOM and self._random_order:
+            self._random_index = 0
+            self._current_track_id = self._random_order[0]
+            self.random_state_changed.emit(self._random_seed, self._random_index)
+
+        self._sequential_index = track_ids.index(self._current_track_id)
         self._align_random_index_with_current_track()
+
+        if was_playing and not current_in_target and self._current_track_id:
+            try:
+                self._core.pause()
+            except Exception:
+                pass
+            self._expecting_natural_end = False
+            self._load_current_track(auto_play=False, start_sec=0.0, active_request=False)
 
         if previous_track_id != self._current_track_id:
             self.track_changed.emit(self.current_track())
@@ -653,18 +674,15 @@ class PlayerService(QObject):
                     self._core.load(source)
                     self._lazy_window_mode = False
                     self._lazy_window_base_sec = 0.0
-                    self._lazy_elapsed_play_sec = 0.0
                     self._lazy_promoted_to_full = True
                 else:
                     self._lazy_window_mode = True
                     self._lazy_window_base_sec = target_start
-                    self._lazy_elapsed_play_sec = 0.0
                     self._lazy_promoted_to_full = False
             else:
                 self._core.load(source)
                 self._lazy_window_mode = False
                 self._lazy_window_base_sec = 0.0
-                self._lazy_elapsed_play_sec = 0.0
                 self._lazy_promoted_to_full = True
             self._apply_core_volume()
             self._core.set_playback_rate(self._playback_rate)
@@ -914,6 +932,13 @@ class PlayerService(QObject):
                 start_sec=max(0.0, float(start_sec)),
                 window_sec=max(0.05, float(window_sec)),
             )
+            if pcm.size == 0 or pcm.shape[0] <= 0:
+                return {
+                    "ok": False,
+                    "source": str(source),
+                    "start_sec": float(start_sec),
+                    "error": "empty decoded pcm",
+                }
             return {
                 "ok": True,
                 "source": str(source),
@@ -971,12 +996,13 @@ class PlayerService(QObject):
                 sample_rate,
                 channels,
                 reopen_stream=False,
+                resume_sec=play_from,
+                keep_playing=True,
             )
             self._apply_core_volume()
             self._core.set_playback_rate(self._playback_rate)
             self._lazy_window_mode = True
             self._lazy_window_base_sec = chunk_start
-            self._core.play(play_from)
             self._expecting_natural_end = True
             if self._current_track_id:
                 self._schedule_lazy_prefetch(self._current_track_id, self._lazy_window_base_sec + chunk_duration)

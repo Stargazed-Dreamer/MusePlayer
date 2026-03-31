@@ -27,7 +27,7 @@ class PyAVPlayerCore:
         output_backend: AudioOutputBackend | None = None,
         target_sample_rate: int = 48_000,
         target_channels: int = 2,
-        blocksize: int = 1024,
+        blocksize: int = 4096,
     ):
         self._lock = threading.RLock()
         self._output = output_backend or self._build_default_output_backend()
@@ -99,22 +99,37 @@ class PyAVPlayerCore:
         channels: int,
         *,
         reopen_stream: bool = True,
+        resume_sec: float | None = None,
+        keep_playing: bool = False,
     ) -> AudioMeta:
         source = Path(source).resolve()
         if not source.exists():
             raise FileNotFoundError(source)
         if pcm.ndim != 2:
             raise PlayerCoreError("Decoded PCM must be 2D array")
+        prepared_pcm = np.ascontiguousarray(pcm.astype(np.float32, copy=False))
         with self._lock:
+            next_sample_rate = max(8_000, int(sample_rate))
+            next_channels = max(1, int(channels))
+            need_reopen = bool(reopen_stream)
+            if self._stream_open and not need_reopen:
+                if self._sample_rate != next_sample_rate or self._channels != next_channels:
+                    need_reopen = True
             self._source_path = source
-            self._buffer = np.ascontiguousarray(pcm.astype(np.float32, copy=False))
-            self._sample_rate = max(8_000, int(sample_rate))
-            self._channels = max(1, int(channels))
-            self._frame_cursor = 0
+            self._buffer = prepared_pcm
+            self._sample_rate = next_sample_rate
+            self._channels = next_channels
+            if resume_sec is None:
+                self._frame_cursor = 0
+                self._playing = False
+            else:
+                self._frame_cursor = self._sec_to_frame(float(resume_sec))
+                self._playing = bool(keep_playing)
             self._segment_end_frame = None
-            self._playing = False
-            if reopen_stream:
+            if need_reopen:
                 self._reopen_stream()
+            if self._playing:
+                self._ensure_stream_started()
             return AudioMeta(
                 source_path=self._source_path,
                 duration_sec=(self._buffer.shape[0] / self._sample_rate) if self._sample_rate > 0 else 0.0,
@@ -349,7 +364,11 @@ class PyAVPlayerCore:
                 if decode_window is not None and start_sec > 0.0:
                     seek_target = max(0.0, start_sec - 0.30)
                     try:
-                        container.seek(int(seek_target * av.time_base), stream=stream, backward=True)
+                        if stream.time_base is not None and float(stream.time_base) > 0.0:
+                            seek_ts = int(seek_target / float(stream.time_base))
+                        else:
+                            seek_ts = int(seek_target * av.time_base)
+                        container.seek(max(0, seek_ts), stream=stream, backward=True)
                         seek_used = True
                     except Exception:
                         pass
