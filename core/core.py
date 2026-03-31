@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import wave
 from pathlib import Path
 from typing import Callable
 

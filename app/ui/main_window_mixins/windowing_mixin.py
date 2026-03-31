@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QCursor, QDragEnterEvent, QDropEvent, QGuiApplication
-from PySide6.QtWidgets import QComboBox, QLineEdit, QListWidget, QSlider, QToolButton
+from PySide6.QtWidgets import QComboBox, QLineEdit, QListWidget, QListWidgetItem, QSlider, QToolButton
 
 from app.ui.main_window_helpers import (
     HTBOTTOM,

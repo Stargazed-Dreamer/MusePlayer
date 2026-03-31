@@ -9,7 +9,16 @@ from app.models.entities import Track, new_id
 
 
 class MetadataService:
+    """音频文件元数据服务。
+    
+    负责提取音频文件的标签信息、歌词和封面图片。
+    使用Mutagen库处理多种音频格式（MP3、FLAC、M4A、OGG等）。
+    """
     def __init__(self):
+        """初始化元数据服务。
+        
+        创建用于缓存歌词和封面数据的内部存储。
+        """
         self._lyrics_cache: dict[str, str] = {}
         self._cover_cache: dict[str, bytes | None] = {}
 

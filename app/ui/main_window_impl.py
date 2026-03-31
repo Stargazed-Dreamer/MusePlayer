@@ -7,99 +7,47 @@ from __future__ import annotations
 2. 绘制与控件辅助逻辑拆分到 main_window_helpers.py，本文件聚焦主流程。
 3. 支持无边框窗口下的拖动、吸附、边缘拉伸，以及简洁/丰富模式切换。
 """
-import ctypes
-import html
-import re
-import subprocess
-import sys
-import time
-from bisect import bisect_right
-from ctypes import HRESULT, c_int, c_uint, c_ulonglong, c_void_p
-from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QEvent, QTimer, Qt, QRect, QRectF, QSize, Signal, QPoint
+from PySide6.QtCore import QTimer, Qt, QRect, QSize, QPoint
 from PySide6.QtGui import (
-    QCloseEvent,
-    QColor,
-    QCursor,
-    QDragEnterEvent,
-    QDropEvent,
-    QFont,
-    QGuiApplication,
-    QIcon,
     QKeySequence,
-    QPainter,
-    QPen,
-    QPixmap,
     QShortcut,
 )
 from PySide6.QtWidgets import (
-    QApplication,
     QComboBox,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
-    QListWidgetItem,
     QMainWindow,
-    QMessageBox,
     QSizePolicy,
     QSpacerItem,
-    QStatusBar,
-    QSlider,
     QSplitter,
-    QStyle,
-    QStyleOptionSlider,
-    QStyleOptionViewItem,
-    QStyledItemDelegate,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from app.models.entities import Track
 from app.services.app_controller import AppController
 from app.services.player_service import PlayMode
-from app.ui.playlist_dialog import PlaylistDialog
-from app.ui.settings_dialog import SettingsDialog
-from app.ui.theme import APP_STYLE_DARK, APP_STYLE_LIGHT
 from app.version import APP_VERSION
 
 from app.ui.main_window_mixins import MainWindowPlaybackMixin, MainWindowWindowingMixin
 
 from app.ui.main_window_helpers import (
-    HTBOTTOM,
-    HTBOTTOMLEFT,
-    HTBOTTOMRIGHT,
-    HTLEFT,
-    HTRIGHT,
-    HTTOP,
-    HTTOPLEFT,
-    HTTOPRIGHT,
-    WM_NCHITTEST,
     ClickJumpSlider,
     LyricsItemDelegate,
     LyricsListWidget,
     MultiHintStatusBar,
     TrackItemDelegate,
     _WindowsTaskbarProgress,
-    _format_lrc_time,
-    _format_time,
     _make_crosshair_icon,
     _make_folder_icon,
-    _make_lock_icon,
     _make_media_icon,
     _make_mode_icon,
-    _make_moon_icon,
-    _make_pin_icon,
     _make_plus_minus_icon,
     _make_rich_title_icon,
-    _make_sidebar_toggle_icon,
-    _make_sun_icon,
-    _make_volume_icon,
-    _parse_lrc_entries,
 )
 
 class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow):
