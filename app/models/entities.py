@@ -26,6 +26,11 @@ class Track:
     track_no: int = 0
     year: str = ""
     added_at: float = field(default_factory=_now_ts)
+    source_track_id: str = ""
+    source_storage_relpath: str = ""
+    source_lyrics_storage_relpath: str = ""
+    source_lyrics_path: str = ""
+    source_sha256: str = ""
 
     @property
     def path_obj(self) -> Path:
@@ -42,6 +47,11 @@ class Track:
             "track_no": int(self.track_no),
             "year": self.year,
             "added_at": float(self.added_at),
+            "source_track_id": self.source_track_id,
+            "source_storage_relpath": self.source_storage_relpath,
+            "source_lyrics_storage_relpath": self.source_lyrics_storage_relpath,
+            "source_lyrics_path": self.source_lyrics_path,
+            "source_sha256": self.source_sha256,
         }
 
     @classmethod
@@ -56,6 +66,11 @@ class Track:
             track_no=int(data.get("track_no", 0)),
             year=str(data.get("year", "")),
             added_at=float(data.get("added_at", _now_ts())),
+            source_track_id=str(data.get("source_track_id", "")),
+            source_storage_relpath=str(data.get("source_storage_relpath", "")),
+            source_lyrics_storage_relpath=str(data.get("source_lyrics_storage_relpath", "")),
+            source_lyrics_path=str(data.get("source_lyrics_path", "")),
+            source_sha256=str(data.get("source_sha256", "")),
         )
 
 
@@ -66,6 +81,11 @@ class Playlist:
     track_ids: list[str] = field(default_factory=list)
     created_at: float = field(default_factory=_now_ts)
     updated_at: float = field(default_factory=_now_ts)
+    source_schema: str = ""
+    source_file: str = ""
+    source_playlist_hash: str = ""
+    source_database_location: str = ""
+    source_exported_at: str = ""
 
     def touch(self) -> None:
         self.updated_at = _now_ts()
@@ -77,6 +97,11 @@ class Playlist:
             "track_ids": list(self.track_ids),
             "created_at": float(self.created_at),
             "updated_at": float(self.updated_at),
+            "source_schema": self.source_schema,
+            "source_file": self.source_file,
+            "source_playlist_hash": self.source_playlist_hash,
+            "source_database_location": self.source_database_location,
+            "source_exported_at": self.source_exported_at,
         }
 
     @classmethod
@@ -87,6 +112,11 @@ class Playlist:
             track_ids=[str(x) for x in data.get("track_ids", [])],
             created_at=float(data.get("created_at", _now_ts())),
             updated_at=float(data.get("updated_at", _now_ts())),
+            source_schema=str(data.get("source_schema", "")),
+            source_file=str(data.get("source_file", "")),
+            source_playlist_hash=str(data.get("source_playlist_hash", "")),
+            source_database_location=str(data.get("source_database_location", "")),
+            source_exported_at=str(data.get("source_exported_at", "")),
         )
 
 

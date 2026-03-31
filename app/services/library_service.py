@@ -1,6 +1,9 @@
 ﻿from __future__ import annotations
 
+import hashlib
+import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 import time
 from typing import Callable
@@ -21,6 +24,7 @@ AUDIO_EXTENSIONS = {
 }
 
 ALL_SONGS_ID = "all_songs"
+MUSE_PLAYLIST_SCHEMA = "musearc_playlist_export_v1"
 logger = logging.getLogger("museplayer.library")
 
 
@@ -439,6 +443,353 @@ class LibraryService:
         self.save()
         logger.info("导入文件: %s", source)
         return track
+
+    def import_muse_playlist(self, file_path: Path) -> Playlist:
+        source_file = Path(file_path).resolve()
+        if not source_file.exists() or not source_file.is_file():
+            raise FileNotFoundError(str(source_file))
+        if source_file.suffix.lower() != ".json" or not source_file.name.lower().endswith(".muse_playlist.json"):
+            raise ValueError("不支持的歌单文件格式，请选择 *.muse_playlist.json")
+        payload = json.loads(source_file.read_text(encoding="utf-8"))
+        return self._import_muse_playlist_data(payload, source_file=source_file, fallback_name=source_file.stem)
+
+    def import_muse_playlist_payload(self, payload: dict, source_hint: str = "runtime_payload") -> Playlist:
+        if not isinstance(payload, dict):
+            raise ValueError("歌单数据无效")
+        playlist_hash = str(payload.get("playlist_hash", "")).strip()
+        if playlist_hash:
+            hash_part = playlist_hash[:12]
+        else:
+            raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            hash_part = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+        hint_part = hashlib.sha1(str(source_hint or "runtime_payload").encode("utf-8")).hexdigest()[:8]
+        virtual_source_file = (self._store.path.parent / f"_runtime_{hash_part}_{hint_part}.muse_playlist.json").resolve()
+        return self._import_muse_playlist_data(payload, source_file=virtual_source_file, fallback_name="导入歌单")
+
+    def _import_muse_playlist_data(self, payload: dict, *, source_file: Path, fallback_name: str) -> Playlist:
+        if not isinstance(payload, dict):
+            raise ValueError("歌单文件结构无效")
+        if str(payload.get("schema", "")).strip() != MUSE_PLAYLIST_SCHEMA:
+            raise ValueError("歌单 schema 不匹配")
+
+        playlist_hash = str(payload.get("playlist_hash", "")).strip()
+        playlist_name = self._normalize_playlist_name(str(payload.get("playlist_name", "")).strip() or fallback_name)
+        exported_at = str(payload.get("exported_at", "")).strip()
+        database_location = str(payload.get("database_location", "")).strip()
+        tracks_payload = payload.get("tracks", [])
+        if not isinstance(tracks_payload, list):
+            raise ValueError("歌单 tracks 字段无效")
+
+        if database_location:
+            db_root_raw = Path(database_location)
+            if db_root_raw.is_absolute():
+                db_root = db_root_raw.resolve()
+            else:
+                db_root = (source_file.parent / db_root_raw).resolve()
+        else:
+            db_root = source_file.parent.resolve()
+
+        playlist = self._find_existing_muse_playlist(playlist_hash=playlist_hash, source_file=source_file)
+        if playlist is None:
+            playlist_id = self._generate_muse_playlist_id(playlist_hash=playlist_hash, source_file=source_file)
+            playlist = Playlist(id=playlist_id, name=playlist_name)
+            self.playlists[playlist.id] = playlist
+        else:
+            playlist.name = playlist_name
+
+        source_file_text = str(source_file) if source_file.exists() else ""
+        playlist.source_schema = MUSE_PLAYLIST_SCHEMA
+        playlist.source_file = source_file_text
+        playlist.source_playlist_hash = playlist_hash
+        playlist.source_database_location = str(db_root)
+        playlist.source_exported_at = exported_at
+
+        old_track_ids = set(playlist.track_ids)
+        new_track_ids: list[str] = []
+        new_track_ids_set: set[str] = set()
+
+        for raw in tracks_payload:
+            if not isinstance(raw, dict):
+                continue
+
+            source_track_id = str(raw.get("track_id", "")).strip()
+            storage_relpath = self._normalize_relpath(str(raw.get("storage_relpath", "")).strip())
+            lyrics_relpath = self._normalize_relpath(str(raw.get("lyrics_storage_relpath", "")).strip())
+            source_sha256 = str(raw.get("source_sha256", "")).strip().lower()
+            title = str(raw.get("title", "")).strip()
+            artist = str(raw.get("artist", "")).strip()
+            album = str(raw.get("album", "")).strip()
+
+            track_path = self._resolve_muse_track_path(db_root=db_root, storage_relpath=storage_relpath)
+            lyrics_path = self._resolve_muse_track_path(db_root=db_root, storage_relpath=lyrics_relpath) if lyrics_relpath else None
+            track = self._find_track_by_source_fields(
+                source_path=track_path,
+                source_sha256=source_sha256,
+                source_track_id=source_track_id,
+                source_storage_relpath=storage_relpath,
+            )
+            if track is None:
+                if track_path.exists() and track_path.is_file() and track_path.suffix.lower() in AUDIO_EXTENSIONS:
+                    track = self._metadata.extract_track(track_path)
+                else:
+                    fallback_title = title or track_path.stem or "未知标题"
+                    track = Track(
+                        id=new_id(),
+                        path=str(track_path),
+                        title=fallback_title,
+                        artist=artist or "未知歌手",
+                        album=album or "未知专辑",
+                    )
+                self.tracks[track.id] = track
+
+            if title:
+                track.title = title
+            if artist:
+                track.artist = artist
+            if album:
+                track.album = album
+            track.source_track_id = source_track_id
+            track.source_storage_relpath = storage_relpath
+            track.source_lyrics_storage_relpath = lyrics_relpath
+            track.source_lyrics_path = str(lyrics_path) if lyrics_path is not None else ""
+            track.source_sha256 = source_sha256
+            if track_path.exists():
+                track.path = str(track_path)
+
+            if track.id not in new_track_ids_set:
+                new_track_ids.append(track.id)
+                new_track_ids_set.add(track.id)
+
+        playlist.track_ids = new_track_ids
+        playlist.touch()
+        self.active_playlist_id = playlist.id
+
+        all_songs = self.playlists[ALL_SONGS_ID]
+        all_ids = set(all_songs.track_ids)
+        for track_id in new_track_ids:
+            if track_id not in all_ids:
+                all_songs.track_ids.append(track_id)
+                all_ids.add(track_id)
+        all_songs.touch()
+
+        removed_track_ids = old_track_ids - new_track_ids_set
+        if removed_track_ids:
+            orphan_track_ids = self._find_orphan_track_ids()
+            for track_id in removed_track_ids:
+                if track_id in orphan_track_ids:
+                    self.tracks.pop(track_id, None)
+
+        self._normalize_playlist_tracks()
+        self.save()
+        logger.info("导入歌单文件: %s, playlist=%s, songs=%s", source_file, playlist.name, len(playlist.track_ids))
+        return playlist
+
+    def sync_muse_playlist_stats(self, playback_stats_service) -> int:
+        updated_files = 0
+        updated_at = datetime.now(timezone.utc).isoformat()
+
+        for playlist in self.playlists.values():
+            if playlist.id == ALL_SONGS_ID:
+                continue
+            if playlist.source_schema != MUSE_PLAYLIST_SCHEMA:
+                continue
+            source_file_text = str(playlist.source_file or "").strip()
+            if not source_file_text:
+                continue
+            source_file = Path(source_file_text).resolve()
+            if not source_file.exists() or not source_file.is_file():
+                continue
+
+            try:
+                payload = json.loads(source_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            tracks_payload = payload.get("tracks", [])
+            if not isinstance(tracks_payload, list):
+                continue
+
+            by_sha: dict[str, int] = {}
+            by_track_id: dict[str, int] = {}
+            by_relpath: dict[str, int] = {}
+            for idx, row in enumerate(tracks_payload):
+                if not isinstance(row, dict):
+                    continue
+                sha = str(row.get("source_sha256", "")).strip().lower()
+                tid = str(row.get("track_id", "")).strip()
+                rel = self._normalize_relpath(str(row.get("storage_relpath", "")).strip())
+                if sha and sha not in by_sha:
+                    by_sha[sha] = idx
+                if tid and tid not in by_track_id:
+                    by_track_id[tid] = idx
+                if rel and rel not in by_relpath:
+                    by_relpath[rel] = idx
+
+            changed = False
+            db_root = Path(str(playlist.source_database_location or "")).resolve() if playlist.source_database_location else None
+
+            for local_track_id in playlist.track_ids:
+                track = self.tracks.get(local_track_id)
+                if track is None:
+                    continue
+
+                target_idx: int | None = None
+                track_sha = str(track.source_sha256 or "").strip().lower()
+                if track_sha and track_sha in by_sha:
+                    target_idx = by_sha[track_sha]
+                elif track.source_track_id and track.source_track_id in by_track_id:
+                    target_idx = by_track_id[track.source_track_id]
+                else:
+                    rel = self._normalize_relpath(track.source_storage_relpath)
+                    if not rel and db_root is not None:
+                        try:
+                            rel = self._normalize_relpath(str(Path(track.path).resolve().relative_to(db_root)).replace("\\", "/"))
+                        except Exception:
+                            rel = ""
+                    if rel and rel in by_relpath:
+                        target_idx = by_relpath[rel]
+
+                if target_idx is None:
+                    continue
+                row = tracks_payload[target_idx]
+                if not isinstance(row, dict):
+                    continue
+
+                stats = playback_stats_service.export_stats_for_track(local_track_id)
+                if stats is None:
+                    continue
+                prev_stats = row.get("stats")
+                if not isinstance(prev_stats, dict) or prev_stats != stats:
+                    row["stats"] = stats
+                    changed = True
+
+            total_play_count = 0
+            total_manual_play_count = 0
+            total_play_seconds = 0
+            total_early_skip_count = 0
+            for row in tracks_payload:
+                if not isinstance(row, dict):
+                    continue
+                stats = row.get("stats")
+                if not isinstance(stats, dict):
+                    continue
+                total_play_count += int(stats.get("play_count", 0) or 0)
+                total_manual_play_count += int(stats.get("manual_play_count", 0) or 0)
+                total_play_seconds += int(stats.get("play_seconds", 0) or 0)
+                total_early_skip_count += int(stats.get("early_skip_count", 0) or 0)
+
+            summary = payload.get("stats_summary")
+            if not isinstance(summary, dict):
+                summary = {}
+            next_summary = {
+                **summary,
+                "total_play_count": int(total_play_count),
+                "total_manual_play_count": int(total_manual_play_count),
+                "total_play_seconds": int(total_play_seconds),
+                "total_early_skip_count": int(total_early_skip_count),
+                "updated_at": updated_at,
+            }
+            if payload.get("stats_summary") != next_summary:
+                payload["stats_summary"] = next_summary
+                changed = True
+            if payload.get("playlist_name") != playlist.name:
+                payload["playlist_name"] = playlist.name
+                changed = True
+            if int(payload.get("track_count", 0) or 0) != len(tracks_payload):
+                payload["track_count"] = len(tracks_payload)
+                changed = True
+
+            if not changed:
+                continue
+            try:
+                source_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                updated_files += 1
+            except Exception:
+                continue
+
+        return updated_files
+
+    @staticmethod
+    def _normalize_relpath(value: str) -> str:
+        text = (value or "").strip().replace("\\", "/")
+        while text.startswith("./"):
+            text = text[2:]
+        return text.strip("/")
+
+    @staticmethod
+    def _resolve_muse_track_path(*, db_root: Path, storage_relpath: str) -> Path:
+        rel_text = (storage_relpath or "").strip()
+        if not rel_text:
+            return db_root.resolve()
+        raw = Path(rel_text)
+        if raw.is_absolute():
+            return raw.resolve()
+        normalized = Path(*[part for part in rel_text.replace("\\", "/").split("/") if part not in ("", ".")])
+        return (db_root / normalized).resolve()
+
+    def _generate_muse_playlist_id(self, *, playlist_hash: str, source_file: Path) -> str:
+        if playlist_hash:
+            base = f"muse_{playlist_hash[:16]}"
+        else:
+            digest = hashlib.sha1(str(source_file).lower().encode("utf-8")).hexdigest()
+            base = f"muse_{digest[:16]}"
+        candidate = base
+        idx = 2
+        while candidate in self.playlists:
+            existing = self.playlists[candidate]
+            same_hash = bool(playlist_hash) and existing.source_playlist_hash == playlist_hash
+            same_file = bool(existing.source_file) and Path(existing.source_file).resolve() == source_file.resolve()
+            if same_hash or same_file:
+                break
+            candidate = f"{base}_{idx}"
+            idx += 1
+        return candidate
+
+    def _find_existing_muse_playlist(self, *, playlist_hash: str, source_file: Path) -> Playlist | None:
+        source_text = str(source_file)
+        for playlist in self.playlists.values():
+            if playlist.id == ALL_SONGS_ID:
+                continue
+            if playlist.source_schema != MUSE_PLAYLIST_SCHEMA:
+                continue
+            if playlist_hash and playlist.source_playlist_hash == playlist_hash:
+                return playlist
+            if playlist.source_file and playlist.source_file == source_text:
+                return playlist
+        return None
+
+    def _find_track_by_source_fields(
+        self,
+        *,
+        source_path: Path,
+        source_sha256: str,
+        source_track_id: str,
+        source_storage_relpath: str,
+    ) -> Track | None:
+        resolved_source = source_path.resolve()
+        normalized_relpath = self._normalize_relpath(source_storage_relpath)
+
+        if source_sha256:
+            for track in self.tracks.values():
+                if track.source_sha256 and track.source_sha256.lower() == source_sha256.lower():
+                    return track
+        if source_track_id:
+            for track in self.tracks.values():
+                if track.source_track_id == source_track_id:
+                    return track
+        if normalized_relpath:
+            for track in self.tracks.values():
+                if self._normalize_relpath(track.source_storage_relpath) == normalized_relpath:
+                    return track
+
+        for track in self.tracks.values():
+            try:
+                if Path(track.path).resolve() == resolved_source:
+                    return track
+            except Exception:
+                continue
+        return None
 
     @staticmethod
     def _scan_audio_files(folder: Path, recursive: bool = True) -> list[Path]:

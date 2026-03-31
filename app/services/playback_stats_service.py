@@ -15,6 +15,7 @@ class PlaybackStatsEntry:
     track_id: str
     play_count: int = 0
     active_play_count: int = 0
+    early_skip_count: int = 0
     played_seconds_total: float = 0.0
     played_percent_total: float = 0.0
     updated_at: float = field(default_factory=_now_ts)
@@ -24,6 +25,7 @@ class PlaybackStatsEntry:
             "track_id": self.track_id,
             "play_count": int(self.play_count),
             "active_play_count": int(self.active_play_count),
+            "early_skip_count": int(self.early_skip_count),
             "played_seconds_total": float(self.played_seconds_total),
             "played_percent_total": float(self.played_percent_total),
             "updated_at": float(self.updated_at),
@@ -35,6 +37,7 @@ class PlaybackStatsEntry:
             track_id=str(payload.get("track_id", "")),
             play_count=max(0, int(payload.get("play_count", 0))),
             active_play_count=max(0, int(payload.get("active_play_count", 0))),
+            early_skip_count=max(0, int(payload.get("early_skip_count", 0))),
             played_seconds_total=max(0.0, float(payload.get("played_seconds_total", 0.0))),
             played_percent_total=max(0.0, float(payload.get("played_percent_total", 0.0))),
             updated_at=float(payload.get("updated_at", _now_ts())),
@@ -110,3 +113,26 @@ class PlaybackStatsService:
         if track_id in self._entries:
             del self._entries[track_id]
             self._dirty = True
+
+    def record_early_skip(self, track_id: str) -> None:
+        track_id = str(track_id or "").strip()
+        if not track_id:
+            return
+        item = self._entries.get(track_id)
+        if item is None:
+            item = PlaybackStatsEntry(track_id=track_id)
+            self._entries[track_id] = item
+        item.early_skip_count += 1
+        item.updated_at = _now_ts()
+        self._dirty = True
+
+    def export_stats_for_track(self, track_id: str) -> dict[str, int] | None:
+        item = self._entries.get(str(track_id or "").strip())
+        if item is None:
+            return None
+        return {
+            "play_count": max(0, int(item.play_count)),
+            "manual_play_count": max(0, int(item.active_play_count)),
+            "play_seconds": max(0, int(round(item.played_seconds_total))),
+            "early_skip_count": max(0, int(item.early_skip_count)),
+        }

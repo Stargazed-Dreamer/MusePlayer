@@ -54,10 +54,12 @@ class PlaylistDialog(QDialog):
         row2 = QHBoxLayout()
         self.btn_set_active = QPushButton("设为当前")
         self.btn_import_folder = QPushButton("导入文件夹")
+        self.btn_import_playlist = QPushButton("导入歌单文件")
         self.btn_close = QPushButton("关闭")
         self.btn_close.setObjectName("GhostButton")
         row2.addWidget(self.btn_set_active)
         row2.addWidget(self.btn_import_folder)
+        row2.addWidget(self.btn_import_playlist)
         row2.addStretch(1)
         row2.addWidget(self.btn_close)
         root.addLayout(row2)
@@ -69,6 +71,7 @@ class PlaylistDialog(QDialog):
         self.btn_merge.clicked.connect(self._merge_playlist)
         self.btn_set_active.clicked.connect(self._set_active)
         self.btn_import_folder.clicked.connect(self._import_folder)
+        self.btn_import_playlist.clicked.connect(self._import_playlist_file)
         self.btn_close.clicked.connect(self.accept)
 
     def reload(self) -> None:
@@ -197,4 +200,21 @@ class PlaylistDialog(QDialog):
             return
 
         QMessageBox.information(self, "导入完成", f"已导入 {count} 首歌曲")
+        self.reload()
+
+    def _import_playlist_file(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "导入歌单文件",
+            "",
+            "MuseArc 歌单 (*.muse_playlist.json);;JSON 文件 (*.json)",
+        )
+        if not file_path:
+            return
+        try:
+            self.controller.import_muse_playlist(Path(file_path))
+        except Exception as exc:
+            QMessageBox.critical(self, "导入失败", str(exc))
+            return
+        QMessageBox.information(self, "导入完成", "歌单文件已导入。")
         self.reload()

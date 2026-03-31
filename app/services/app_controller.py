@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from datetime import datetime
+import json
 from pathlib import Path
 from typing import Callable
 
@@ -85,7 +86,11 @@ class AppController(QObject):
     def save_session(self) -> None:
         state = self.player_service.export_session()
         self.session_store.save(state)
+        self.library_service.sync_muse_playlist_stats(self.playback_stats_service)
         self.playback_stats_service.save_if_dirty()
+
+    def save_stats_now(self) -> None:
+        self.save_session()
 
     def _apply_save_timer_settings(self) -> None:
         enabled = bool(self.settings.timed_save_enabled)
@@ -151,6 +156,19 @@ class AppController(QObject):
         track = self.player_service.current_track()
         if track is None:
             return ""
+        ext_lyrics = str(getattr(track, "source_lyrics_path", "") or "").strip()
+        if ext_lyrics:
+            lyric_path = Path(ext_lyrics)
+            if lyric_path.exists() and lyric_path.is_file():
+                try:
+                    return lyric_path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    try:
+                        return lyric_path.read_text(encoding="gbk")
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
         return self.metadata_service.read_lyrics(Path(track.path))
 
     def get_current_cover(self) -> bytes | None:
@@ -173,6 +191,23 @@ class AppController(QObject):
         )
         self.library_changed.emit()
         return len(imported)
+
+    def import_muse_playlist(self, file_path: Path) -> str:
+        playlist = self.library_service.import_muse_playlist(file_path)
+        self.library_changed.emit()
+        return playlist.id
+
+    def import_muse_playlist_data(self, payload: dict | str, source_hint: str = "runtime_payload") -> str:
+        data: dict
+        if isinstance(payload, str):
+            data = json.loads(payload)
+        elif isinstance(payload, dict):
+            data = payload
+        else:
+            raise ValueError("playlist payload must be dict or json string")
+        playlist = self.library_service.import_muse_playlist_payload(data, source_hint=source_hint)
+        self.library_changed.emit()
+        return playlist.id
 
     def create_playlist(self, name: str) -> str:
         playlist = self.library_service.create_playlist(name)
@@ -319,6 +354,25 @@ class AppController(QObject):
             playlist_id = payload.get("playlist_id")
             count = self.import_folder(Path(path), playlist_id=playlist_id)
             return {"ok": True, "result": {"imported": count}}
+
+        if cmd == "import_playlist_file":
+            path = payload.get("path")
+            if not path:
+                return {"ok": False, "error": "missing path"}
+            playlist_id = self.import_muse_playlist(Path(path))
+            return {"ok": True, "result": {"playlist_id": playlist_id}}
+
+        if cmd == "import_playlist_data":
+            raw = payload.get("playlist")
+            if raw is None:
+                raw = payload.get("data")
+            if raw is None:
+                raw = payload.get("content")
+            if raw is None:
+                return {"ok": False, "error": "missing playlist data"}
+            source_hint = str(payload.get("source_hint", "runtime_payload"))
+            playlist_id = self.import_muse_playlist_data(raw, source_hint=source_hint)
+            return {"ok": True, "result": {"playlist_id": playlist_id}}
 
         if cmd == "play_file":
             path = payload.get("path")

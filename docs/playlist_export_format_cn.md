@@ -27,6 +27,7 @@
   - `play_count`：播放次数（整数）
   - `manual_play_count`：指定播放次数（整数）
   - `play_seconds`：播放总秒数（整数）
+  - `early_skip_count`：早期跳过次数（前 5% 没播完就跳过）
 
 ## 统计回导规则
 
@@ -37,3 +38,27 @@
   1. `source_sha256`
   2. `track_id`
   3. `storage_relpath`
+- 导入后会写入标签：
+  - `播放次数`
+  - `指定播放次数`
+  - `播放秒数`
+  - `早期跳过次数`
+  - `喜爱程度`（-100~100 整数）
+
+## 喜爱程度计算（当前实现）
+
+- 范围：`-100 ~ 100`
+- 记号：
+  - `a = play_count`
+  - `b = manual_play_count`
+  - `c = play_seconds`
+  - `d = early_skip_count`
+  - `e = 全库总播放次数（所有歌曲 a 求和）`
+  - `f = 歌曲长度秒数`
+- 公式：
+  - `t1 = c / f / a`
+  - `t2 = b / a`
+  - `t3 = a / e`
+  - `t4 = d / a`
+  - `t = 0.1*t3 + 0.4*t1 + 0.5*t2 - t4`
+  - `喜爱程度 = clamp(round(t*100), -100, 100)`

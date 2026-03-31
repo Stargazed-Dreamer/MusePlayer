@@ -23,6 +23,8 @@ Each response is one JSON line:
 - `{"cmd":"next"}`
 - `{"cmd":"previous"}`
 - `{"cmd":"import_folder","path":"D:/Music","playlist_id":"optional"}`（不传 `playlist_id` 时默认按文件夹名创建/复用歌单）
+- `{"cmd":"import_playlist_file","path":"D:/playlist/foo.muse_playlist.json"}`
+- `{"cmd":"import_playlist_data","playlist":{...},"source_hint":"optional"}`（`playlist` 也可用 `data` 或 `content` 字段）
 - `{"cmd":"play_file","path":"D:/Music/song.mp3"}`
 - `{"cmd":"load_playlist","playlist_id":"..."}`
 - `{"cmd":"play_playlist","playlist_id":"...","track_id":"optional"}`

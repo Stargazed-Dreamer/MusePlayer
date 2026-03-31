@@ -163,6 +163,9 @@ class PlayerService(QObject):
     def set_playlist(self, playlist_id: str | None) -> None:
         self._reset_lazy_prefetch(cancel=True)
         was_playing = self.is_playing()
+        prev_track_for_skip = self._loaded_track_id or self._current_track_id
+        prev_position_for_skip = float(self._safe_position())
+        prev_duration_for_skip = float(self._safe_duration())
         playlist = self.library.get_playlist(playlist_id)
         self._current_playlist_id = playlist.id
         self.library.set_active_playlist(playlist.id)
@@ -170,6 +173,12 @@ class PlayerService(QObject):
         track_ids = self._playlist_track_ids()
         previous_track_id = self._current_track_id
         if not track_ids:
+            self._record_early_skip_if_needed(
+                skipped_track_id=prev_track_for_skip,
+                position=prev_position_for_skip,
+                duration=prev_duration_for_skip,
+                next_track_id=None,
+            )
             try:
                 self._core.pause()
                 self._core.unload()
@@ -208,6 +217,12 @@ class PlayerService(QObject):
                 pass
             self._expecting_natural_end = False
             self._load_current_track(auto_play=False, start_sec=0.0, active_request=False)
+            self._record_early_skip_if_needed(
+                skipped_track_id=prev_track_for_skip,
+                position=prev_position_for_skip,
+                duration=prev_duration_for_skip,
+                next_track_id=self._current_track_id,
+            )
 
         if previous_track_id != self._current_track_id:
             self.track_changed.emit(self.current_track())
@@ -428,6 +443,10 @@ class PlayerService(QObject):
             self.set_playlist("all_songs")
             playlist_ids = self._playlist_track_ids()
 
+        previous_track_id = self._loaded_track_id or self._current_track_id
+        previous_position = float(self._safe_position())
+        previous_duration = float(self._safe_duration())
+
         self._current_track_id = track_id
         if track_id in playlist_ids:
             self._sequential_index = playlist_ids.index(track_id)
@@ -446,6 +465,13 @@ class PlayerService(QObject):
         ok = self._load_current_track(auto_play=auto_play, start_sec=start_sec, active_request=active_request)
         if not ok:
             return False
+
+        self._record_early_skip_if_needed(
+            skipped_track_id=previous_track_id,
+            position=previous_position,
+            duration=previous_duration,
+            next_track_id=track_id,
+        )
 
         logger.info("切换歌曲: %s", track_id)
         self.track_changed.emit(self.current_track())
@@ -1070,6 +1096,32 @@ class PlayerService(QObject):
             return
         try:
             self._stats.record_play_start(track_id, active_request=active_request)
+        except Exception:
+            pass
+
+    def _record_early_skip_if_needed(
+        self,
+        *,
+        skipped_track_id: str | None,
+        position: float,
+        duration: float,
+        next_track_id: str | None,
+    ) -> None:
+        if not self._collect_stats_enabled():
+            return
+        track_id = str(skipped_track_id or "").strip()
+        if not track_id:
+            return
+        if next_track_id and str(next_track_id) == track_id:
+            return
+        duration_sec = max(0.0, float(duration))
+        if duration_sec <= 0.0:
+            return
+        played_sec = max(0.0, float(position))
+        if played_sec >= max(0.0, duration_sec * 0.05):
+            return
+        try:
+            self._stats.record_early_skip(track_id)
         except Exception:
             pass
 

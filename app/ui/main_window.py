@@ -864,7 +864,11 @@ class MainWindow(QMainWindow):
 
         menu_file = self.menuBar().addMenu("文件")
         action_import_folder = menu_file.addAction("导入文件夹")
+        action_import_playlist = menu_file.addAction("导入歌单文件")
         action_open_file = menu_file.addAction("播放文件")
+        self.action_save_stats = menu_file.addAction("保存统计数据")
+        self.action_save_stats.setShortcut(QKeySequence("Ctrl+S"))
+        self.action_save_stats.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         menu_file.addSeparator()
         action_exit = menu_file.addAction("退出")
 
@@ -897,7 +901,9 @@ class MainWindow(QMainWindow):
             menu.setMouseTracking(True)
 
         action_import_folder.triggered.connect(self._menu_import_folder)
+        action_import_playlist.triggered.connect(self._menu_import_playlist_file)
         action_open_file.triggered.connect(self._menu_open_file)
+        self.action_save_stats.triggered.connect(self._save_stats_now)
         action_exit.triggered.connect(self.close)
         action_playlist.triggered.connect(self._open_playlist_dialog)
         action_settings.triggered.connect(self._open_settings_dialog)
@@ -977,6 +983,13 @@ class MainWindow(QMainWindow):
         ok = self.player.next_track(user_triggered=True)
         if not ok:
             self.statusBar().showMessage("没有下一首可播放", 2000)
+
+    def _save_stats_now(self) -> None:
+        try:
+            self.controller.save_stats_now()
+            self.statusBar().showMessage("统计数据已保存", 2200)
+        except Exception as exc:
+            self.statusBar().showMessage(f"保存统计失败：{exc}", 3500)
 
     def _new_icon_button(self, object_name: str) -> QToolButton:
         button = QToolButton()
@@ -1544,8 +1557,7 @@ class MainWindow(QMainWindow):
             return
         if not track_id:
             return
-        active_search = bool(self.search_edit.text().strip())
-        self.player.play_track(str(track_id), auto_play=True, manual_select=True, active_request=active_search)
+        self.player.play_track(str(track_id), auto_play=True, manual_select=True, active_request=True)
         self.statusBar().showMessage(f"播放歌曲：{display_text}", 2500)
 
     def _on_remove_track_clicked(self, track_id: str) -> None:
@@ -1604,6 +1616,24 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage(f"导入完成，共 {count} 首", 5000)
         self._reload_track_list()
+
+    def _menu_import_playlist_file(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "导入歌单文件",
+            "",
+            "MuseArc 歌单 (*.muse_playlist.json);;JSON 文件 (*.json)",
+        )
+        if not file_path:
+            return
+        try:
+            self.controller.import_muse_playlist(Path(file_path))
+        except Exception as exc:
+            QMessageBox.critical(self, "导入失败", str(exc))
+            return
+        self._reload_playlist_combo()
+        self._reload_track_list()
+        self.statusBar().showMessage("歌单文件已导入", 3000)
 
     def _menu_open_file(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
