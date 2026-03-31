@@ -2,6 +2,7 @@
 
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 from typing import Callable
@@ -76,6 +77,7 @@ class PlayerService(QObject):
         self._stats_last_track_id: str | None = None
         self._stats_last_position = 0.0
         self._stats_skip_next_delta = False
+        self._stats_suspended_depth = 0
         self._lazy_window_mode = False
         self._lazy_window_base_sec = 0.0
         self._lazy_promoted_to_full = False
@@ -625,32 +627,33 @@ class PlayerService(QObject):
         )
 
     def restore_session(self, state: SessionState) -> None:
-        self.set_mode(state.play_mode)
-        self.set_volume(state.volume)
+        with self.suspend_stats_collection():
+            self.set_mode(state.play_mode)
+            self.set_volume(state.volume)
 
-        playlist_id = state.current_playlist_id or self.library.active_playlist_id
-        self.set_playlist(playlist_id)
+            playlist_id = state.current_playlist_id or self.library.active_playlist_id
+            self.set_playlist(playlist_id)
 
-        self._random_seed = max(0, int(state.random_seed))
-        self._random_index = max(0, int(state.random_index))
-        self.random_state_changed.emit(self._random_seed, self._random_index)
+            self._random_seed = max(0, int(state.random_seed))
+            self._random_index = max(0, int(state.random_index))
+            self.random_state_changed.emit(self._random_seed, self._random_index)
 
-        if state.current_track_id:
-            track_id = state.current_track_id
-            if self._mode == PlayMode.RANDOM:
-                self._rebuild_random_order(force=True)
-                if track_id in self._random_order:
-                    self._random_index = self._random_order.index(track_id)
-                elif self._random_order:
-                    self._random_index = DeterministicShuffle.clamp_index(self._random_order, state.random_index)
-                    track_id = self._random_order[self._random_index]
+            if state.current_track_id:
+                track_id = state.current_track_id
+                if self._mode == PlayMode.RANDOM:
+                    self._rebuild_random_order(force=True)
+                    if track_id in self._random_order:
+                        self._random_index = self._random_order.index(track_id)
+                    elif self._random_order:
+                        self._random_index = DeterministicShuffle.clamp_index(self._random_order, state.random_index)
+                        track_id = self._random_order[self._random_index]
 
-            self.play_track(
-                track_id,
-                auto_play=False,
-                start_sec=max(0.0, state.position_sec),
-                manual_select=False,
-            )
+                self.play_track(
+                    track_id,
+                    auto_play=False,
+                    start_sec=max(0.0, state.position_sec),
+                    manual_select=False,
+                )
 
     def state_snapshot(self) -> dict:
         track = self.current_track()
@@ -1086,10 +1089,20 @@ class PlayerService(QObject):
     def _collect_stats_enabled(self) -> bool:
         if self._stats is None:
             return False
+        if self._stats_suspended_depth > 0:
+            return False
         try:
             return bool(self._collect_stats_getter())
         except Exception:
             return False
+
+    @contextmanager
+    def suspend_stats_collection(self):
+        self._stats_suspended_depth += 1
+        try:
+            yield
+        finally:
+            self._stats_suspended_depth = max(0, self._stats_suspended_depth - 1)
 
     def _record_play_start(self, track_id: str, *, active_request: bool) -> None:
         if not self._collect_stats_enabled():

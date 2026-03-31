@@ -65,7 +65,8 @@ class AppController(QObject):
         self._apply_save_timer_settings()
 
         if self.settings.auto_restore_session:
-            self.player_service.restore_session(self.session_store.load())
+            with self.player_service.suspend_stats_collection():
+                self.player_service.restore_session(self.session_store.load())
         else:
             self.player_service.set_volume(1.0)
 
@@ -76,12 +77,13 @@ class AppController(QObject):
 
     def shutdown(self) -> None:
         self.logger.info("准备关闭应用")
-        self.save_session()
-        self.playback_stats_service.save_if_dirty()
-        self.library_service.save()
-        self.settings_store.save(self.settings)
-        self.control_server.stop()
-        self.player_service.close()
+        with self.player_service.suspend_stats_collection():
+            self.save_session()
+            self.playback_stats_service.save_if_dirty()
+            self.library_service.save()
+            self.settings_store.save(self.settings)
+            self.control_server.stop()
+            self.player_service.close()
 
     def save_session(self) -> None:
         state = self.player_service.export_session()
