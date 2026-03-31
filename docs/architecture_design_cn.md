@@ -47,6 +47,14 @@ flowchart LR
   - Windows 任务栏进度桥接
   - 图标绘制与歌词时间解析工具
 
+`app/ui/main_window_mixins/`
+- `playback_mixin.py`：播放、歌词、歌单列表、菜单动作等“业务交互”方法。
+- `windowing_mixin.py`：无边框缩放、吸附、拖拽、侧边栏与几何恢复等“窗口行为”方法。
+
+`app/services/player_service_mixins/`
+- `stats_mixin.py`：播放统计开关、早期跳过判定、进度增量统计。
+- `lazy_decode_mixin.py`：窗口读取、预读取调度、续播衔接、输出增益策略。
+
 ---
 
 ## 3. 关键数据结构
