@@ -1,5 +1,27 @@
 ﻿from __future__ import annotations
 
+"""设置对话框。
+
+提供应用的全面配置选项：
+- 网络控制接口（IP地址、端口、启用状态）
+- 播放行为（自动恢复、播放模式、数据收集）
+- 音频处理（全局增益增强、读取策略）
+- 界面偏好（主题、窗口记忆）
+- 数据管理（定时保存、日志记录）
+
+配置分类：
+1. 控制接口设置：运行时TCP控制协议配置
+2. 播放设置：会话恢复、播放模式偏好
+3. 音频设置：增益增强、解码策略
+4. 界面设置：主题、透明度、窗口行为
+5. 数据设置：自动保存、日志记录
+
+数据绑定：
+- 所有控件直接绑定到Settings实体属性
+- 实时验证输入的有效性（如端口号范围）
+- 部分设置需要重启相关服务生效
+"""
+
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -17,11 +39,38 @@ from app.models.entities import Settings
 
 
 class SettingsDialog(QDialog):
+    """应用设置对话框。
+    
+    功能特性：
+    - 网络设置：配置运行时控制接口的监听地址和端口
+    - 播放设置：控制会话恢复、播放模式扩展、统计收集等行为
+    - 音频设置：调整全局增益增强系数和文件读取策略
+    - 界面设置：主题选择、窗口记忆、透明度控制
+    - 数据设置：定时保存间隔、日志记录等持久化选项
+    
+    设计特点：
+    - 表单式布局，清晰的分组和相关性
+    - 实时输入验证，防止无效配置
+    - 条件启用/禁用相关选项组
+    - 支持取消操作，不保存未确认的修改
+    
+    与Settings实体关系：
+    - 对话框持有Settings实例的引用
+    - 修改直接作用于实体属性
+    - 需要外部代码调用SettingsStore保存到文件
+    """
+    
     def __init__(self, settings: Settings, parent=None):
+        """初始化设置对话框。
+        
+        Args:
+            settings: Settings实体实例，包含当前配置值
+            parent: 父级窗口，用于模态显示
+        """
         super().__init__(parent)
         self.setWindowTitle("设置")
         self.resize(460, 340)
-        self._settings = settings
+        self._settings = settings  # 持有Settings实体引用
 
         self._build_ui()
 

@@ -23,11 +23,23 @@ class MetadataService:
         self._cover_cache: dict[str, bytes | None] = {}
 
     def extract_track(self, path: Path, track_id: str | None = None) -> Track:
+        """从音频文件提取完整的曲目信息。
+        
+        使用Mutagen库读取音频文件的标签和基本信息，
+        创建一个Track实例表示该音频文件。
+        
+        Args:
+            path: 音频文件路径
+            track_id: 可选的曲目ID，如果未提供则生成新的
+            
+        Returns:
+            Track: 包含提取的元数据的曲目对象
+        """
         source = Path(path).resolve()
         audio_easy = None
         audio_raw = None
         duration_sec = 0.0
-        title = source.stem
+        title = source.stem  # 默认使用文件名作为标题
         artist = "未知歌手"
         album = "未知专辑"
         track_no = 0
@@ -43,9 +55,11 @@ class MetadataService:
         except Exception:
             audio_raw = None
 
+        # 提取音频时长信息
         if audio_raw is not None and getattr(audio_raw, "info", None) is not None:
             duration_sec = float(getattr(audio_raw.info, "length", 0.0) or 0.0)
 
+        # 提取标签信息
         if audio_easy is not None and getattr(audio_easy, "tags", None):
             tags = audio_easy.tags
             title = self._first_tag(tags, ["title", "TITLE"]) or title
@@ -67,6 +81,18 @@ class MetadataService:
         )
 
     def read_lyrics(self, path: Path) -> str:
+        """读取音频文件的歌词信息。
+        
+        优先读取同名的.lrc文件，如果不存在则尝试从
+        音频文件标签中读取嵌入的歌词。
+        结果会被缓存以提高性能。
+        
+        Args:
+            path: 音频文件路径
+            
+        Returns:
+            str: 歌词文本，如果没有歌词则返回空字符串
+        """
         source = str(Path(path).resolve())
         if source in self._lyrics_cache:
             return self._lyrics_cache[source]
@@ -80,6 +106,17 @@ class MetadataService:
         return lyrics
 
     def read_cover_bytes(self, path: Path) -> bytes | None:
+        """读取音频文件内嵌的封面图片。
+        
+        从多种音频格式中提取嵌入的封面图片数据。
+        结果会被缓存以提高性能。
+        
+        Args:
+            path: 音频文件路径
+            
+        Returns:
+            bytes | None: 封面图片数据，如果没有封面则返回None
+        """
         source = str(Path(path).resolve())
         if source in self._cover_cache:
             return self._cover_cache[source]
@@ -89,6 +126,14 @@ class MetadataService:
         return data
 
     def _read_lrc_sidecar(self, path: Path) -> str:
+        """读取同名的.lrc歌词文件。
+        
+        Args:
+            path: 音频文件路径
+            
+        Returns:
+            str: 歌词文本，如果文件不存在或读取失败则返回空字符串
+        """
         lrc = path.with_suffix(".lrc")
         if not lrc.exists():
             return ""
@@ -103,6 +148,18 @@ class MetadataService:
             return ""
 
     def _read_tag_lyrics(self, path: Path) -> str:
+        """从音频文件标签中读取嵌入的歌词。
+        
+        支持多种音频格式的歌词标签：
+        - ID3格式的USLT标签（MP3）
+        - Vorbis/FLAC格式的lyrics标签
+        
+        Args:
+            path: 音频文件路径
+            
+        Returns:
+            str: 歌词文本，如果没有找到则返回空字符串
+        """
         try:
             audio = MutagenFile(str(path), easy=False)
         except Exception:
@@ -130,6 +187,19 @@ class MetadataService:
         return ""
 
     def _read_embedded_cover(self, path: Path) -> bytes | None:
+        """从音频文件标签中读取嵌入的封面图片。
+        
+        支持多种音频格式的封面：
+        - ID3 APIC标签（MP3）
+        - FLAC pictures
+        - MP4 covr原子
+        
+        Args:
+            path: 音频文件路径
+            
+        Returns:
+            bytes | None: 封面图片数据，如果没有则返回None
+        """
         try:
             audio = MutagenFile(str(path), easy=False)
         except Exception:
@@ -169,6 +239,15 @@ class MetadataService:
 
     @staticmethod
     def _first_tag(tags: Any, candidates: list[str]) -> str:
+        """从标签中按优先级获取第一个存在的值。
+        
+        Args:
+            tags: 标签对象
+            candidates: 可能的标签键名列表，按优先级排序
+            
+        Returns:
+            str: 找到的标签值，如果没有则返回空字符串
+        """
         for key in candidates:
             try:
                 value = tags.get(key)
@@ -185,6 +264,18 @@ class MetadataService:
 
     @staticmethod
     def _parse_track_no(raw: str) -> int:
+        """解析音轨号字符串。
+        
+        支持多种格式的音轨号：
+        - 纯数字："5"
+        - 分数形式："3/10"
+        
+        Args:
+            raw: 音轨号字符串
+            
+        Returns:
+            int: 解析后的音轨号，解析失败返回0
+        """
         text = (raw or "0").strip()
         if "/" in text:
             text = text.split("/", 1)[0]

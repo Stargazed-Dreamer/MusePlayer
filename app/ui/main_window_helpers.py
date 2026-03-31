@@ -8,9 +8,20 @@ from __future__ import annotations
 3. Windows 任务栏进度条集成（comtypes）
 4. 播放控制图标绘制与歌词时间解析工具
 
+核心组件说明：
+- MultiHintStatusBar: 支持多消息并发的状态栏，用于同时显示音量/播放状态/下一首预告等
+- LyricsListWidget: 歌词显示列表，支持用户交互检测和复制操作
+- ClickJumpSlider: 点击跳转滑条，用于进度条和音量控制，支持滚轮音量调节
+- LyricsItemDelegate: 歌词项绘制委托，支持高亮当前歌词和时间轴显示
+- _WindowsTaskbarProgress: Windows任务栏进度集成，通过COM接口实现
+- 图标绘制函数: 各种播放控制图标的矢量绘制工具
+- LRC歌词解析: 标准LRC格式歌词的时间戳解析和内容提取
+
 设计目的：
 - 将高复用 UI 细节从主窗口类中剥离，降低主类复杂度
-- 让主窗口更聚焦“流程编排”，辅助模块专注“控件实现”
+- 让主窗口更聚焦"流程编排"，辅助模块专注"控件实现"
+- 提供统一的交互模式和视觉风格
+- 封装平台特定功能（如Windows任务栏集成）
 """
 
 import ctypes
@@ -104,14 +115,39 @@ class MultiHintStatusBar(QStatusBar):
 
     与 Qt 原生 `showMessage` 不同，本实现允许多来源提示共存，
     并通过 `-` 拼接展示，适合播放器同时显示音量/状态/预告信息。
+    
+    工作机制：
+    - 每个消息都有独立的key、过期时间和显示优先级
+    - 定时器定期清理过期消息（160ms间隔）
+    - 消息按优先级排序后拼接显示，用" - "分隔
+    - 支持自动key推断（从消息内容提取前缀）
+    
+    典型使用场景：
+    - key="音量": 显示当前音量值
+    - key="状态": 显示播放状态或操作反馈
+    - key="预告": 显示下一首/上一首歌曲信息
     """
 
     def __init__(self, parent=None):
+        """初始化多提示状态栏。
+        
+        Args:
+            parent: 父级QWidget
+        """
         super().__init__(parent)
+        
+        # hints字典结构：{key: (text, expire_time, order)}
+        # - key: 消息类型标识（如"音量"、"状态"）
+        # - text: 实际显示的文本内容
+        # - expire_time: 过期时间戳（None表示永不过期）
+        # - order: 显示优先级（数字越小优先级越高）
         self._hints: dict[str, tuple[str, float | None, int]] = {}
-        self._order_counter = 0
+        
+        self._order_counter = 0  # 用于生成唯一的显示优先级
+        
+        # 创建定时器定期清理过期消息并刷新显示
         self._timer = QTimer(self)
-        self._timer.setInterval(160)
+        self._timer.setInterval(160)  # 160ms刷新间隔，平衡性能和响应性
         self._timer.timeout.connect(self._prune_and_render)
         self._timer.start()
 
@@ -124,12 +160,24 @@ class MultiHintStatusBar(QStatusBar):
         QStatusBar.showMessage(self, "", 0)
 
     def set_hint(self, key: str, text: str, timeout_ms: int = 0) -> None:
+        """设置一条状态提示。
+        
+        Args:
+            key: 提示类型标识（如"音量"、"状态"）
+            text: 要显示的文本内容
+            timeout_ms: 超时时间（毫秒），0表示永不过期
+        """
         if not text:
             self.clear_hint(key)
             return
+        
         now = self._now_sec()
+        # 计算过期时间戳，如果timeout_ms > 0则设置过期时间，否则为None（永不过期）
         expire = (now + max(0, int(timeout_ms)) / 1000.0) if timeout_ms > 0 else None
+        
+        # 如果key已存在则保持原有优先级，否则分配新的优先级
         order = self._hints[key][2] if key in self._hints else self._next_order()
+        
         self._hints[key] = (str(text), expire, order)
         self._render()
 
@@ -176,18 +224,44 @@ class MultiHintStatusBar(QStatusBar):
 
 
 class LyricsListWidget(QListWidget):
+    """歌词列表小部件.
+
+    继承自QListWidget，提供用户交互信号和复制功能。
+    当用户进行鼠标或键盘操作时会发出相应的信号。
+
+    Attributes:
+        user_interacted: 用户交互时发出的信号。
+        copy_requested: 用户请求复制时发出的信号。
+    """
     user_interacted = Signal()
     copy_requested = Signal()
 
     def wheelEvent(self, event):
+        """处理鼠标滚轮事件.
+
+        Args:
+            event: 鼠标滚轮事件对象。
+        """
         self.user_interacted.emit()
         super().wheelEvent(event)
 
     def mousePressEvent(self, event):
+        """处理鼠标按下事件.
+
+        Args:
+            event: 鼠标按下事件对象。
+        """
         self.user_interacted.emit()
         super().mousePressEvent(event)
 
     def keyPressEvent(self, event):
+        """处理键盘按下事件.
+
+        支持复制快捷键，当用户按下复制快捷键时发出copy_requested信号。
+
+        Args:
+            event: 键盘按下事件对象。
+        """
         if event.matches(QKeySequence.StandardKey.Copy):
             self.copy_requested.emit()
             event.accept()
@@ -197,7 +271,24 @@ class LyricsListWidget(QListWidget):
 
 
 class LyricLineWidget(QWidget):
+    """歌词行小部件，显示单行歌词及时间戳.
+
+    用于在歌词列表中以可视化方式显示歌词文本和时间信息。
+    当鼠标悬停时会显示开始和结束时间。
+
+    Attributes:
+        _start_sec: 歌词开始时间（秒）。
+        _end_sec: 歌词结束时间（秒）。
+    """
     def __init__(self, text: str, start_sec: float, end_sec: float, parent=None):
+        """初始化歌词行小部件.
+
+        Args:
+            text: 歌词文本内容。
+            start_sec: 歌词开始时间（秒）。
+            end_sec: 歌词结束时间（秒）。
+            parent: 父级小部件。
+        """
         super().__init__(parent)
         self.setObjectName("LyricRowWidget")
         self._start_sec = float(start_sec)
@@ -230,36 +321,69 @@ class LyricLineWidget(QWidget):
         self.end_label.hide()
 
     def enterEvent(self, event) -> None:
+        """鼠标进入事件处理，显示时间标签.
+
+        Args:
+            event: 鼠标进入事件对象。
+        """
         self.start_label.show()
         self.end_label.show()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
+        """鼠标离开事件处理，隐藏时间标签.
+
+        Args:
+            event: 鼠标离开事件对象。
+        """
         self.start_label.hide()
         self.end_label.hide()
         super().leaveEvent(event)
 
     def sizeHint(self) -> QSize:
+        """返回歌词行小部件的建议大小.
+
+        根据字体大小计算合适的高度，宽度固定为260像素。
+
+        Returns:
+            QSize: 建议的尺寸，宽度260，高度至少24像素。
+        """
         fm = self.text_label.fontMetrics()
         height = max(24, fm.height() + 8)
         return QSize(260, height)
 
 
 class ClickJumpSlider(QSlider):
-    """可“点击即跳转”的滑条。
+    """可"点击即跳转"的滑条.
 
-    设计目标：
-    - 鼠标点击任意位置直接跳到目标值
-    - 拖动过程中持续发出 `sliderMoved`
-    - 可选接管滚轮用于音量快捷调节
+    扩展QSlider，支持鼠标点击任意位置直接跳转到目标值，而不是步进移动。
+    支持拖动过程中持续发出sliderMoved信号，并可选择性地接管滚轮事件用于音量调节。
+
+    Attributes:
+        _mouse_pressed: 记录鼠标是否被按下的状态。
+        _volume_wheel: 是否启用滚轮音量控制功能。
     """
 
     def __init__(self, orientation: Qt.Orientation, parent=None, *, volume_wheel: bool = False):
+        """初始化点击跳转滑条.
+
+        Args:
+            orientation: 滑块方向（水平或垂直）。
+            parent: 父级小部件。
+            volume_wheel: 是否启用滚轮音量控制，默认为False。
+        """
         super().__init__(orientation, parent)
         self._mouse_pressed = False
         self._volume_wheel = bool(volume_wheel)
 
     def mousePressEvent(self, event):
+        """处理鼠标按下事件，实现点击跳转功能.
+
+        当左键点击时，直接跳转到鼠标位置对应的值。
+
+        Args:
+            event: 鼠标按下事件对象。
+        """
         if event.button() == Qt.MouseButton.LeftButton:
             self._mouse_pressed = True
             self.setSliderDown(True)
@@ -270,6 +394,13 @@ class ClickJumpSlider(QSlider):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        """处理鼠标移动事件，实现拖动跳转功能.
+
+        在鼠标按下的状态下移动鼠标时，滑块跟随鼠标位置。
+
+        Args:
+            event: 鼠标移动事件对象。
+        """
         if self._mouse_pressed:
             self._set_value_from_position(event.position().toPoint())
             event.accept()
@@ -277,6 +408,13 @@ class ClickJumpSlider(QSlider):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        """处理鼠标释放事件，结束拖动操作.
+
+        释放鼠标按钮时停止拖动操作并发出相应信号。
+
+        Args:
+            event: 鼠标释放事件对象。
+        """
         if self._mouse_pressed and event.button() == Qt.MouseButton.LeftButton:
             self._set_value_from_position(event.position().toPoint())
             self._mouse_pressed = False
@@ -287,6 +425,13 @@ class ClickJumpSlider(QSlider):
         super().mouseReleaseEvent(event)
 
     def _set_value_from_position(self, pos: QPoint) -> None:
+        """根据鼠标位置设置滑块值.
+
+        将屏幕坐标转换为滑块值并更新滑块位置，同时发出sliderMoved信号。
+
+        Args:
+            pos: 鼠标在滑块上的位置坐标。
+        """
         option = QStyleOptionSlider()
         self.initStyleOption(option)
         groove = self.style().subControlRect(
@@ -314,6 +459,13 @@ class ClickJumpSlider(QSlider):
         self.sliderMoved.emit(value)
 
     def wheelEvent(self, event):
+        """处理鼠标滚轮事件，支持音量快捷调节.
+
+        如果启用了音量控制，将滚轮事件转发给窗口进行音量调节。
+
+        Args:
+            event: 鼠标滚轮事件对象。
+        """
         if self._volume_wheel:
             win = self.window()
             if hasattr(win, "_adjust_volume_from_wheel_delta"):
@@ -324,6 +476,16 @@ class ClickJumpSlider(QSlider):
 
 
 class LyricsItemDelegate(QStyledItemDelegate):
+    """用于显示歌词的自定义列表项委托类.
+
+    此类负责渲染歌词列表，支持显示时间戳和悬停效果。
+    可以在歌词项中显示开始和结束时间。
+
+    Attributes:
+        _hover_row: 当前鼠标悬停的行号。
+        _start_times: 歌词开始时间列表。
+        _end_times: 歌词结束时间列表。
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self._hover_row = -1
@@ -331,13 +493,33 @@ class LyricsItemDelegate(QStyledItemDelegate):
         self._end_times: list[float] = []
 
     def set_times(self, starts: list[float], ends: list[float]) -> None:
+        """设置歌词时间戳.
+
+        Args:
+            starts: 歌词开始时间列表（以秒为单位）。
+            ends: 歌词结束时间列表（以秒为单位）。
+        """
         self._start_times = list(starts)
         self._end_times = list(ends)
 
     def set_hover_row(self, row: int) -> None:
+        """设置当前悬停的行号.
+
+        Args:
+            row: 悬停的行号，如果没有悬停则为-1。
+        """
         self._hover_row = int(row)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        """绘制歌词列表项，显示歌词文本和时间戳.
+
+        如果鼠标悬停在该行上，会显示开始和结束时间。
+
+        Args:
+            painter: Qt绘画对象。
+            option: 样式选项，包含绘制所需的信息。
+            index: 当前绘制项的模型索引。
+        """
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         style = opt.widget.style() if opt.widget is not None else QApplication.style()
@@ -364,6 +546,15 @@ class LyricsItemDelegate(QStyledItemDelegate):
         painter.restore()
 
     def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
+        """返回歌词列表项的建议大小.
+
+        Args:
+            option: 样式选项，包含字体等信息。
+            index: 当前项的模型索引。
+
+        Returns:
+            QSize: 建议的宽度和高度。
+        """
         text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         h = max(24, option.fontMetrics.height() + 8)
         w = max(160, option.fontMetrics.horizontalAdvance(text) + 20)
@@ -371,6 +562,15 @@ class LyricsItemDelegate(QStyledItemDelegate):
 
 
 class TrackItemDelegate(QStyledItemDelegate):
+    """用于显示音轨项的自定义列表项委托类.
+
+    此类负责渲染音轨列表，支持显示删除按钮和悬停效果。
+    当鼠标悬停时会显示删除按钮。
+
+    Attributes:
+        REMOVE_WIDTH: 删除按钮的宽度。
+        _hover_row: 当前鼠标悬停的行号。
+    """
     REMOVE_WIDTH = 14
 
     def __init__(self, parent=None):
@@ -378,13 +578,35 @@ class TrackItemDelegate(QStyledItemDelegate):
         self._hover_row = -1
 
     def set_hover_row(self, row: int) -> None:
+        """设置当前悬停的行号.
+
+        Args:
+            row: 悬停的行号，如果没有悬停则为-1。
+        """
         self._hover_row = int(row)
 
     @classmethod
     def remove_rect(cls, row_rect: QRect) -> QRect:
+        """计算删除按钮的矩形区域.
+
+        Args:
+            row_rect: 行项目的矩形区域。
+
+        Returns:
+            QRect: 删除按钮的矩形区域。
+        """
         return QRect(row_rect.left() + 2, row_rect.top() + max(0, (row_rect.height() - 12) // 2), cls.REMOVE_WIDTH, 12)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        """绘制音轨列表项，支持显示删除按钮.
+
+        当鼠标悬停时会显示红色的删除按钮。
+
+        Args:
+            painter: Qt绘画对象。
+            option: 样式选项，包含绘制所需的信息。
+            index: 当前绘制项的模型索引。
+        """
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         style = opt.widget.style() if opt.widget is not None else QApplication.style()
@@ -411,6 +633,15 @@ class TrackItemDelegate(QStyledItemDelegate):
         painter.restore()
 
     def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
+        """返回音轨列表项的建议大小.
+
+        Args:
+            option: 样式选项，包含字体等信息。
+            index: 当前项的模型索引。
+
+        Returns:
+            QSize: 建议的宽度和高度。
+        """
         text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         h = max(24, option.fontMetrics.height() + 8)
         w = max(180, option.fontMetrics.horizontalAdvance(text) + self.REMOVE_WIDTH + 20)
@@ -418,9 +649,30 @@ class TrackItemDelegate(QStyledItemDelegate):
 
 
 class TrackListItemWidget(QWidget):
+    """音轨列表项的自定义小部件.
+
+    此类为每个音轨创建一个包含删除按钮和文本标签的小部件。
+    支持鼠标悬停时显示删除按钮。
+
+    Attributes:
+        remove_clicked: 当删除按钮被点击时发出的信号，携带音轨ID。
+        _track_id: 音轨的唯一标识符。
+
+    Args:
+        track_id: 音轨的唯一标识符。
+        text: 要显示的文本内容。
+        parent: 父级小部件。
+    """
     remove_clicked = Signal(str)
 
     def __init__(self, track_id: str, text: str, parent=None):
+        """初始化音轨列表项小部件.
+
+        Args:
+            track_id: 音轨的唯一标识符。
+            text: 要显示的文本内容。
+            parent: 父级小部件。
+        """
         super().__init__(parent)
         self.setObjectName("TrackRowWidget")
         self._track_id = str(track_id)
@@ -455,25 +707,59 @@ class TrackListItemWidget(QWidget):
         self.remove_btn.clicked.connect(self._emit_remove)
 
     def enterEvent(self, event) -> None:
+        """鼠标进入事件处理，显示删除按钮.
+
+        Args:
+            event: 鼠标进入事件对象。
+        """
         self.remove_btn.show()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
+        """鼠标离开事件处理，隐藏删除按钮.
+
+        Args:
+            event: 鼠标离开事件对象。
+        """
         self.remove_btn.hide()
         super().leaveEvent(event)
 
     def _emit_remove(self) -> None:
+        """发出删除信号.
+
+        当用户点击删除按钮时调用此方法，发出携带音轨ID的删除信号。
+        """
         self.remove_clicked.emit(self._track_id)
 
     def sizeHint(self) -> QSize:
+        """返回小部件的建议大小.
+
+        Returns:
+            QSize: 建议的宽度和高度。
+        """
         fm = self.text_label.fontMetrics()
         height = max(24, fm.height() + 8)
         return QSize(260, height)
 
 class _WindowsTaskbarProgress:
-    """Windows 任务栏进度桥接层（基于 comtypes）。"""
+    """Windows任务栏进度桥接层（基于comtypes）.
+
+    此类用于在Windows操作系统的任务栏中显示播放进度条。
+    需要comtypes库来与Windows API进行交互。
+
+    Attributes:
+        _enabled: 是否启用任务栏进度功能。
+        _taskbar: 任务栏COM对象。
+        _hwnd: 窗口句柄。
+        _ready: 是否已初始化并准备就绪。
+        _shell32: shell32.dll的动态链接库对象。
+    """
 
     def __init__(self) -> None:
+        """初始化Windows任务栏进度桥接对象.
+
+        检查系统平台和comtypes库的可用性，设置初始状态。
+        """
         self._enabled = bool(sys.platform.startswith("win") and comtypes is not None)
         self._taskbar = None
         self._hwnd = 0
@@ -490,6 +776,14 @@ class _WindowsTaskbarProgress:
             self._enabled = False
 
     def attach(self, hwnd: int) -> bool:
+        """将任务栏进度功能附加到指定窗口.
+
+        Args:
+            hwnd: 窗口句柄。
+
+        Returns:
+            bool: 如果附加成功返回True，否则返回False。
+        """
         if not self._enabled:
             return False
         if hwnd <= 0:
@@ -517,6 +811,12 @@ class _WindowsTaskbarProgress:
         return self._ready
 
     def set_progress(self, position: float, duration: float) -> None:
+        """设置任务栏进度条的位置.
+
+        Args:
+            position: 当前播放位置（秒）。
+            duration: 总时长（秒）。如果为0或负数则清除进度条。
+        """
         if not self._ready or self._hwnd <= 0:
             return
         if duration <= 0.0:
@@ -531,6 +831,10 @@ class _WindowsTaskbarProgress:
             self._ready = False
 
     def clear(self) -> None:
+        """清除任务栏进度条.
+
+        停止显示任务栏进度条。
+        """
         if not self._ready or self._hwnd <= 0:
             return
         try:
@@ -539,6 +843,10 @@ class _WindowsTaskbarProgress:
             self._ready = False
 
     def close(self) -> None:
+        """关闭并清理任务栏进度桥接对象.
+
+        释放COM对象并重置状态。
+        """
         self._taskbar = None
         self._ready = False
         if self._enabled and comtypes is not None:
@@ -549,6 +857,14 @@ class _WindowsTaskbarProgress:
 
 
 def _format_time(sec: float) -> str:
+    """格式化时间为MM:SS或HH:MM:SS格式.
+
+    Args:
+        sec: 秒数。
+
+    Returns:
+        str: 格式化后的时间字符串。
+    """
     total = max(0, int(sec))
     m, s = divmod(total, 60)
     h, m = divmod(m, 60)
@@ -558,6 +874,14 @@ def _format_time(sec: float) -> str:
 
 
 def _format_lrc_time(sec: float) -> str:
+    """格式化LRC歌词时间戳为MM:SS格式.
+
+    Args:
+        sec: 秒数。
+
+    Returns:
+        str: 格式化后的时间字符串（MM:SS格式）。
+    """
     safe = max(0.0, float(sec))
     total = int(safe)
     minutes = total // 60
@@ -566,6 +890,16 @@ def _format_lrc_time(sec: float) -> str:
 
 
 def _parse_lrc_entries(raw: str) -> list[tuple[float, str]]:
+    """解析LRC歌词文件内容.
+
+    从LRC格式的文本中提取时间戳和歌词文本。
+
+    Args:
+        raw: LRC格式的原始文本内容。
+
+    Returns:
+        list[tuple[float, str]]: 包含（时间戳（秒），歌词文本）的列表，按时间顺序排序。
+    """
     result: list[tuple[float, str]] = []
     for raw_line in raw.split("\n"):
         line = raw_line.strip()
@@ -596,6 +930,15 @@ def _parse_lrc_entries(raw: str) -> list[tuple[float, str]]:
 
 
 def _make_mode_icon(mode: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
+    """创建播放模式图标.
+
+    Args:
+        mode: 播放模式（playlist_loop, single_loop, 或其他）。
+        color: 图标颜色，默认为"#f4f4f4"。
+
+    Returns:
+        QIcon: 对应播放模式的图标。
+    """
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
@@ -631,6 +974,15 @@ def _make_mode_icon(mode: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
 
 
 def _make_plus_minus_icon(is_plus: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
+    """创建加减图标.
+
+    Args:
+        is_plus: True为加号，False为减号。
+        color: 图标颜色，默认为"#f4f4f4"。
+
+    Returns:
+        QIcon: 加减图标。
+    """
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
@@ -648,6 +1000,14 @@ def _make_plus_minus_icon(is_plus: bool, *, color: QColor | str = "#f4f4f4") -> 
 
 
 def _make_crosshair_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
+    """创建十字准星图标.
+
+    Args:
+        color: 图标颜色，默认为"#f4f4f4"。
+
+    Returns:
+        QIcon: 十字准星图标。
+    """
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
@@ -665,6 +1025,15 @@ def _make_crosshair_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
 
 
 def _make_media_icon(kind: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
+    """创建媒体控制图标.
+
+    Args:
+        kind: 图标类型（play, pause, next, prev）。
+        color: 图标颜色，默认为"#f4f4f4"。
+
+    Returns:
+        QIcon: 媒体控制图标。
+    """
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pix)
@@ -693,6 +1062,15 @@ def _make_media_icon(kind: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
 
 
 def _make_volume_icon(*, muted: bool, color: QColor | str = "#f4f4f4") -> QIcon:
+    """创建音量图标.
+
+    Args:
+        muted: True为静音，False为正常音量。
+        color: 图标颜色，默认为"#f4f4f4"。
+
+    Returns:
+        QIcon: 音量图标。
+    """
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pix)
@@ -714,6 +1092,14 @@ def _make_volume_icon(*, muted: bool, color: QColor | str = "#f4f4f4") -> QIcon:
 
 
 def _make_folder_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
+    """创建文件夹图标.
+
+    Args:
+        color: 图标颜色，默认为"#f4f4f4"。
+
+    Returns:
+        QIcon: 文件夹图标。
+    """
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pix)
@@ -728,6 +1114,15 @@ def _make_folder_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
 
 
 def _make_rich_title_icon(kind: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
+    """创建标题栏图标.
+
+    Args:
+        kind: 图标类型（min, restore, close, max）。
+        color: 图标颜色，默认为"#f4f4f4"。
+
+    Returns:
+        QIcon: 标题栏图标。
+    """
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
@@ -757,6 +1152,14 @@ def _make_rich_title_icon(kind: str, *, color: QColor | str = "#f4f4f4") -> QIco
 
 
 def _make_moon_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
+    """创建月亮图标（夜间模式）.
+
+    Args:
+        color: 图标颜色，默认为"#f4f4f4"。
+
+    Returns:
+        QIcon: 月亮图标。
+    """
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
@@ -773,6 +1176,14 @@ def _make_moon_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
 
 
 def _make_sun_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
+    """创建太阳图标（日间模式）.
+
+    Args:
+        color: 图标颜色，默认为"#f4f4f4"。
+
+    Returns:
+        QIcon: 太阳图标。
+    """
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
@@ -798,6 +1209,15 @@ def _make_sun_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
 
 
 def _make_sidebar_toggle_icon(*, collapsed: bool, color: QColor | str = "#f4f4f4") -> QIcon:
+    """创建侧边栏切换图标.
+
+    Args:
+        collapsed: True为展开状态（<），False为收起状态（>）。
+        color: 图标颜色，默认为"#f4f4f4"。
+
+    Returns:
+        QIcon: 侧边栏切换图标。
+    """
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pix)
@@ -815,6 +1235,15 @@ def _make_sidebar_toggle_icon(*, collapsed: bool, color: QColor | str = "#f4f4f4
 
 
 def _make_lock_icon(locked: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
+    """创建锁图标.
+
+    Args:
+        locked: True为锁定状态，False为解锁状态。
+        color: 图标颜色，默认为"#f4f4f4"。
+
+    Returns:
+        QIcon: 锁图标。
+    """
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
@@ -835,6 +1264,15 @@ def _make_lock_icon(locked: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
 
 
 def _make_pin_icon(pinned: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
+    """创建图钉图标.
+
+    Args:
+        pinned: True为已固定状态，False为未固定状态。
+        color: 图标颜色，默认为"#f4f4f4"。
+
+    Returns:
+        QIcon: 图钉图标。
+    """
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 

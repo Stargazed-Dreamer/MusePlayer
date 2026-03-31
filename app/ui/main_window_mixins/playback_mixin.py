@@ -1,6 +1,27 @@
 from __future__ import annotations
 
-"""MainWindow 播放/歌单/歌词/菜单相关 mixin。"""
+"""MainWindow 播放/歌单/歌词/菜单相关 mixin。
+
+该mixin承载主窗口的所有播放相关功能：
+- 播放控制：播放/暂停/上一首/下一首/模式切换
+- 歌单管理：歌单切换、歌曲列表刷新、搜索过滤
+- 歌词显示：歌词加载、时间同步、高亮滚动
+- 媒体信息：歌曲信息显示、封面图片、进度更新
+- 菜单操作：文件导入、歌单管理、设置访问
+- 主题切换：明暗主题切换和应用
+- 音量控制：音量调节、静音切换、滚轮支持
+
+设计特点：
+- 功能高度内聚，所有播放相关UI逻辑集中管理
+- 通过信号槽与PlayerService和AppController解耦
+- 支持快捷键绑定和状态栏消息反馈
+- 歌词系统包含自动滚动和用户交互检测
+
+与其他组件关系：
+- 依赖 PlayerService 提供播放状态和控制接口
+- 依赖 AppController 处理应用级操作（导入、设置等）
+- 向 MainWindowWindowingMixin 提供窗口行为支持
+"""
 
 import html
 import subprocess
@@ -34,27 +55,94 @@ from app.ui.main_window_helpers import (
 
 
 class MainWindowPlaybackMixin:
+    """主窗口播放功能mixin。
+    
+    提供完整的播放相关用户界面操作：
+    
+    播放控制：
+    - 基本控制：播放、暂停、切歌、进度跳转
+    - 模式切换：单曲循环、歌单循环、随机播放
+    - 音量管理：音量调节、静音、增益控制
+    
+    媒体信息：
+    - 歌曲信息显示：标题、歌手、专辑、路径
+    - 封面图片：自动提取和显示音频文件封面
+    - 歌词同步：实时高亮、自动滚动、手动导航
+    
+    歌单管理：
+    - 歌曲列表：显示、搜索、排序、选择
+    - 歌单切换：快速切换不同播放列表
+    - 播放定位：快速跳转到当前播放歌曲
+    
+    系统集成：
+    - 菜单操作：文件导入、设置访问、统计查看
+    - 主题切换：实时的明暗主题切换
+    - 状态反馈：多源状态消息的并行显示
+    
+    快捷键支持：
+    - 空格：播放/暂停切换
+    - 上下键：音量调节
+    - 左右键：进度调整
+    - 翻页键：切歌控制
+    """
+
+    # ============================================================================
+    # 基本播放控制
+    # ============================================================================
+    
     def _play_previous_track(self) -> None:
+        """播放上一首歌曲。"""
         ok = self.player.previous_track()
         if not ok:
             self.statusBar().showMessage("没有上一首可播放", 2000)
+            
     def _play_next_track(self) -> None:
+        """播放下一首歌曲。"""
         ok = self.player.next_track(user_triggered=True)
         if not ok:
             self.statusBar().showMessage("没有下一首可播放", 2000)
     def _save_stats_now(self) -> None:
+        """立即保存播放统计数据到持久化存储。
+        
+        触发手动统计保存操作，通常在用户请求或特定时机调用。
+        捕获并处理保存过程中可能发生的异常，通过状态栏提供用户反馈。
+        """
         try:
             self.controller.save_stats_now()
             self.statusBar().showMessage("统计数据已保存", 2200)
         except Exception as exc:
             self.statusBar().showMessage(f"保存统计失败：{exc}", 3500)
     def _new_icon_button(self, object_name: str) -> QToolButton:
+        """创建新的图标按钮工具。
+        
+        创建一个标准化的图标按钮，用于播放控制界面。
+        统一按钮样式：18x18像素图标，非自动抬起样式。
+        
+        Args:
+            object_name: 按钮的对象名称，用于样式表和调试
+            
+        Returns:
+            配置好的QToolButton实例
+        """
         button = QToolButton()
         button.setObjectName(object_name)
         button.setIconSize(QSize(18, 18))
         button.setAutoRaise(False)
         return button
     def _reload_playlist_combo(self) -> None:
+        """重新加载歌单下拉框，同步当前可用的所有歌单。
+        
+        刷新歌单选择下拉框的内容：
+        - 清空现有选项并重新从曲库服务获取所有歌单
+        - 特殊处理"全部歌曲"歌单的显示名称
+        - 保持当前选中的歌单状态
+        - 防止重入：使用blockSignals避免触发不必要的事件
+        
+        通常在以下时机调用：
+        - 应用启动时初始化
+        - 歌单数据发生变化时
+        - 切换播放源之后
+        """
         current = self.player.current_playlist_id
         self.playlist_combo.blockSignals(True)
         self.playlist_combo.clear()
@@ -69,6 +157,20 @@ class MainWindowPlaybackMixin:
         self.playlist_combo.setCurrentIndex(index_to_select)
         self.playlist_combo.blockSignals(False)
     def _reload_track_list(self) -> None:
+        """刷新当前歌单的歌曲列表显示。
+        
+        根据搜索关键词过滤并重新构建歌曲列表：
+        - 应用搜索过滤条件获取匹配的曲目
+        - 批量更新列表控件，优化大列表的性能
+        - 保持当前播放曲目的选中状态
+        - 自动滚动到当前播放的曲目
+        - 更新定位按钮的显示状态
+        
+        性能优化：
+        - 对于大型列表（>600首），分批处理并显示进度
+        - 使用setUpdatesEnabled减少UI重绘次数
+        - 动态计算项目高度以支持文本换行
+        """
         keyword = self.search_edit.text().strip()
         tracks = self.player.search_playlist_tracks(keyword)
 
@@ -100,6 +202,16 @@ class MainWindowPlaybackMixin:
         self._position_locate_current_button()
         self._update_locate_current_button()
     def _sync_current_track_row(self, *, center: bool) -> None:
+        """同步当前播放曲目在列表中的选中状态和滚动位置。
+        
+        确保当前正在播放的曲目在列表中可见且被选中：
+        - 查找当前播放曲目在列表中的行号
+        - 设置该行为选中状态
+        - 根据center参数决定滚动策略
+        
+        Args:
+            center: True表示滚动到中央，False表示确保可见即可
+        """
         row = self._find_current_track_row()
         if row < 0:
             return
@@ -110,6 +222,20 @@ class MainWindowPlaybackMixin:
         hint = QListWidget.ScrollHint.PositionAtCenter if center else QListWidget.ScrollHint.EnsureVisible
         self.track_list.scrollToItem(item, hint)
     def _track_item_height_for_text(self, text: str) -> int:
+        """根据文本内容动态计算列表项的高度。
+        
+        支持长文本的自动换行显示，确保文本完整可见：
+        - 考虑移除按钮宽度和边距
+        - 使用字体度量计算实际文本高度
+        - 支持单词换行和任意位置换行
+        - 保证最小高度为24像素
+        
+        Args:
+            text: 需要显示的文本内容
+            
+        Returns:
+            计算得到的列表项高度（像素）
+        """
         fm = self.track_list.fontMetrics()
         width = max(80, self.track_list.viewport().width() - TrackItemDelegate.REMOVE_WIDTH - 12)
         bounds = fm.boundingRect(
@@ -119,6 +245,22 @@ class MainWindowPlaybackMixin:
         )
         return max(24, bounds.height() + 8)
     def _refresh_current_track_ui(self, track: Track | None) -> None:
+        """刷新当前曲目相关的所有UI元素。
+        
+        更新与当前播放曲目相关的所有界面组件：
+        - 歌曲信息标签（标题、歌手、专辑、路径）
+        - 封面图片显示
+        - 歌词内容加载
+        - 窗口标题更新
+        - 播放定位同步
+        
+        处理两种状态：
+        1. track为None：清空所有显示，显示默认占位符
+        2. track有效：更新所有相关的UI元素
+        
+        Args:
+            track: 当前播放的曲目对象，如果为None表示没有选中的曲目
+        """
         self._next_track_preview_announced = False
         if track is None:
             self.title_label.setText("未选择歌曲")
@@ -157,6 +299,17 @@ class MainWindowPlaybackMixin:
         self._update_locate_current_button()
         self.statusBar().showMessage(f"播放歌曲：{self._current_track_title}", 3000)
     def _set_cover(self, cover_data: bytes | None) -> None:
+        """设置并显示音频文件的封面图片。
+        
+        处理封面图片的加载、缩放和显示：
+        - 处理空数据情况，隐藏封面显示
+        - 加载图片数据并验证格式有效性
+        - 按比例缩放图片以适应显示区域
+        - 平滑转换确保显示质量
+        
+        Args:
+            cover_data: 封面图片的二进制数据，如果为None则隐藏封面
+        """
         if not cover_data:
             self._has_cover_content = False
             self.cover_label.hide()
@@ -225,6 +378,19 @@ class MainWindowPlaybackMixin:
         if self._compact_mode:
             self.progress_center_label.setText(lines[0] if lines else "(暂无歌词)")
     def _build_lyrics_end_times(self, entries: list[tuple[float, str]]) -> list[float]:
+        """构建歌词条目的结束时间列表。
+        
+        为每条歌词计算其显示结束时间：
+        - 对于非最后一条：结束时间为下一条歌词的开始时间
+        - 对于最后一条：结束时间为歌曲总时长（如果有）或开始时间+3秒
+        - 处理边界情况，确保时间顺序正确
+        
+        Args:
+            entries: 歌词条目列表，每个条目包含(开始时间, 文本内容)
+            
+        Returns:
+            对应的结束时间列表
+        """
         if not entries:
             return []
         duration = float(self.player.state_snapshot().get("duration_sec", 0.0))
@@ -264,8 +430,16 @@ class MainWindowPlaybackMixin:
             layout.invalidate()
             layout.activate()
     def _on_progress_pressed(self) -> None:
+        """处理进度条鼠标按下事件，开始拖拽进度。"""
         self._dragging_progress = True
     def _on_progress_released(self) -> None:
+        """处理进度条鼠标释放事件，完成进度跳转。
+        
+        计算目标位置并跳转到指定播放位置：
+        - 根据滑块值计算实际播放时间
+        - 调用播放器跳转到目标位置
+        - 同步歌词显示到新的播放位置
+        """
         self._dragging_progress = False
         duration = max(0.0, self.player.state_snapshot().get("duration_sec", 0.0))
         if duration <= 0:
@@ -313,20 +487,50 @@ class MainWindowPlaybackMixin:
             self.lyrics_list.scrollToItem(item, QListWidget.ScrollHint.PositionAtCenter)
         self._lyrics_auto_adjusting = False
     def _on_lyrics_user_interaction(self) -> None:
+        """处理歌词列表的用户交互事件。
+        
+        当用户主动操作歌词列表时（如滚动），暂时禁用自动滚动功能：
+        - 设置用户滚动状态标志
+        - 启动定时器，在用户操作一段时间后恢复自动滚动
+        """
         if not self._lyrics_entries:
             return
         self._lyrics_user_scrolling = True
         self._lyrics_resume_timer.start()
     def _on_lyrics_scroll_changed(self, _value: int) -> None:
+        """监听歌词列表滚动位置变化。
+        
+        检测用户是否正在手动滚动歌词列表：
+        - 忽略程序自动调整引起的滚动事件
+        - 当鼠标在列表上方时认为是用户操作
+        - 触发用户交互处理逻辑
+        
+        Args:
+            _value: 滚动条的新值（本实现中未使用）
+        """
         if self._lyrics_auto_adjusting:
             return
         if self.lyrics_list.underMouse():
             self._on_lyrics_user_interaction()
     def _resume_lyrics_auto_scroll(self) -> None:
+        """恢复歌词的自动滚动功能。
+        
+        在用户停止手动操作一段时间后调用：
+        - 清除用户滚动状态标志
+        - 重新同步歌词显示到当前播放位置
+        """
         self._lyrics_user_scrolling = False
         position = float(self.player.state_snapshot().get("position_sec", 0.0))
         self._sync_lyrics_with_position(position)
     def _copy_selected_lyric(self) -> None:
+        """复制当前选中的歌词文本到剪贴板。
+        
+        获取当前选中的歌词列表项文本内容，并复制到系统剪贴板：
+        - 检查是否有选中的列表项
+        - 提取文本内容并验证非空
+        - 使用系统剪贴板API复制文本
+        - 通过状态栏提供操作反馈
+        """
         item = self.lyrics_list.currentItem()
         if item is None:
             return
@@ -337,6 +541,18 @@ class MainWindowPlaybackMixin:
         clipboard.setText(text)
         self.statusBar().showMessage(f"已复制歌词：{text}", 2000)
     def _on_lyric_double_clicked(self, item: QListWidgetItem) -> None:
+        """处理歌词项双击事件，跳转到对应播放时间点。
+        
+        根据双击的歌词项，计算对应的时间点并跳转到该位置：
+        - 获取歌词项在列表中的行号
+        - 验证行号有效性，确保不越界
+        - 查找对应的时间戳并跳转到该位置
+        - 同步歌词显示到新的播放位置
+        - 显示跳转操作的用户反馈
+        
+        Args:
+            item: 被双击的歌词列表项
+        """
         row = self.lyrics_list.row(item)
         if row < 0 or row >= len(self._lyrics_times):
             return
@@ -350,10 +566,25 @@ class MainWindowPlaybackMixin:
         state = "播放" if playing else "暂停"
         self.statusBar().showMessage(f"{state}：{self._current_track_title}", 2000)
     def _refresh_mode_order(self) -> None:
+        """刷新并更新可用的播放模式顺序列表。
+        
+        从播放器获取当前可用的播放模式，如果没有可用模式则使用默认列表：
+        - 从播放器服务获取可用模式列表
+        - 如果列表为空，使用默认模式（单曲循环、随机播放）
+        - 确保模式切换逻辑有一致的模式顺序
+        """
         self._mode_order = list(self.player.available_modes())
         if not self._mode_order:
             self._mode_order = [PlayMode.SINGLE_LOOP.value, PlayMode.RANDOM.value]
     def _cycle_play_mode(self) -> None:
+        """循环切换到下一个播放模式。
+        
+        按照模式顺序列表切换到下一个播放模式：
+        - 刷新当前可用模式列表
+        - 查找当前模式在列表中的位置
+        - 切换到下一个模式（如果当前模式不在列表中，切换到第一个模式）
+        - 更新播放器模式并显示用户反馈
+        """
         self._refresh_mode_order()
         current = self.player.mode.value
         try:
@@ -395,6 +626,15 @@ class MainWindowPlaybackMixin:
             self.theme_btn.setIcon(_make_moon_icon(color=color))
             self.theme_btn.setToolTip("切换到夜间模式")
     def _control_icon_color(self) -> QColor:
+        """获取当前主题下控制图标的合适颜色。
+        
+        根据当前主题模式返回相应的图标颜色：
+        - 暗色主题：使用浅色图标（#f4f4f4）
+        - 亮色主题：使用深色图标（#1f2521）
+        
+        Returns:
+            适配当前主题的QColor颜色对象
+        """
         return QColor("#f4f4f4") if self._dark_theme else QColor("#1f2521")
     def _refresh_control_icons(self) -> None:
         if not hasattr(self, "play_btn"):
@@ -519,6 +759,18 @@ class MainWindowPlaybackMixin:
         self._sync_lyrics_with_position(target)
         self.statusBar().showMessage(f"播放进度：{_format_time(target)}", 1500)
     def _open_current_in_explorer(self) -> None:
+        """在系统文件管理器中定位当前播放的文件。
+        
+        使用Windows资源管理器的"/select"功能高亮显示当前播放的音频文件：
+        - 获取当前播放曲目的文件路径
+        - 验证文件存在性
+        - 使用explorer.exe的/select参数打开并选中该文件
+        - 处理可能的异常情况并提供用户反馈
+        
+        安全性考虑：
+        - 保持/select参数和路径分离，避免Unicode或逗号路径的解析问题
+        - 使用subprocess.Popen避免阻塞UI线程
+        """
         track = self.player.current_track()
         if track is None:
             self.statusBar().showMessage("当前没有可定位的歌曲文件", 3000)
@@ -534,6 +786,17 @@ class MainWindowPlaybackMixin:
         except Exception as exc:
             self.statusBar().showMessage(f"打开资源管理器失败: {exc}", 5000)
     def _on_speed_changed(self, index: int) -> None:
+        """处理播放速度选择变化事件。
+        
+        当用户选择不同的播放速度时：
+        - 从下拉框获取选中的速度值
+        - 验证速度值有效性
+        - 通知播放器调整播放速度
+        - 显示当前播放速度的用户反馈
+        
+        Args:
+            index: 下拉框中选中的项目索引
+        """
         rate = self.speed_combo.itemData(index)
         if rate is None:
             return

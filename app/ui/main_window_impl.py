@@ -6,6 +6,11 @@ from __future__ import annotations
 1. 本类负责界面编排与交互，不直接持久化业务数据；写盘统一经 AppController。
 2. 绘制与控件辅助逻辑拆分到 main_window_helpers.py，本文件聚焦主流程。
 3. 支持无边框窗口下的拖动、吸附、边缘拉伸，以及简洁/丰富模式切换。
+
+界面状态管理：
+- 丰富模式：展示完整播放器界面，包括歌曲信息、歌词、封面、歌单列表等
+- 简洁模式：仅保留基础播放控制和迷你信息栏，适合桌面小窗口场景
+- 两种模式间可无缝切换，保持播放状态和用户设置
 """
 
 from PySide6.QtCore import QTimer, Qt, QRect, QSize, QPoint
@@ -53,16 +58,64 @@ from app.ui.main_window_helpers import (
 class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow):
     """播放器主窗口。
 
+    采用 Mixin 架构分离关注点：
+    - MainWindowPlaybackMixin: 处理播放控制、歌单管理、歌词显示等媒体相关功能
+    - MainWindowWindowingMixin: 处理窗口行为、模式切换、几何管理等窗口相关功能
+    - 本类(MainWindow): 负责控件构建、信号绑定、基础状态维护
+
     管理两套布局状态：
     - 丰富模式：展示歌单、歌曲信息、歌词和完整控制区
     - 简洁模式：仅保留紧凑控制区与顶部操作栏
+    
+    核心特性：
+    - 无边框设计，自定义标题栏和窗口控制
+    - 支持窗口吸附、透明度调节、置顶等桌面增强功能
+    - 智能歌词同步和滚动，支持歌词搜索定位
+    - Windows任务栏进度显示（通过COM接口）
+    - 完整的键盘快捷键支持
     """
 
     def __init__(self, controller: AppController):
+        """初始化主窗口。
+        
+        Args:
+            controller: AppController 实例，提供应用级服务和状态管理
+        """
         super().__init__()
+        
+        # 设置自定义状态栏（支持多条消息并行显示）
         self.setStatusBar(MultiHintStatusBar(self))
+        
+        # 核心依赖注入
         self.controller = controller
         self.player = controller.player_service
+        
+        # 窗口交互状态
+        self._dragging_progress = False  # 是否正在拖拽进度条
+        self._compact_mode = False  # 当前是否为简洁模式
+        self._compact_locked = False  # 简洁模式是否被锁定（防止意外切换）
+        self._always_on_top = False  # 是否置顶显示
+        
+        # 拖拽相关状态
+        self._drag_offset: QPoint | None = None  # 拖拽偏移量
+        self._resize_margin = 7  # 边缘调整大小敏感区域宽度
+        
+        # 侧边栏状态管理
+        self._sidebar_collapsed = False  # 侧边栏是否收起
+        self._sidebar_was_collapsed_before_compact = False  # 进入简洁模式前的侧边栏状态
+        self._sidebar_last_width = 530  # 侧边栏最后宽度
+        self._sidebar_min_width = 234  # 侧边栏最小宽度
+        self._sidebar_max_width = 936  # 侧边栏最大宽度
+        
+        # 窗口几何状态（用于模式切换时保存/恢复）
+        self._last_window_width = 0  # 上次窗口宽度
+        self._resize_adjusting_splitter = False  # 是否正在调整分割器
+        self._width_before_compact = 0  # 进入简洁模式前的宽度
+        self._height_before_compact = 0  # 进入简洁模式前的高度
+        self._min_width_before_compact = self.minimumWidth()  # 进入简洁模式前的最小宽度
+        self._max_width_before_compact = self.maximumWidth()  # 进入简洁模式前的最大宽度
+        self._min_height_before_compact = self.minimumHeight()  # 进入简洁模式前的最小高度
+        self._max_height_before_compact = self.maximumHeight()  # 进入简洁模式前的最大高度
 
         self._dragging_progress = False
         self._compact_mode = False
@@ -84,71 +137,101 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self._min_height_before_compact = self.minimumHeight()
         self._max_height_before_compact = self.maximumHeight()
 
-        self._mode_order: list[str] = []
-        self._mode_titles = {
+        # 播放模式相关状态
+        self._mode_order: list[str] = []  # 播放模式循环顺序
+        self._mode_titles = {  # 播放模式显示名称映射
             PlayMode.SINGLE_LOOP.value: "单曲循环",
             PlayMode.PLAYLIST_LOOP.value: "歌单循环",
             PlayMode.RANDOM.value: "歌单随机",
         }
-        self._mode_icons = {
+        self._mode_icons = {  # 播放模式图标映射
             PlayMode.SINGLE_LOOP.value: _make_mode_icon(PlayMode.SINGLE_LOOP.value),
             PlayMode.PLAYLIST_LOOP.value: _make_mode_icon(PlayMode.PLAYLIST_LOOP.value),
             PlayMode.RANDOM.value: _make_mode_icon(PlayMode.RANDOM.value),
         }
 
-        self._lyrics_entries: list[tuple[float, str]] = []
-        self._lyrics_times: list[float] = []
-        self._lyrics_end_times: list[float] = []
-        self._lyrics_current_index = -1
-        self._lyrics_user_scrolling = False
-        self._lyrics_auto_adjusting = False
-        self._has_cover_content = False
-        self._has_lyrics_content = False
-        self._last_nonzero_gain = max(1, int(self.player.gain_percent()))
+        # 歌词系统状态
+        self._lyrics_entries: list[tuple[float, str]] = []  # 歌词条目列表 (时间戳, 歌词文本)
+        self._lyrics_times: list[float] = []  # 歌词开始时间列表（用于二分查找）
+        self._lyrics_end_times: list[float] = []  # 歌词结束时间列表
+        self._lyrics_current_index = -1  # 当前高亮歌词索引
+        self._lyrics_user_scrolling = False  # 用户是否正在手动滚动歌词
+        self._lyrics_auto_adjusting = False  # 是否正在自动调整歌词位置
+        
+        # 媒体内容状态
+        self._has_cover_content = False  # 是否有封面图片
+        self._has_lyrics_content = False  # 是否有歌词内容
+        self._last_nonzero_gain = max(1, int(self.player.gain_percent()))  # 最后的非零音量值（用于取消静音）
+        
+        # 当前播放信息缓存（用于简洁模式显示）
         self._current_track_title = "未选择歌曲"
         self._current_track_artist = "未知歌手"
-        self._next_track_preview_announced = False
+        self._next_track_preview_announced = False  # 是否已预告下一首歌曲
+        
+        # 主题和外观
         self._dark_theme = bool(getattr(self.controller.settings, "dark_theme", True))
+        
+        # Windows任务栏集成
         self._taskbar_progress = _WindowsTaskbarProgress()
-        self._rich_drag_offset: QPoint | None = None
-        self._rich_drag_restore_ratio = 0.5
-        self._snap_docked = False
-        self._geometry_before_snap: QRect | None = None
-        self._top_stack_widget: QWidget | None = None
+        
+        # 丰富模式拖拽状态
+        self._rich_drag_offset: QPoint | None = None  # 丰富模式拖拽偏移
+        self._rich_drag_restore_ratio = 0.5  # 拖拽恢复比例
+        
+        # 窗口吸附状态
+        self._snap_docked = False  # 是否已吸附到屏幕边缘
+        self._geometry_before_snap: QRect | None = None  # 吸附前的窗口几何信息
+        # UI组件引用
+        self._top_stack_widget: QWidget | None = None  # 标题栏和菜单栏堆叠容器
+        
+        # 歌词自动滚动恢复定时器（用户手动滚动后延迟恢复自动滚动）
         self._lyrics_resume_timer = QTimer(self)
         self._lyrics_resume_timer.setSingleShot(True)
         self._lyrics_resume_timer.setInterval(2200)
         self._lyrics_resume_timer.timeout.connect(self._resume_lyrics_auto_scroll)
 
+        # 基础窗口属性设置
         self.setWindowTitle("MusePlayer")
-        self.resize(1280, 780)
-        self.setAcceptDrops(True)
+        self.resize(1280, 780)  # 默认窗口大小
+        self.setAcceptDrops(True)  # 启用拖拽支持
         self._last_window_width = self.width()
 
-        self._build_ui()
-        self._build_menu()
-        self._bind_signals()
-        self._bind_shortcuts()
-        self._restore_window_geometry()
+        # 构建界面（按依赖顺序）
+        self._build_ui()      # 构建控件树
+        self._build_menu()    # 构建菜单栏
+        self._bind_signals()  # 绑定信号槽
+        self._bind_shortcuts() # 绑定快捷键
+        self._restore_window_geometry()  # 恢复窗口位置和大小
 
-        self._reload_playlist_combo()
-        self._reload_track_list()
-        self._refresh_current_track_ui(self.player.current_track())
-        self._refresh_mode_order()
-        self._on_mode_changed(self.player.mode.value)
-        self._on_playback_changed(self.player.is_playing())
-        self._refresh_volume_ui()
-        self._apply_theme_stylesheet()
-        self._refresh_theme_button()
-        self._refresh_random_state_hint()
-        self._update_window_title()
-        self._refresh_window_flags()
+        # 初始化界面状态
+        self._reload_playlist_combo()             # 加载歌单下拉框
+        self._reload_track_list()                 # 加载歌曲列表
+        self._refresh_current_track_ui(self.player.current_track())  # 刷新当前歌曲UI
+        self._refresh_mode_order()                # 刷新播放模式顺序
+        self._on_mode_changed(self.player.mode.value)     # 同步播放模式
+        self._on_playback_changed(self.player.is_playing())  # 同步播放状态
+        self._refresh_volume_ui()                 # 刷新音量显示
+        self._apply_theme_stylesheet()            # 应用主题样式
+        self._refresh_theme_button()              # 刷新主题按钮状态
+        self._refresh_random_state_hint()         # 刷新随机状态提示
+        self._update_window_title()               # 更新窗口标题
+        self._refresh_window_flags()              # 刷新窗口标志
 
-        QTimer.singleShot(0, self._reposition_sidebar_toggle)
-        QTimer.singleShot(0, self._ensure_taskbar_progress_initialized)
+        # 延迟执行的初始化任务
+        QTimer.singleShot(0, self._reposition_sidebar_toggle)  # 重定位侧边栏切换按钮
+        QTimer.singleShot(0, self._ensure_taskbar_progress_initialized)  # 确保任务栏进度条初始化
 
     def _build_ui(self) -> None:
-        """构建主界面控件树并完成初始布局。"""
+        """构建主界面控件树并完成初始布局。
+        
+        布局结构：
+        - 顶级：QWidget + QVBoxLayout
+          - RichTitleBar：自定义标题栏（最小化/最大化/关闭）
+          - QSplitter：水平分割器
+            - 左侧：歌曲信息卡片 + 歌词/封面显示区
+            - 右侧：歌单选择 + 搜索 + 歌曲列表
+          - 底部控制卡片：进度条 + 时间显示 + 播放控制按钮
+        """
         root = QWidget(self)
         self.setCentralWidget(root)
 

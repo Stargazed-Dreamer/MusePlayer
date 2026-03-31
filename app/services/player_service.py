@@ -45,14 +45,15 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
     - 懒加载解码与预读取逻辑下沉到 `PlayerServiceLazyDecodeMixin`。
     """
 
-    track_changed = Signal(object)
-    queue_changed = Signal()
-    progress_changed = Signal(float, float)
-    playback_changed = Signal(bool)
-    mode_changed = Signal(str)
-    error_occurred = Signal(str)
-    random_state_changed = Signal(int, int)
-    playback_rate_changed = Signal(float)
+    # Qt信号定义
+    track_changed = Signal(object)  # 当前曲目变化时发出
+    queue_changed = Signal()  # 播放队列（歌单）变化时发出
+    progress_changed = Signal(float, float)  # 播放进度变化：位置, 时长
+    playback_changed = Signal(bool)  # 播放状态变化：是否正在播放
+    mode_changed = Signal(str)  # 播放模式变化
+    error_occurred = Signal(str)  # 发生错误时发出
+    random_state_changed = Signal(int, int)  # 随机播放状态变化：种子, 索引
+    playback_rate_changed = Signal(float)  # 播放速率变化
     _LAZY_WINDOW_SEC = 6.2
     # 保留少量重叠窗口，降低切块边界处的解码震荡。
     _LAZY_PREFETCH_OVERLAP_SEC = 0.50
@@ -182,7 +183,15 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             self._align_random_index_with_current_track()
 
     def set_playlist(self, playlist_id: str | None) -> None:
-        # 切歌单是“状态迁移”过程：要同时处理播放状态、随机序和早期跳过统计。
+        """切换当前播放歌单，执行完整的状态迁移。
+        
+        处理播放状态保持、随机序列重构建、早期跳过统计记录等复杂逻辑。
+        是一个原子性的状态切换操作。
+        
+        Args:
+            playlist_id: 目标歌单ID，None表示使用当前活动歌单
+        """
+        # 切歌单是"状态迁移"过程：要同时处理播放状态、随机序和早期跳过统计。
         self._reset_lazy_prefetch(cancel=True)
         was_playing = self.is_playing()
         prev_track_for_skip = self._loaded_track_id or self._current_track_id
@@ -291,6 +300,10 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         self._emit_playback_state()
 
     def pause(self) -> None:
+        """暂停播放。
+        
+        暂停当前播放并重置"期待自然结束"的状态标志。
+        """
         try:
             self._core.pause()
         except Exception as exc:
@@ -301,12 +314,24 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         self._emit_playback_state()
 
     def toggle_play_pause(self) -> None:
+        """切换播放/暂停状态。
+        
+        如果正在播放则暂停，如果已暂停则继续播放。
+        """
         if self.is_playing():
             self.pause()
         else:
             self.play()
 
     def seek(self, sec: float) -> None:
+        """寻求到指定的播放位置。
+        
+        在懒加载模式下会触发窗口重新加载，在普通模式下直接调用内核。
+        会自动标记统计跳过，避免产生无效的播放增量数据。
+        
+        Args:
+            sec: 目标位置（秒）
+        """
         if self._loaded_track_id is None:
             return
         target = max(0.0, float(sec))
@@ -330,14 +355,32 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             return
 
     def set_volume(self, volume: float) -> None:
+        """设置播放音量。
+        
+        Args:
+            volume: 音量值(0.0-1.0的浮点数，对应0%-100%)
+        """
         percent = int(round(float(volume) * 100.0))
         self.set_gain_percent(percent, allow_boost=True)
 
     def adjust_volume(self, delta: float) -> float:
+        """相对调整音量。
+        
+        Args:
+            delta: 音量变化量（相对于当前值的增量）
+            
+        Returns:
+            调整后的实际音量值
+        """
         self.set_volume(self.volume() + delta)
         return self.volume()
 
     def volume(self) -> float:
+        """获取当前音量值。
+        
+        Returns:
+            当前音量(0.0-1.0)
+        """
         return self._gain_percent / 100.0
 
     def gain_percent(self) -> int:
@@ -389,18 +432,41 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             pass
 
     def is_playing(self) -> bool:
+        """检查当前是否正在播放。
+        
+        Returns:
+            bool: 是否正在播放状态
+        """
         try:
             return self._core.is_playing()
         except Exception:
             return False
 
     def current_track(self) -> Track | None:
+        """获取当前选择的曲目信息。
+        
+        Returns:
+            当前曲目的Track对象，如果没有选择则返回None
+        """
         return self.library.get_track(self._current_track_id)
 
     def playlist_tracks(self) -> list[Track]:
+        """获取当前播放列表的所有曲目。
+        
+        Returns:
+            当前播放列表的Track对象列表
+        """
         return self.library.get_playlist_tracks(self._current_playlist_id)
 
     def search_playlist_tracks(self, keyword: str) -> list[Track]:
+        """在当前播放列表中搜索曲目。
+        
+        Args:
+            keyword: 搜索关键词
+            
+        Returns:
+            匹配的Track对象列表
+        """
         return self.library.search_playlist_tracks(self._current_playlist_id, keyword)
 
     def preview_next_track(self) -> Track | None:
@@ -454,6 +520,22 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         from_random_navigation: bool = False,
         active_request: bool = False,
     ) -> bool:
+        """播放指定曲目，处理复杂的播放逻辑和状态转换。
+        
+        支持多种播放场景：用户手动选择、播放列表切换、随机导航等。
+        会自动调整播放列表、随机序列、记录播放统计和早期跳过。
+        
+        Args:
+            track_id: 要播放的曲目ID
+            auto_play: 是否自动开始播放
+            start_sec: 开始播放的位置（秒）
+            manual_select: 是否为用户手动选择
+            from_random_navigation: 是否来自随机模式导航
+            active_request: 是否为主动播放请求（用于统计）
+            
+        Returns:
+            bool: 是否成功切换到目标曲目
+        """
         self._reset_lazy_prefetch(cancel=True)
         track = self.library.get_track(track_id)
         if track is None:
@@ -516,6 +598,17 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         )
 
     def next_track(self, *, user_triggered: bool = True) -> bool:
+        """切换到下一首曲目，支持不同播放模式。
+        
+        在随机模式下会根据随机序列切换到下一首，如果当前曲目无法播放
+        会继续尝试后续曲目直到找到可播放的曲目。
+        
+        Args:
+            user_triggered: 是否为用户触切的切换（用于统计记录）
+            
+        Returns:
+            bool: 是否成功切换到下一曲
+        """
         track_ids = self._playlist_track_ids()
         if not track_ids:
             return False
@@ -577,6 +670,14 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         return False
 
     def previous_track(self) -> bool:
+        """切换到上一首曲目。
+        
+        在随机模式下会向前移动随机序列，在其他模式下向前移动播放列表。
+        自动处理循环边界和无效曲目的跳过。
+        
+        Returns:
+            bool: 是否成功切换到上一曲
+        """
         track_ids = self._playlist_track_ids()
         if not track_ids:
             return False
@@ -629,6 +730,14 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         return False
 
     def export_session(self) -> SessionState:
+        """导出当前会话状态。
+        
+        包含播放器状态、歌单信息、播放位置、音量设置等完整状态信息，
+        用于应用重启后的状态恢复。
+        
+        Returns:
+            SessionState对象，包含完整的会话状态
+        """
         position = 0.0
         if self._loaded_track_id is not None:
             try:
@@ -647,6 +756,13 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         )
 
     def restore_session(self, state: SessionState) -> None:
+        """恢复会话状态。
+        
+        还原播放器设置、歌单、随机序列、当前曲目和播放位置等所有状态。
+        
+        Args:
+            state: 要恢复的会话状态对象
+        """
         # 会话恢复属于系统行为，不计入用户行为统计。
         with self.suspend_stats_collection():
             self.set_mode(state.play_mode)
@@ -677,54 +793,71 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
                 )
 
     def state_snapshot(self) -> dict:
-        track = self.current_track()
-        duration = self._safe_duration()
-        position = self._safe_position()
+        """
+        生成当前播放状态的快照字典。
+        用于记录播放器状态（如播放列表ID、曲目ID、播放位置、播放状态等），便于保存或恢复。
+        """
+        track = self.current_track()  # 获取当前播放的曲目对象
+        duration = self._safe_duration()  # 安全获取当前曲目总时长（避免异常）
+        position = self._safe_position()  # 安全获取当前播放位置（避免异常）
         return {
-            "playlist_id": self._current_playlist_id,
-            "track_id": self._current_track_id,
-            "track_title": track.title if track else "",
-            "position_sec": position,
-            "duration_sec": duration,
-            "playing": self.is_playing(),
-            "mode": self._mode.value,
-            "volume": self._gain_percent / 100.0,
-            "random_seed": self._random_seed,
-            "random_index": self._random_index,
-            "playback_rate": self._playback_rate,
+            "playlist_id": self._current_playlist_id,  # 当前播放列表ID
+            "track_id": self._current_track_id,        # 当前曲目ID
+            "track_title": track.title if track else "",  # 曲目标题（若存在）
+            "position_sec": position,                  # 当前播放位置（秒）
+            "duration_sec": duration,                  # 曲目总时长（秒）
+            "playing": self.is_playing(),              # 是否正在播放
+            "mode": self._mode.value,                  # 播放模式（如顺序、随机、单曲循环）
+            "volume": self._gain_percent / 100.0,      # 音量（归一化到0.0-1.0）
+            "random_seed": self._random_seed,          # 随机播放种子，用于生成确定性随机顺序
+            "random_index": self._random_index,        # 当前在随机顺序列表中的索引
+            "playback_rate": self._playback_rate,      # 播放速率（如1.0为正常速度）
         }
 
     def _set_initial_track_for_playlist(self) -> None:
-        track_ids = self._playlist_track_ids()
-        if not track_ids:
+        """
+        为当前播放列表设置初始曲目。
+        确保当播放列表变更时，能正确设置当前曲目ID，并维护随机顺序和索引。
+        """
+        track_ids = self._playlist_track_ids()  # 获取当前播放列表中的所有曲目ID
+        if not track_ids:  # 如果播放列表为空
             self._current_track_id = None
             self._loaded_track_id = None
             return
-        if self._current_track_id not in track_ids:
-            self._current_track_id = track_ids[0]
-        self._sequential_index = track_ids.index(self._current_track_id)
+        if self._current_track_id not in track_ids:  # 当前曲目不在播放列表中
+            self._current_track_id = track_ids[0]     # 设为列表第一首
+        self._sequential_index = track_ids.index(self._current_track_id)  # 更新顺序播放索引
 
-        self._rebuild_random_order(force=True)
-        self._align_random_index_with_current_track()
+        self._rebuild_random_order(force=True)        # 强制重建随机播放顺序
+        self._align_random_index_with_current_track()  # 将随机索引与当前曲目对齐
 
     def _load_current_track(self, *, auto_play: bool, start_sec: float, active_request: bool) -> bool:
+        """
+        加载当前曲目到播放核心，可选择自动播放。
+        Args:
+            auto_play: 是否自动开始播放
+            start_sec: 起始播放位置（秒）
+            active_request: 是否由用户主动请求触发（影响播放记录统计）
+        Returns:
+            加载成功返回True，失败返回False
+        """
         # 根据读取策略加载：
         # - window: 先加载短窗口并预读取后续窗口，降低切歌/跳播瞬时开销
         # - full: 一次性读取完整文件，策略简单直接
-        self._reset_lazy_prefetch(cancel=True)
+        self._reset_lazy_prefetch(cancel=True)  # 重置延迟预读取（取消预取）
         track = self.current_track()
-        if track is None:
+        if track is None:  # 没有当前曲目
             self.error_occurred.emit("当前没有可播放歌曲")
             return False
         source = Path(track.path)
         target_start = max(0.0, float(start_sec))
         strategy = self._read_strategy()
         try:
-            if auto_play and strategy == "window":
+            if auto_play and strategy == "window":  # 自动播放且策略为窗口模式
                 self._core.load(source, start_sec=target_start, window_sec=self._LAZY_WINDOW_SEC)
                 loaded_sec = max(0.0, float(self._core.duration()))
-                if loaded_sec <= 0.02:
-                    self._core.load(source)
+                if loaded_sec <= 0.02:  # 加载的窗口太短（可能文件很短或异常）
+                    self._core.load(source)  # 回退到完整加载
                     self._lazy_window_mode = False
                     self._lazy_window_base_sec = 0.0
                     self._lazy_promoted_to_full = True
@@ -732,95 +865,132 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
                     self._lazy_window_mode = True
                     self._lazy_window_base_sec = target_start
                     self._lazy_promoted_to_full = False
-            else:
+            else:  # 非自动播放或策略为完整模式
                 self._core.load(source)
                 self._lazy_window_mode = False
                 self._lazy_window_base_sec = 0.0
                 self._lazy_promoted_to_full = True
-            self._apply_core_volume()
-            self._core.set_playback_rate(self._playback_rate)
-            if auto_play:
-                self._core.play(0.0 if self._lazy_window_mode else target_start)
-                self._expecting_natural_end = True
-                self._record_play_start(track.id, active_request=active_request)
+            self._apply_core_volume()  # 应用当前音量设置
+            self._core.set_playback_rate(self._playback_rate)  # 设置播放速率
+            if auto_play:  # 需要自动播放
+                self._core.play(0.0 if self._lazy_window_mode else target_start)  # 窗口模式从0开始（因为窗口已定位）
+                self._expecting_natural_end = True  # 标记期待自然结束（用于自动切歌判断）
+                self._record_play_start(track.id, active_request=active_request)  # 记录播放开始事件
                 if self._lazy_window_mode and not self._lazy_promoted_to_full:
                     local_duration = max(0.0, float(self._core.duration()))
-                    self._schedule_lazy_prefetch(track.id, target_start + local_duration)
-            else:
+                    self._schedule_lazy_prefetch(track.id, target_start + local_duration)  # 调度预读下一个窗口
+            else:  # 只加载不播放
                 self._core.seek(target_start)
                 self._expecting_natural_end = False
-        except Exception as exc:
+        except Exception as exc:  # 加载失败处理
             self.error_occurred.emit(f"加载失败: {source} -> {exc}")
             return False
 
-        self._loaded_track_id = track.id
+        # 加载成功后的状态更新
+        self._loaded_track_id = track.id  # 记录已加载的曲目ID
         self._stats_last_track_id = track.id
         self._stats_last_position = target_start
         self._stats_skip_next_delta = True
-        self._emit_playback_state(force=True)
+        self._emit_playback_state(force=True)  # 强制发射播放状态变更信号
         self.progress_changed.emit(self._safe_position(), self._safe_duration())
         return True
 
     def _playlist_track_ids(self) -> list[str]:
+        """
+        获取当前播放列表中存在的所有曲目ID。
+        过滤掉曲目库中不存在的ID，确保返回的ID都是有效的。
+        """
         playlist = self.library.get_playlist(self._current_playlist_id)
         return [track_id for track_id in playlist.track_ids if track_id in self.library.tracks]
 
     def _rebuild_random_order(self, *, force: bool) -> None:
+        """
+        重建随机播放顺序列表。
+        当播放列表曲目变更或强制重建时，根据随机种子重新生成确定性的随机顺序。
+        """
         track_ids = self._playlist_track_ids()
-        if not track_ids:
+        if not track_ids:  # 播放列表为空
             self._random_order = []
             self._random_index = 0
             self.random_state_changed.emit(self._random_seed, self._random_index)
             return
 
+        # 强制重建 或 当前随机顺序与播放列表不一致（集合比较）
         if force or set(self._random_order) != set(track_ids) or len(self._random_order) != len(track_ids):
             self._random_order = DeterministicShuffle.make_order(track_ids, self._random_seed)
             self._random_index = DeterministicShuffle.clamp_index(self._random_order, self._random_index)
             self.random_state_changed.emit(self._random_seed, self._random_index)
 
     def _align_random_index_with_current_track(self) -> None:
-        if not self._random_order or self._current_track_id is None:
+        """
+        将随机播放索引对齐到当前播放曲目。
+        确保随机索引指向的曲目与当前播放曲目一致，若不一致则调整索引或当前曲目。
+        """
+        if not self._random_order or self._current_track_id is None:  # 无随机顺序或无当前曲目
             self._random_index = 0
             self.random_state_changed.emit(self._random_seed, self._random_index)
             return
-        if self._current_track_id in self._random_order:
+        if self._current_track_id in self._random_order:  # 当前曲目在随机列表中
             self._random_index = self._random_order.index(self._current_track_id)
-        else:
+        else:  # 当前曲目不在随机列表中（可能被移除）
             self._random_index = DeterministicShuffle.clamp_index(self._random_order, self._random_index)
-            self._current_track_id = self._random_order[self._random_index]
+            self._current_track_id = self._random_order[self._random_index]  # 将当前曲目设为随机索引指向的曲目
         self.random_state_changed.emit(self._random_seed, self._random_index)
 
     def _on_tick(self) -> None:
+        """
+        播放器定时器触发的主更新函数。
+        处理进度更新、延迟窗口模式推进、自然结束检测、状态信号发射等。
+        """
         duration = self._safe_duration()
         position = self._safe_position()
         playing = self.is_playing()
 
+        # 尝试将延迟窗口模式升级为完整解码（如果接近窗口边界）
         self._maybe_promote_lazy_full_decode(position=position, playing=playing)
+        # 如果正在播放，尝试继续推进延迟窗口
         if playing and self._try_continue_lazy_window_while_playing(position=position, duration=duration):
+            # 窗口可能已推进，重新获取时长和位置
             duration = self._safe_duration()
             position = self._safe_position()
             playing = self.is_playing()
+        # 记录播放进度（用于统计等）
         self._record_playback_progress(position=position, duration=duration, playing=playing)
+        # 发射进度变更信号
         self.progress_changed.emit(position, duration)
 
+        # 检测从播放到停止的转变（如播放自然结束）
         if self._last_playing and not playing:
+            # 检查是否需要继续延迟窗口（例如暂停后恢复）
             if self._continue_lazy_window_if_needed(position=position, duration=duration):
                 playing = self.is_playing()
+            # 如果期待自然结束且当前已接近曲目末尾，则处理自然结束逻辑
             elif self._expecting_natural_end and (duration <= 0 or position >= max(0.0, duration - 0.10)):
                 self._expecting_natural_end = False
-                self._handle_natural_finished()
+                self._handle_natural_finished()  # 处理自然结束（切歌或单曲循环）
 
+        # 发射播放状态变更信号（如果状态改变或强制）
         self._emit_playback_state(current=playing)
-        self._last_playing = playing
+        self._last_playing = playing  # 保存当前播放状态供下次比较
 
     def _handle_natural_finished(self) -> None:
-        if self._mode == PlayMode.SINGLE_LOOP and self._current_track_id:
-            ok = self._load_current_track(auto_play=True, start_sec=0.0, active_request=False)
+        """
+        处理当前曲目自然播放结束的逻辑。
+        根据播放模式（如单曲循环）决定下一步操作。
+        """
+        if self._mode == PlayMode.SINGLE_LOOP and self._current_track_id:  # 单曲循环模式
+            ok = self._load_current_track(auto_play=True, start_sec=0.0, active_request=False)  # 重新从0开始播放当前曲目
             if ok:
                 return
-        self.next_track(user_triggered=False)
+        self.next_track(user_triggered=False)  # 否则切换到下一曲（非用户触发）
 
     def _emit_playback_state(self, *, current: bool | None = None, force: bool = False) -> None:
+        """
+        发射播放状态（播放/暂停）变更的信号。
+        Args:
+            current: 指定的当前状态，为None则根据is_playing()获取
+            force: 是否强制发射信号（即使状态未变）
+        """
         playing = self.is_playing() if current is None else bool(current)
-        if force or playing != self._last_playing:
+        if force or playing != self._last_playing:  # 状态改变或强制发射
             self.playback_changed.emit(playing)

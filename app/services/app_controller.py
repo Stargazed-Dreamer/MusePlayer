@@ -32,22 +32,63 @@ class AppController(QObject):
     error_occurred = Signal(str)
 
     def __init__(self, project_root: Path, parent: QObject | None = None):
+        """应用控制器构造函数。
+        
+        初始化所有子系统：元数据服务、数据存储、库管理、播放统计、播放器、控制服务等。
+        建立服务间的依赖关系，配置事件连接，启动定时保存机制。
+        
+        Args:
+            project_root: 项目根目录路径
+            parent: Qt父对象
+        """
         super().__init__(parent)
+        # 初始化目录结构
         self.project_root = Path(project_root).resolve()
         self.data_dir = self.project_root / "data"
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
+        # 创建并装配各服务层
         self.metadata_service = MetadataService()
 
+        # 数据持久化存储层
         self.library_store = LibraryStore(self.data_dir)
         self.session_store = SessionStore(self.data_dir)
         self.settings_store = SettingsStore(self.data_dir)
 
+        # 加载设置并配置日志系统
         self.settings = self.settings_store.load()
         self.log_file_path = configure_logging(self.data_dir, self.settings.logging_enabled)
         self.logger = get_logger("app")
         self.logger.info("MusePlayer 启动")
         self._runtime_error_file = self.data_dir / "runtime_errors.log"
+
+        # 初始化库服务并加载现有数据
+        self.library_service = LibraryService(self.library_store, self.metadata_service)
+        self.library_service.load()
+
+        # 创建播放统计服务和播放器服务
+        self.playback_stats_service = PlaybackStatsService(self.data_dir)
+        self.player_service = PlayerService(
+            self.library_service,
+            playback_stats_service=self.playback_stats_service,
+            collect_stats_getter=lambda: bool(self.settings.collect_playback_data),
+            gain_boost_getter=lambda: float(self.settings.global_gain_boost),
+            read_strategy_getter=lambda: str(self.settings.read_strategy),
+        )
+        # 配置播放器功能和连接错误处理信号
+        self.player_service.set_playlist_loop_mode_enabled(self.settings.enable_playlist_loop_mode)
+        self.player_service.error_occurred.connect(self.error_occurred)
+        self.error_occurred.connect(self._record_runtime_error)
+
+        # 初始化运行时控制服务器
+        self.control_server = ControlServer(self.dispatch_command)
+        self.control_server.error_occurred.connect(self.error_occurred)
+        self.control_server.listening_changed.connect(self.runtime_status_changed)
+
+        # 配置会话自动保存定时器（默认30秒间隔）
+        self._session_save_timer = QTimer(self)
+        self._session_save_timer.timeout.connect(self.save_session)
+        self._apply_save_timer_settings()
 
         self.library_service = LibraryService(self.library_store, self.metadata_service)
         self.library_service.load()
@@ -84,8 +125,13 @@ class AppController(QObject):
             self.runtime_status_changed.emit(False, self.settings.control_host, self.settings.control_port)
 
     def shutdown(self) -> None:
-        # 关闭阶段是系统流程，不应产生任何新增统计计数。
+        """应用程序关闭流程。
+        
+        按正确顺序关闭所有服务：暂停统计收集、保存会话状态、
+        持久化统计数据、保存库状态、保存设置、停止服务。
+        """
         self.logger.info("准备关闭应用")
+        # 关闭阶段是系统流程，不应产生任何新增统计计数
         with self.player_service.suspend_stats_collection():
             self.save_session()
             self.playback_stats_service.save_if_dirty()
@@ -95,13 +141,22 @@ class AppController(QObject):
             self.player_service.close()
 
     def save_session(self) -> None:
-        # 会话保存同时承担“统计落盘同步”职责，确保 DB 歌单内统计及时更新。
+        """保存当前会话状态。
+        
+        包括播放器状态、歌单信息、播放位置等所有临时状态。
+        同时执行播放统计的同步和保存，确保数据一致性。
+        """
+        # 会话保存同时承担"统计落盘同步"职责，确保 DB 歌单内统计及时更新
         state = self.player_service.export_session()
         self.session_store.save(state)
         self.library_service.sync_muse_playlist_stats(self.playback_stats_service)
         self.playback_stats_service.save_if_dirty()
 
     def save_stats_now(self) -> None:
+        """立即保存统计数据到磁盘。
+        
+        触发一次完整的会话保存，包括播放器状态和统计信息。
+        """
         self.save_session()
 
     def _apply_save_timer_settings(self) -> None:
@@ -114,6 +169,13 @@ class AppController(QObject):
             self._session_save_timer.stop()
 
     def start_runtime_server(self) -> bool:
+        """启动运行时控制服务器。
+        
+        根据设置配置启动或停止控制接口。
+        
+        Returns:
+            bool: 是否成功启动或被正确禁用
+        """
         if not self.settings.control_interface_enabled:
             self.control_server.stop()
             self.logger.info("控制接口已禁用")
@@ -127,6 +189,13 @@ class AppController(QObject):
         return ok
 
     def restart_runtime_server(self) -> bool:
+        """重启运行时控制服务器。
+        
+        先停止当前服务器然后根据最新设置重新启动。
+        
+        Returns:
+            bool: 是否成功重启
+        """
         if not self.settings.control_interface_enabled:
             self.control_server.stop()
             self.runtime_status_changed.emit(False, self.settings.control_host, self.settings.control_port)
@@ -134,6 +203,16 @@ class AppController(QObject):
         return self.start_runtime_server()
 
     def update_settings(self, settings: Settings) -> bool:
+        """更新应用设置并应用所有相关变更。
+        
+        保存新设置、更新播放器配置、重启控制服务器等。
+        
+        Args:
+            settings: 新的设置对象
+            
+        Returns:
+            bool: 所有更新操作是否成功
+        """
         self.settings = settings
         self.settings_store.save(settings)
         self.player_service.set_playlist_loop_mode_enabled(self.settings.enable_playlist_loop_mode)
@@ -150,6 +229,11 @@ class AppController(QObject):
         return ok
 
     def set_theme_preference(self, dark_theme: bool) -> None:
+        """设置主题偏好（暗色/亮色）。
+        
+        Args:
+            dark_theme: True为暗色主题，False为亮色主题
+        """
         value = bool(dark_theme)
         if bool(self.settings.dark_theme) == value:
             return
@@ -158,6 +242,16 @@ class AppController(QObject):
         self.settings_changed.emit(self.settings)
 
     def persist_window_geometry(self, *, x: int, y: int, width: int, height: int) -> None:
+        """持久化窗口几何信息。
+        
+        保存窗口位置和大小，用于应用重启后恢复界面布局。
+        
+        Args:
+            x: 窗口X坐标
+            y: 窗口Y坐标  
+            width: 窗口宽度
+            height: 窗口高度
+        """
         self.settings.window_x = int(x)
         self.settings.window_y = int(y)
         self.settings.window_width = max(0, int(width))
@@ -165,9 +259,20 @@ class AppController(QObject):
         self.settings_store.save(self.settings)
 
     def get_current_lyrics(self) -> str:
+        """获取当前播放曲目的歌词。
+        
+        优先从曲目文件同目录的外部歌词文件读取，
+        其次从音频文件内嵌的元数据中提取。
+        
+        支持UTF-8和GBK编码格式。
+        
+        Returns:
+            str: 歌词文本，如果没有找到则返回空字符串
+        """
         track = self.player_service.current_track()
         if track is None:
             return ""
+        # 优先检查外部歌词文件
         ext_lyrics = str(getattr(track, "source_lyrics_path", "") or "").strip()
         if ext_lyrics:
             lyric_path = Path(ext_lyrics)
@@ -181,9 +286,17 @@ class AppController(QObject):
                         pass
                 except Exception:
                     pass
+        # 回退到从音频文件内嵌元数据读取
         return self.metadata_service.read_lyrics(Path(track.path))
 
     def get_current_cover(self) -> bytes | None:
+        """获取当前播放曲目的封面图像。
+        
+        从音频文件内嵌的元数据中提取封面图像数据。
+        
+        Returns:
+            bytes: 封面图像的二进制数据，如果没有则返回None
+        """
         track = self.player_service.current_track()
         if track is None:
             return None
@@ -195,6 +308,18 @@ class AppController(QObject):
         playlist_id: str | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> int:
+        """导入文件夹中的音频文件。
+        
+        递归扫描文件夹，导入所有支持的音频格式文件到曲库。
+        
+        Args:
+            folder: 要导入的文件夹路径
+            playlist_id: 目标歌单ID，None表示导入到默认歌单
+            progress_callback: 进度回调函数
+            
+        Returns:
+            int: 成功导入的文件数量
+        """
         imported = self.library_service.import_folder(
             folder=folder,
             playlist_id=playlist_id,
@@ -254,11 +379,23 @@ class AppController(QObject):
         self.library_changed.emit()
 
     def remove_track_from_playlist(self, playlist_id: str, track_id: str) -> None:
+        """从歌单中移除指定曲目，智能处理播放状态切换。
+        
+        如果移除的是当前播放曲目，会自动选择相邻曲目继续播放
+        或将播放状态切换到合适状态，确保用户体验的连续性。
+        
+        Args:
+            playlist_id: 目标歌单ID
+            track_id: 要移除的曲目ID
+        """
+        # 记录当前播放状态用于后续恢复
         was_playing = self.player_service.is_playing()
         active_playlist = self.player_service.current_playlist_id
         current_track_id = self.player_service.current_track_id
+        # 判断是否正在从当前活动歌单中移除当前播放的曲目
         removed_current_from_active = active_playlist == playlist_id and current_track_id == track_id
 
+        # 如果需要移除当前播放的曲目，寻找合适的接替候选人
         next_candidate_id: str | None = None
         prev_candidate_id: str | None = None
         if removed_current_from_active:
@@ -266,22 +403,30 @@ class AppController(QObject):
             ordered_ids = [t.id for t in active_tracks]
             if track_id in ordered_ids:
                 idx = ordered_ids.index(track_id)
+                # 优先选择下一曲，其次选择上一曲
                 if idx + 1 < len(ordered_ids):
                     next_candidate_id = ordered_ids[idx + 1]
                 if idx - 1 >= 0:
                     prev_candidate_id = ordered_ids[idx - 1]
 
+        # 执行实际的移除操作
         removed_ids = self.library_service.remove_track_from_playlist(playlist_id, track_id)
+        # 清理被移除曲目的统计数据
         for removed_id in removed_ids:
             self.playback_stats_service.remove_track(removed_id)
+            
+        # 处理播放状态转换逻辑
         if self.player_service.current_playlist_id == playlist_id:
             if removed_current_from_active:
-                self.player_service.pause()
+                self.player_service.pause()  # 暂时暂停保证状态一致性
+            # 重新加载歌单状态
             self.player_service.set_playlist(self.player_service.current_playlist_id)
 
+            # 选择接替的曲目继续播放
             if removed_current_from_active:
                 playlist_track_ids = [t.id for t in self.player_service.playlist_tracks()]
                 selected_candidate = None
+                # 优先选择下一曲
                 if next_candidate_id and next_candidate_id in playlist_track_ids:
                     selected_candidate = next_candidate_id
                 elif prev_candidate_id and prev_candidate_id in playlist_track_ids:
@@ -297,13 +442,26 @@ class AppController(QObject):
                     )
                 else:
                     self.player_service.pause()
+                    
+        # 安全清理：如果当前播放曲目已经不存在于库中，需要重置状态
         if self.player_service.current_track_id and self.player_service.current_track_id not in self.library_service.tracks:
             self.player_service.pause()
             self.player_service.set_playlist(self.player_service.current_playlist_id)
+            
         self.library_changed.emit()
 
     def dispatch_command(self, payload: dict) -> dict:
-        """运行时控制接口命令分发入口。"""
+        """运行时控制接口命令分发入口。
+        
+        处理来自外部控制的命令请求，支持播放控制、库管理、导入等功能。
+        这是JSON-RPC风格的API接口，返回标准化的响应格式。
+        
+        Args:
+            payload: 包含cmd字段和其他参数的命令数据
+            
+        Returns:
+            dict: 标准化的响应，包含ok字段和相应数据或错误信息
+        """
         cmd = str(payload.get("cmd", "")).strip().lower()
         if cmd:
             self.logger.info("收到控制命令: %s", cmd)

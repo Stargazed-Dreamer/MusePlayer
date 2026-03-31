@@ -46,6 +46,18 @@ class LibraryService:
         self.active_playlist_id: str | None = None
 
     def load(self) -> None:
+        """加载曲库数据。
+        
+        执行完整的曲库初始化流程：
+        1. 从持久化存储加载基础数据
+        2. 确保"全部歌曲"歌单存在
+        3. 清理指向不存在文件的歌曲记录
+        4. 检测并移除重复的曲目
+        5. 设置活动歌单（如果不存在则使用默认）
+        6. 同步歌单与实际曲库数据
+        
+        这是应用启动时的关键初始化步骤，确保内存数据与磁盘数据的一致性。
+        """
         tracks, playlists, active = self._store.load()
         self.tracks = tracks
         self.playlists = playlists
@@ -62,6 +74,11 @@ class LibraryService:
         logger.info("曲库加载完成: tracks=%s playlists=%s", len(self.tracks), len(self.playlists))
 
     def _drop_missing_tracks(self) -> None:
+        """清理曲库中指向不存在的文件的跟踪记录。
+        
+        遍历所有曲目，检查文件路径是否存在，将不存在的文件记录移除。
+        这是数据清理的重要步骤，防止播放时出现文件找不到的错误。
+        """
         missing_ids = []
         for track_id, track in self.tracks.items():
             try:
@@ -76,12 +93,19 @@ class LibraryService:
         for track_id in missing_ids:
             self.tracks.pop(track_id, None)
         logger.info("清理失效歌曲记录: %s", len(missing_ids))
-
     def _deduplicate_tracks(self) -> None:
-        # 去重键采用“文件名 + 文件大小 + 时长毫秒”，兼顾速度与可用性。
-        if len(self.tracks) <= 1:
-            return
-
+        """基于文件特征检测并合并重复曲目。
+        
+        使用文件名、文件大小和时长构建唯一键值进行去重，
+        保留最新添加的记录，更新歌单引用关系。
+        
+        算法流程：
+        1. 按时间戳排序，新添加的曲目优先保留
+        2. 使用 (文件名, 文件大小, 时长) 作为去重键
+        3. 建立ID映射关系，更新歌单引用
+        4. 移除重复的曲目记录
+        """
+        # 去重键采用"文件名 + 文件大小 + 时长毫秒"，兼顾速度与可用性。
         ordered = sorted(
             self.tracks.values(),
             key=lambda t: (float(t.added_at), t.id),
@@ -120,6 +144,18 @@ class LibraryService:
 
     @staticmethod
     def _dedupe_key(track: Track) -> tuple[str, int, int]:
+        """生成曲目的去重识别键。
+        
+        基于文件名、文件大小和时长创建唯一标识，用于检测重复曲目。
+        采用小写文件名以确保大小写不敏感的比较。
+        
+        Args:
+            track: Track对象
+            
+        Returns:
+            去重键 (小写文件名, 文件大小, 时长毫秒数)
+            如果无法获取文件大小，返回-1
+        """
         source = Path(track.path)
         try:
             resolved = source.resolve()
@@ -135,6 +171,10 @@ class LibraryService:
         return filename, size, duration_ms
 
     def save(self) -> None:
+        """持久化保存曲库数据。
+        
+        保存所有曲目、歌单和当前活动歌单状态到存储层。
+        """
         self._store.save(self.tracks, self.playlists, self.active_playlist_id)
 
     def _ensure_all_songs_playlist(self) -> None:
@@ -151,11 +191,26 @@ class LibraryService:
         self.playlists[ALL_SONGS_ID].track_ids = list(self.tracks.keys())
 
     def get_playlist(self, playlist_id: str | None) -> Playlist:
+        """获取指定ID的歌单，如果不存在则返回"全部歌曲"歌单。
+        
+        Args:
+            playlist_id: 歌单ID，None返回默认歌单
+            
+        Returns:
+            Playlist对象
+        """
         if playlist_id and playlist_id in self.playlists:
             return self.playlists[playlist_id]
         return self.playlists[ALL_SONGS_ID]
 
     def list_playlists(self) -> list[Playlist]:
+        """获取所有歌单列表。
+        
+        返回的列表以"全部歌曲"为首，其余歌单按名称字母序排序。
+        
+        Returns:
+            排序后的歌单列表
+        """
         all_pl = self.playlists.get(ALL_SONGS_ID)
         others = [p for p in self.playlists.values() if p.id != ALL_SONGS_ID]
         others.sort(key=lambda p: p.name.lower())
@@ -164,10 +219,29 @@ class LibraryService:
         return [all_pl, *others]
 
     def get_playlist_tracks(self, playlist_id: str | None) -> list[Track]:
+        """获取指定歌单的所有曲目。
+        
+        Args:
+            playlist_id: 歌单ID
+            
+        Returns:
+            该歌单下的Track对象列表
+        """
         playlist = self.get_playlist(playlist_id)
         return [self.tracks[tid] for tid in playlist.track_ids if tid in self.tracks]
 
     def search_playlist_tracks(self, playlist_id: str | None, keyword: str) -> list[Track]:
+        """在指定歌单中搜索曲目。
+        
+        搜索范围包括曲目标题、艺术家、专辑名，不区分大小写。
+        
+        Args:
+            playlist_id: 要搜索的歌单ID
+            keyword: 搜索关键词
+            
+        Returns:
+            匹配的Track对象列表
+        """
         key = (keyword or "").strip().lower()
         tracks = self.get_playlist_tracks(playlist_id)
         if not key:
@@ -180,6 +254,17 @@ class LibraryService:
         return result
 
     def create_playlist(self, name: str) -> Playlist:
+        """创建新歌单。
+        
+        创建指定名称的歌单并设置为当前活动歌单。
+        歌单名称会自动清理空白并补全默认值。
+        
+        Args:
+            name: 歌单名称
+            
+        Returns:
+            新创建的Playlist对象
+        """
         clean_name = (name or "").strip() or "新建歌单"
         playlist = Playlist(id=new_id(), name=clean_name)
         self.playlists[playlist.id] = playlist
@@ -189,6 +274,14 @@ class LibraryService:
         return playlist
 
     def rename_playlist(self, playlist_id: str, name: str) -> None:
+        """重命名歌单。
+        
+        "全部歌曲"歌单为系统保留不允许重命名。
+        
+        Args:
+            playlist_id: 要重命名的歌单ID
+            name: 新的歌单名称
+        """
         if playlist_id == ALL_SONGS_ID:
             return
         playlist = self.playlists.get(playlist_id)
@@ -201,6 +294,18 @@ class LibraryService:
         logger.info("重命名歌单: %s -> %s", old_name, playlist.name)
 
     def copy_playlist(self, source_playlist_id: str, new_name: str | None = None) -> Playlist | None:
+        """复制歌单。
+        
+        创建源歌单的副本，包含所有曲目的引用。
+        自动设置唯一的歌单名称。
+        
+        Args:
+            source_playlist_id: 源歌单ID
+            new_name: 新歌单名称，None则使用默认命名规则
+            
+        Returns:
+            新创建的Playlist对象，如果源歌单不存在返回None
+        """
         source = self.playlists.get(source_playlist_id)
         if source is None:
             return None
@@ -217,6 +322,18 @@ class LibraryService:
         return playlist
 
     def merge_playlist(self, source_playlist_id: str, target_playlist_id: str) -> int:
+        """合并两个歌单。
+        
+        将源歌单的所有曲目添加到目标歌单，自动去重，
+        保持目标歌单原有的排序。
+        
+        Args:
+            source_playlist_id: 源歌单ID
+            target_playlist_id: 目标歌单ID
+            
+        Returns:
+            实际新增的曲目数量
+        """
         if source_playlist_id == target_playlist_id:
             return 0
         source = self.playlists.get(source_playlist_id)
@@ -241,30 +358,57 @@ class LibraryService:
         return merged_count
 
     def delete_playlist(self, playlist_id: str) -> None:
+        """删除歌单及其相关的孤立曲目。
+        
+        删除指定歌单，如果曲目不再被其他歌单引用则一并删除。
+        "全部歌曲"歌单为系统保留，不允许删除。
+        
+        Args:
+            playlist_id: 要删除的歌单ID
+        """
         if playlist_id == ALL_SONGS_ID:
-            return
+            return  # 系统保护，不允许删除全部歌曲歌单
         if playlist_id not in self.playlists:
             return
+        
         removed = self.playlists[playlist_id]
         del self.playlists[playlist_id]
 
+        # 查找并删除不再被其他歌单引用的孤立曲目
         orphan_track_ids = self._find_orphan_track_ids(exclude_playlist_id=playlist_id)
         for track_id in orphan_track_ids:
             self.tracks.pop(track_id, None)
 
+        # 重新同步全部歌曲歌单
         self._normalize_playlist_tracks()
+        
+        # 如果删除的是当前活动歌单，切换到全部歌曲
         if self.active_playlist_id == playlist_id:
             self.active_playlist_id = ALL_SONGS_ID
+            
         self.save()
         logger.info("删除歌单: %s (%s), 清理歌曲=%s", removed.name, playlist_id, len(orphan_track_ids))
 
     def set_active_playlist(self, playlist_id: str) -> None:
+        """设置当前活动歌单。
+        
+        Args:
+            playlist_id: 要设为活动的歌单ID
+        """
         if playlist_id not in self.playlists:
             return
         self.active_playlist_id = playlist_id
         self.save()
 
     def add_track_ids_to_playlist(self, playlist_id: str, track_ids: list[str]) -> None:
+        """批量添加曲目到歌单。
+        
+        自动去重，只添加有效且未存在的曲目。
+        
+        Args:
+            playlist_id: 目标歌单ID
+            track_ids: 要添加的曲目ID列表
+        """
         playlist = self.playlists.get(playlist_id)
         if playlist is None:
             return
@@ -321,6 +465,14 @@ class LibraryService:
         return removed_globally
 
     def get_track(self, track_id: str | None) -> Track | None:
+        """根据ID获取单个曲目信息。
+        
+        Args:
+            track_id: 曲目ID
+            
+        Returns:
+            Track对象，如果ID无效或不存在返回None
+        """
         if not track_id:
             return None
         return self.tracks.get(track_id)
@@ -332,6 +484,30 @@ class LibraryService:
         recursive: bool = True,
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> list[Track]:
+        """导入整个文件夹的音频文件到曲库。
+        
+        智能文件夹导入策略：
+        1. 如果指定了现有歌单ID且不是"全部歌曲"：
+           - 将所选目录下的音频文件导入到该歌单
+           - 该目录的第一级子目录分别创建/复用独立歌单
+        2. 如果没有指定歌单或指定"全部歌曲"：
+           - 所选目录下的音频文件导入到以目录名为基础的新歌单
+           - 第一级子目录分别创建/复用独立歌单
+        
+        深层子目录（第二级及以下）不再展开，控制导入范围避免歌单过多。
+        
+        Args:
+            folder: 要导入的文件夹路径
+            playlist_id: 指定目标歌单ID，None则自动创建新歌单
+            recursive: Scan模式下是否递归搜索，默认为True但只影响当前目录层级
+            progress_callback: 进度回调函数 (processed_count, total_count, current_file_path)
+            
+        Returns:
+            新导入的Track对象列表
+            
+        Raises:
+            FileNotFoundError: 文件夹不存在或不是目录
+        """
         # 导入策略：
         # - 所选目录下的歌曲导入根歌单
         # - 第一级子目录分别建立/复用独立歌单
@@ -431,6 +607,22 @@ class LibraryService:
         return imported
 
     def import_file(self, file_path: Path, playlist_id: str | None = None) -> Track:
+        """导入单个音频文件到曲库。
+        
+        将指定的音频文件元数据提取到曲库，并添加到指定的歌单中。
+        如果文件已存在，则直接引用现有曲目记录。
+        
+        Args:
+            file_path: 音频文件路径
+            playlist_id: 目标歌单ID，None则使用当前活动歌单
+            
+        Returns:
+            Track对象
+            
+        Raises:
+            FileNotFoundError: 文件不存在或不是常规文件
+            ValueError: 文件格式不受支持
+        """
         source = Path(file_path).resolve()
         if not source.exists() or not source.is_file():
             raise FileNotFoundError(str(source))
@@ -487,6 +679,7 @@ class LibraryService:
         if str(payload.get("schema", "")).strip() != MUSE_PLAYLIST_SCHEMA:
             raise ValueError("歌单 schema 不匹配")
 
+        # 解析歌单基本信息
         playlist_hash = str(payload.get("playlist_hash", "")).strip()
         playlist_name = self._normalize_playlist_name(str(payload.get("playlist_name", "")).strip() or fallback_name)
         exported_at = str(payload.get("exported_at", "")).strip()
@@ -495,6 +688,7 @@ class LibraryService:
         if not isinstance(tracks_payload, list):
             raise ValueError("歌单 tracks 字段无效")
 
+        # 解析数据库根目录路径，支持绝对路径和相对路径
         if database_location:
             db_root_raw = Path(database_location)
             if db_root_raw.is_absolute():
@@ -504,14 +698,18 @@ class LibraryService:
         else:
             db_root = source_file.parent.resolve()
 
+        # 查找或创建歌单
         playlist = self._find_existing_muse_playlist(playlist_hash=playlist_hash, source_file=source_file)
         if playlist is None:
+            # 创建新歌单
             playlist_id = self._generate_muse_playlist_id(playlist_hash=playlist_hash, source_file=source_file)
             playlist = Playlist(id=playlist_id, name=playlist_name)
             self.playlists[playlist.id] = playlist
         else:
+            # 更新现有歌单名称
             playlist.name = playlist_name
 
+        # 保存源文件元数据，用于后续的统计回写和路径解析
         source_file_text = str(source_file) if source_file.exists() else ""
         playlist.source_schema = MUSE_PLAYLIST_SCHEMA
         playlist.source_file = source_file_text
@@ -519,6 +717,7 @@ class LibraryService:
         playlist.source_database_location = str(db_root)
         playlist.source_exported_at = exported_at
 
+        # 处理歌单中的曲目数据
         old_track_ids = set(playlist.track_ids)
         new_track_ids: list[str] = []
         new_track_ids_set: set[str] = set()
@@ -527,6 +726,7 @@ class LibraryService:
             if not isinstance(raw, dict):
                 continue
 
+            # 解析曲目元数据
             source_track_id = str(raw.get("track_id", "")).strip()
             storage_relpath = self._normalize_relpath(str(raw.get("storage_relpath", "")).strip())
             lyrics_relpath = self._normalize_relpath(str(raw.get("lyrics_storage_relpath", "")).strip())
@@ -535,18 +735,25 @@ class LibraryService:
             artist = str(raw.get("artist", "")).strip()
             album = str(raw.get("album", "")).strip()
 
+            # 解析文件路径
             track_path = self._resolve_muse_track_path(db_root=db_root, storage_relpath=storage_relpath)
             lyrics_path = self._resolve_muse_track_path(db_root=db_root, storage_relpath=lyrics_relpath) if lyrics_relpath else None
+            
+            # 尝试通过多种方式查找现有曲目记录
             track = self._find_track_by_source_fields(
                 source_path=track_path,
                 source_sha256=source_sha256,
                 source_track_id=source_track_id,
                 source_storage_relpath=storage_relpath,
             )
+            
+            # 如果找不到现有记录，则创建新曲目
             if track is None:
                 if track_path.exists() and track_path.is_file() and track_path.suffix.lower() in AUDIO_EXTENSIONS:
+                    # 文件存在且为支持的音频格式，提取元数据
                     track = self._metadata.extract_track(track_path)
                 else:
+                    # 文件不存在，使用数据库中的元数据创建占位记录
                     fallback_title = title or track_path.stem or "未知标题"
                     track = Track(
                         id=new_id(),
@@ -557,6 +764,7 @@ class LibraryService:
                     )
                 self.tracks[track.id] = track
 
+            # 更新曲目元数据
             if title:
                 track.title = title
             if artist:
@@ -571,14 +779,17 @@ class LibraryService:
             if track_path.exists():
                 track.path = str(track_path)
 
+            # 添加到新歌单中（去重）
             if track.id not in new_track_ids_set:
                 new_track_ids.append(track.id)
                 new_track_ids_set.add(track.id)
 
+        # 更新歌单曲目列表
         playlist.track_ids = new_track_ids
         playlist.touch()
         self.active_playlist_id = playlist.id
 
+        # 同步到"全部歌曲"歌单
         all_songs = self.playlists[ALL_SONGS_ID]
         all_ids = set(all_songs.track_ids)
         for track_id in new_track_ids:
@@ -587,6 +798,7 @@ class LibraryService:
                 all_ids.add(track_id)
         all_songs.touch()
 
+        # 清理被移除的孤立曲目
         removed_track_ids = old_track_ids - new_track_ids_set
         if removed_track_ids:
             orphan_track_ids = self._find_orphan_track_ids()
@@ -594,22 +806,37 @@ class LibraryService:
                 if track_id in orphan_track_ids:
                     self.tracks.pop(track_id, None)
 
+        # 重新同步歌单数据并保存
         self._normalize_playlist_tracks()
         self.save()
         logger.info("导入歌单文件: %s, playlist=%s, songs=%s", source_file, playlist.name, len(playlist.track_ids))
         return playlist
 
     def sync_muse_playlist_stats(self, playback_stats_service) -> int:
+        """同步播放统计数据到外部歌单文件。
+        
+        将运行时收集的播放统计数据回写到对应的 .muse_playlist.json 文件中，
+        只在本地有实际统计数据时才更新，避免覆盖文件中已有的历史数据。
+        
+        Args:
+            playback_stats_service: 播放统计服务实例
+            
+        Returns:
+            更新的文件数量
+        """
         # 将运行时统计回写至外部歌单文件。
-        # 若本地无统计，不覆盖文件中已有统计，避免误清空历史数据。
+        # 安全策略：本地无统计时，不覆盖文件中已有统计，避免误清空历史数据。
         updated_files = 0
         updated_at = datetime.now(timezone.utc).isoformat()
 
+        # 遍历所有歌单，只处理 Muse 格式导出的歌单文件
         for playlist in self.playlists.values():
+            # 跳过系统歌单和非 Muse 格式歌单
             if playlist.id == ALL_SONGS_ID:
                 continue
             if playlist.source_schema != MUSE_PLAYLIST_SCHEMA:
                 continue
+            
             source_file_text = str(playlist.source_file or "").strip()
             if not source_file_text:
                 continue
@@ -617,6 +844,7 @@ class LibraryService:
             if not source_file.exists() or not source_file.is_file():
                 continue
 
+            # 读取现有的歌单文件内容
             try:
                 payload = json.loads(source_file.read_text(encoding="utf-8"))
             except Exception:
@@ -627,6 +855,8 @@ class LibraryService:
             if not isinstance(tracks_payload, list):
                 continue
 
+            # 建立索引映射：SHA256 -> 位置, track_id -> 位置, 相对路径 -> 位置
+            # 多维度索引确保与外部数据的准确匹配
             by_sha: dict[str, int] = {}
             by_track_id: dict[str, int] = {}
             by_relpath: dict[str, int] = {}
@@ -646,11 +876,13 @@ class LibraryService:
             changed = False
             db_root = Path(str(playlist.source_database_location or "")).resolve() if playlist.source_database_location else None
 
+            # 遍历当前歌单中的所有本地曲目
             for local_track_id in playlist.track_ids:
                 track = self.tracks.get(local_track_id)
                 if track is None:
                     continue
 
+                # 使用多维度匹配策略查找对应的外部记录
                 target_idx: int | None = None
                 track_sha = str(track.source_sha256 or "").strip().lower()
                 if track_sha and track_sha in by_sha:
@@ -658,6 +890,7 @@ class LibraryService:
                 elif track.source_track_id and track.source_track_id in by_track_id:
                     target_idx = by_track_id[track.source_track_id]
                 else:
+                    # 尝试使用相对路径匹配
                     rel = self._normalize_relpath(track.source_storage_relpath)
                     if not rel and db_root is not None:
                         try:
@@ -673,14 +906,17 @@ class LibraryService:
                 if not isinstance(row, dict):
                     continue
 
+                # 只在本地有统计数据时才更新外部文件
                 stats = playback_stats_service.export_stats_for_track(local_track_id)
                 if stats is None:
                     continue
-                prev_stats = row.get("stats")
+                prev_stats = row.get("stats") 
+                # 只有当统计数据实际发生变化时标记为需要更新
                 if not isinstance(prev_stats, dict) or prev_stats != stats:
                     row["stats"] = stats
                     changed = True
 
+            # 计算整张歌单的总统计信息
             total_play_count = 0
             total_manual_play_count = 0
             total_play_seconds = 0
@@ -696,6 +932,7 @@ class LibraryService:
                 total_play_seconds += int(stats.get("play_seconds", 0) or 0)
                 total_early_skip_count += int(stats.get("early_skip_count", 0) or 0)
 
+            # 更新歌单级别的统计汇总信息
             summary = payload.get("stats_summary")
             if not isinstance(summary, dict):
                 summary = {}
@@ -707,6 +944,7 @@ class LibraryService:
                 "total_early_skip_count": int(total_early_skip_count),
                 "updated_at": updated_at,
             }
+            # 仅当统计汇总发生变化时才更新
             if payload.get("stats_summary") != next_summary:
                 payload["stats_summary"] = next_summary
                 changed = True
@@ -717,6 +955,7 @@ class LibraryService:
                 payload["track_count"] = len(tracks_payload)
                 changed = True
 
+            # 只有在数据实际发生变化时才写回文件
             if not changed:
                 continue
             try:
@@ -729,6 +968,19 @@ class LibraryService:
 
     @staticmethod
     def _normalize_relpath(value: str) -> str:
+        """标准化相对路径格式。
+        
+        将路径转换为统一的相对路径格式，用于歌单数据中的路径存储。
+        - 转换为正斜杠
+        - 移除开头的 ./ 前缀
+        - 移除首尾斜杠
+        
+        Args:
+            value: 原始路径字符串
+            
+        Returns:
+            标准化后的相对路径
+        """
         text = (value or "").strip().replace("\\", "/")
         while text.startswith("./"):
             text = text[2:]
@@ -736,6 +988,18 @@ class LibraryService:
 
     @staticmethod
     def _resolve_muse_track_path(*, db_root: Path, storage_relpath: str) -> Path:
+        """解析Muse数据库中的存储相对路径为绝对路径。
+        
+        处理歌单导入时从数据库记录中读取的存储路径，将其转换为完整的文件路径。
+        支持相对路径和绝对路径的混合处理。
+        
+        Args:
+            db_root: 数据库根目录路径
+            storage_relpath: 存储相对路径或绝对路径
+            
+        Returns:
+            解析后的完整Path对象
+        """
         rel_text = (storage_relpath or "").strip()
         if not rel_text:
             return db_root.resolve()
@@ -810,6 +1074,18 @@ class LibraryService:
 
     @staticmethod
     def _scan_audio_files(folder: Path, recursive: bool = True) -> list[Path]:
+        """扫描文件夹中的音频文件。
+        
+        使用指定的扩展名过滤标准来扫描音频文件，并按字母顺序排序返回。
+        
+        Args:
+            folder: 要扫描的文件夹路径
+            recursive: 是否递归扫描子文件夹，默认为True
+            
+        Returns:
+            按字母序排序的音频文件路径列表
+        """
+        # 根据递归参数选择扫描模式
         globber = folder.rglob("*") if recursive else folder.glob("*")
         files: list[Path] = []
         for p in globber:
@@ -817,10 +1093,25 @@ class LibraryService:
                 continue
             if p.suffix.lower() in AUDIO_EXTENSIONS:
                 files.append(p.resolve())
+        # 按文件路径的字母序排序返回
         files.sort(key=lambda x: str(x).lower())
         return files
 
     def _resolve_target_playlist_for_folder_import(self, folder: Path, playlist_id: str | None) -> Playlist:
+        """为文件夹导入解析目标歌单。
+        
+        智能歌单匹配策略：
+        1. 如果指定了现有歌单ID且有效，直接使用该歌单
+        2. 根据文件夹名查找现有歌单
+        3. 如果不存在，创建以文件夹名命名的新歌单
+        
+        Args:
+            folder: 要导入的文件夹路径
+            playlist_id: 指定的目标歌单ID，None则自动选择
+            
+        Returns:
+            目标Playlist对象
+        """
         if playlist_id and playlist_id in self.playlists and playlist_id != ALL_SONGS_ID:
             return self.playlists[playlist_id]
 
@@ -834,6 +1125,17 @@ class LibraryService:
         return playlist
 
     def _find_playlist_by_name(self, name: str) -> Playlist | None:
+        """根据歌单名称查找现有歌单。
+        
+        不区分大小写的名称匹配，忽略首尾空格。
+        系统保留歌单"全部歌曲"不参与查找。
+        
+        Args:
+            name: 要查找的歌单名称
+            
+        Returns:
+            找到的Playlist对象，如果未找到则返回None
+        """
         expected = self._normalize_playlist_name(name).casefold()
         for playlist in self.playlists.values():
             if playlist.id == ALL_SONGS_ID:
@@ -859,6 +1161,18 @@ class LibraryService:
         return (name or "").strip() or "新建歌单"
 
     def _find_orphan_track_ids(self, exclude_playlist_id: str | None = None) -> set[str]:
+        """查找不再被任何歌单引用的孤立曲目ID。
+        
+        通过扫描所有歌单的track_ids，找出曲库中存在但不再被任何歌单引用的曲目。
+        系统保留歌单"全部歌曲"不参与引用统计。
+        
+        Args:
+            exclude_playlist_id: 要排除的歌单ID，用于在删除歌单时查找孤立曲目
+            
+        Returns:
+            孤立曲目ID的集合
+        """
+        # 收集所有非系统歌单引用的曲目ID
         referenced: set[str] = set()
         for playlist in self.playlists.values():
             if playlist.id == ALL_SONGS_ID:
@@ -867,6 +1181,7 @@ class LibraryService:
                 continue
             referenced.update(track_id for track_id in playlist.track_ids if track_id in self.tracks)
 
+        # 返回曲库中存在但未被引用（除全部歌曲外）的曲目
         all_track_ids = set(self.tracks.keys())
         return all_track_ids - referenced
 

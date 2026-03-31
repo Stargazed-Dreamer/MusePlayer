@@ -9,6 +9,13 @@ from contextlib import contextmanager
 
 class PlayerServiceStatsMixin:
     def _collect_stats_enabled(self) -> bool:
+        """检查是否启用了统计收集功能。
+        
+        判断条件包括：统计对象是否存在、统计收集是否被暂停、用户设置是否开启。
+        
+        Returns:
+            bool: 如果统计收集功能启用则返回True，否则返回False
+        """
         if self._stats is None:
             return False
         if self._stats_suspended_depth > 0:
@@ -31,6 +38,14 @@ class PlayerServiceStatsMixin:
             self._stats_suspended_depth = max(0, self._stats_suspended_depth - 1)
 
     def _record_play_start(self, track_id: str, *, active_request: bool) -> None:
+        """记录播放开始事件。
+        
+        记录用户开始播放某个音轨的行为。
+        
+        Args:
+            track_id: 音轨的唯一标识符
+            active_request: 是否是由用户主动发起的播放请求
+        """
         if not self._collect_stats_enabled():
             return
         try:
@@ -46,6 +61,17 @@ class PlayerServiceStatsMixin:
         duration: float,
         next_track_id: str | None,
     ) -> None:
+        """如果需要，记录早期跳过事件。
+        
+        早期跳过定义：在歌曲前5%的时间内切换到其他歌曲。
+        这个数据用于分析用户的听歌习惯和歌曲质量。
+        
+        Args:
+            skipped_track_id: 被跳过的音轨ID
+            position: 在跳过时已经播放的位置（秒）
+            duration: 音轨的总时长（秒）
+            next_track_id: 即将播放的下一个音轨ID
+        """
         if not self._collect_stats_enabled():
             return
         track_id = str(skipped_track_id or "").strip()
@@ -66,6 +92,16 @@ class PlayerServiceStatsMixin:
             pass
 
     def _record_playback_progress(self, *, position: float, duration: float, playing: bool) -> None:
+        """记录播放进度变化。
+        
+        计算自上次记录以来的播放增量，并记录到统计数据中。
+        用于计算用户实际收听时长和收听完成度。
+        
+        Args:
+            position: 当前播放位置（秒）
+            duration: 音轨总时长（秒）
+            playing: 是否正在播放状态
+        """
         if not playing:
             self._stats_last_position = max(0.0, float(position))
             return

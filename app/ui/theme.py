@@ -1,8 +1,18 @@
 from __future__ import annotations
 
-ACCENT = "#A7C080"
-ACCENT_STRONG = "#81e98b"
+# MusePlayer 主题配色和样式定义
 
+# 主题色彩配置
+ACCENT = "#A7C080"  # 主要强调色（青柠绿），用于按钮高亮、进度条等
+ACCENT_STRONG = "#81e98b"  # 强调整色（亮绿色），用于特殊高亮状态
+
+# 浅色主题样式表
+# 
+# 设计理念：
+# - 以柔和的浅色调为主，减少视觉疲劳
+# - 强调色用于关键交互元素，提供清晰的视觉反馈
+# - 层次分明的信息架构，标题>元信息>辅助信息
+# - 圆角和阴影营造现代感的界面体验
 APP_STYLE_LIGHT = f"""
 QWidget {{
     background: #f6f7f6;
@@ -359,6 +369,13 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
 }}
 """
 
+# 深色主题样式表
+# 
+# 设计理念：
+# - 深灰背景降低屏幕亮度，适合夜间使用
+# - 调整强调色透明度，保持视觉层次的同时减少刺眼感
+# - 提高文本对比度，确保在深色背景上的可读性
+# - 适度使用边框和背景区分不同功能区域
 APP_STYLE_DARK = f"""
 QWidget {{
     background: #1a1a1a;

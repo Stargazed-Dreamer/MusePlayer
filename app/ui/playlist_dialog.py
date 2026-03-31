@@ -1,5 +1,25 @@
 ﻿from __future__ import annotations
 
+"""歌单管理对话框。
+
+提供完整的歌单管理功能：
+- 创建、重命名、删除歌单
+- 歌单复制和合并操作
+- 导入音频文件夹和歌单文件
+- 设置当前播放歌单
+
+界面特点：
+- 左侧列表显示所有歌单（包括"全部歌曲"）
+- 右侧操作按钮提供各类管理功能
+- 支持文件夹批量导入和单个文件导入
+- 提供歌单数据导入导出功能
+
+与AppController的交互：
+- 所有歌单操作都委托给AppController处理
+- 对话框仅负责UI交互，业务逻辑在控制器层
+- 支持实时更新歌单列表和状态反馈
+"""
+
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -19,25 +39,64 @@ from app.services.app_controller import AppController
 
 
 class PlaylistDialog(QDialog):
+    """歌单管理对话框。
+    
+    核心功能：
+    - 显示所有歌单列表，标识当前活跃歌单
+    - 创建新文件夹名称的空歌单
+    - 重命名现有歌单（不可重命名"全部歌曲"）
+    - 删除用户创建的歌单
+    - 复制歌单结构和内容
+    - 合并多个歌单内容
+    - 导入本地文件夹中的音频文件
+    - 导入外部歌单文件（.muse_playlist.json格式）
+    - 快速设置当前播放歌单
+    
+    架构设计：
+    - 纯UI层，所有业务逻辑委托给AppController
+    - 支持与主窗口的模态/非模态交互
+    - 自动刷新机制保持数据同步
+    """
+    
     def __init__(self, controller: AppController, parent=None):
+        """初始化歌单管理对话框。
+        
+        Args:
+            controller: AppController实例，用于歌单数据操作
+            parent: 父级窗口，用于模态对话框显示
+        """
         super().__init__(parent)
         self.controller = controller
         self.setWindowTitle("歌单管理")
         self.resize(520, 460)
 
         self._build_ui()
-        self.reload()
+        self.reload()  # 初始化歌单列表
 
     def _build_ui(self) -> None:
+        """构建对话框用户界面。
+        
+        创建的界面包含以下组件：
+        - 顶部：功能描述标签，说明对话框用途
+        - 中间：歌单列表，显示所有可用歌单及其曲目数量
+        - 下部第一行：歌单管理按钮（新建、重命名、删除、复制、合并）
+        - 下部第二行：导入和设置按钮（设为当前、导入文件夹、导入歌单文件、关闭）
+        
+        所有按钮都连接到相应的事件处理方法。
+        """
         root = QVBoxLayout(self)
 
+        # 功能描述标签
         desc = QLabel("新建、重命名、删除歌单，并可向歌单导入文件夹。")
         desc.setObjectName("CaptionLabel")
         root.addWidget(desc)
 
+        # 歌单列表（占据主要空间）
         self.list_widget = QListWidget(self)
-        root.addWidget(self.list_widget, 1)
+        self.list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)  # 单选模式
+        root.addWidget(self.list_widget, 1)  # 占据1的伸缩因子
 
+        # 第一行操作按钮：歌单管理
         row1 = QHBoxLayout()
         self.btn_new = QPushButton("新建")
         self.btn_rename = QPushButton("重命名")
@@ -51,16 +110,17 @@ class PlaylistDialog(QDialog):
         row1.addWidget(self.btn_merge)
         root.addLayout(row1)
 
+        # 第二行操作按钮：导入和设置
         row2 = QHBoxLayout()
         self.btn_set_active = QPushButton("设为当前")
         self.btn_import_folder = QPushButton("导入文件夹")
         self.btn_import_playlist = QPushButton("导入歌单文件")
         self.btn_close = QPushButton("关闭")
-        self.btn_close.setObjectName("GhostButton")
+        self.btn_close.setObjectName("GhostButton")  # 应用幽灵按钮样式
         row2.addWidget(self.btn_set_active)
         row2.addWidget(self.btn_import_folder)
         row2.addWidget(self.btn_import_playlist)
-        row2.addStretch(1)
+        row2.addStretch(1)  # 弹性空间，将关闭按钮推到右侧
         row2.addWidget(self.btn_close)
         root.addLayout(row2)
 
@@ -75,6 +135,15 @@ class PlaylistDialog(QDialog):
         self.btn_close.clicked.connect(self.accept)
 
     def reload(self) -> None:
+        """刷新歌单列表显示。
+        
+        重新加载所有歌单并更新列表显示，包括：
+        - 清空当前列表
+        - 获取最新的歌单数据
+        - 显示歌单名称和曲目数量
+        - 标识当前活跃的歌单
+        - 为每个列表项设置歌单ID数据
+        """
         self.list_widget.clear()
         active_id = self.controller.library_service.active_playlist_id
         for playlist in self.controller.library_service.list_playlists():
@@ -87,12 +156,22 @@ class PlaylistDialog(QDialog):
             self.list_widget.addItem(item)
 
     def _selected_playlist_id(self) -> str | None:
+        """获取当前选中的歌单ID。
+        
+        Returns:
+            str | None: 当前选中歌单的ID，如果没有选中则返回None
+        """
         item = self.list_widget.currentItem()
         if item is None:
             return None
         return item.data(0x0100)
 
     def _create_playlist(self) -> None:
+        """创建新歌单。
+        
+        显示输入对话框获取用户输入的歌单名称，然后调用控制器创建新歌单。
+        创建成功后刷新列表显示。
+        """
         text, ok = QInputDialog.getText(self, "新建歌单", "歌单名称：")
         if not ok:
             return
@@ -100,11 +179,16 @@ class PlaylistDialog(QDialog):
         self.reload()
 
     def _rename_playlist(self) -> None:
+        """重命名当前选中的歌单。
+        
+        检查选中的歌单是否可重命名（"全部歌曲"不可重命名），
+        然后显示输入对话框获取新名称并调用控制器进行重命名。
+        """
         playlist_id = self._selected_playlist_id()
         if not playlist_id:
             return
         if playlist_id == "all_songs":
-            QMessageBox.information(self, "提示", "“全部歌曲”不可重命名。")
+            QMessageBox.information(self, "提示", '"全部歌曲"不可重命名。')
             return
 
         text, ok = QInputDialog.getText(self, "重命名歌单", "新名称：")
@@ -114,11 +198,16 @@ class PlaylistDialog(QDialog):
         self.reload()
 
     def _delete_playlist(self) -> None:
+        """删除当前选中的歌单。
+        
+        检查选中的歌单是否可删除（"全部歌曲"不可删除），
+        显示确认对话框获取用户确认，然后调用控制器删除歌单。
+        """
         playlist_id = self._selected_playlist_id()
         if not playlist_id:
             return
         if playlist_id == "all_songs":
-            QMessageBox.information(self, "提示", "“全部歌曲”不可删除。")
+            QMessageBox.information(self, "提示", '"全部歌曲"不可删除。')
             return
 
         answer = QMessageBox.question(self, "确认", "确定删除该歌单？")
@@ -129,6 +218,12 @@ class PlaylistDialog(QDialog):
         self.reload()
 
     def _copy_playlist(self) -> None:
+        """复制当前选中的歌单。
+        
+        获取选中歌单信息并设置为默认名称（歌单名 - 副本），
+        显示输入对话框获取新名称，调用控制器复制歌单。
+        复制失败时显示错误信息。
+        """
         playlist_id = self._selected_playlist_id()
         if not playlist_id:
             return
@@ -146,6 +241,11 @@ class PlaylistDialog(QDialog):
         self.reload()
 
     def _merge_playlist(self) -> None:
+        """合并歌单操作。
+        
+        将当前选中的歌单合并到其他歌单中，显示可选目标歌单列表，
+        选择合适的歌单后进行合并操作并显示合并结果。
+        """
         source_id = self._selected_playlist_id()
         if not source_id:
             return
@@ -177,6 +277,11 @@ class PlaylistDialog(QDialog):
         self.reload()
 
     def _set_active(self) -> None:
+        """将选中的歌单设置为当前播放歌单。
+        
+        调用播放器服务设置当前歌单，并触发库更改信号，
+        然后刷新显示以更新当前歌单标识。
+        """
         playlist_id = self._selected_playlist_id()
         if not playlist_id:
             return
@@ -185,6 +290,12 @@ class PlaylistDialog(QDialog):
         self.reload()
 
     def _import_folder(self) -> None:
+        """从文件夹导入音乐文件。
+        
+        显示文件夹选择对话框，将选定文件夹中的所有音频文件
+        导入到当前选中的歌单中（或活跃歌单，如果在"全部歌曲"）。
+        导入过程异常时会显示错误信息。
+        """
         playlist_id = self._selected_playlist_id() or self.controller.library_service.active_playlist_id
         if playlist_id == "all_songs":
             playlist_id = None
@@ -203,6 +314,11 @@ class PlaylistDialog(QDialog):
         self.reload()
 
     def _import_playlist_file(self) -> None:
+        """导入外部歌单文件。
+        
+        显示文件选择对话框选择.muse_playlist.json或.json格式的歌单文件，
+        调用控制器导入歌单数据，导入异常时显示错误信息。
+        """
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "导入歌单文件",
