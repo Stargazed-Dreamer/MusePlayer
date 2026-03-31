@@ -7,7 +7,7 @@ import subprocess
 from bisect import bisect_right
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QPoint, QRect, QSize, Qt
+from PySide6.QtCore import QCoreApplication, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QPixmap
 from PySide6.QtWidgets import QApplication, QFileDialog, QListWidget, QListWidgetItem, QMessageBox, QSizePolicy, QToolButton
 
@@ -23,13 +23,10 @@ from app.ui.main_window_helpers import (
     _format_time,
     _make_crosshair_icon,
     _make_folder_icon,
-    _make_lock_icon,
     _make_media_icon,
     _make_mode_icon,
     _make_moon_icon,
-    _make_pin_icon,
     _make_plus_minus_icon,
-    _make_rich_title_icon,
     _make_sun_icon,
     _make_volume_icon,
     _parse_lrc_entries,
@@ -248,7 +245,6 @@ class MainWindowPlaybackMixin:
             self.info_media_row_widget.setVisible(has_cover or has_lyrics)
 
         if compact_center:
-            self.path_label.hide()
             self.title_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
             self.artist_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
             self.album_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
@@ -256,7 +252,6 @@ class MainWindowPlaybackMixin:
             self._meta_top_spacer.changeSize(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
             self._meta_bottom_spacer.changeSize(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
         else:
-            self.path_label.show()
             self.title_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
             self.artist_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
             self.album_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
