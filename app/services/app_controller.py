@@ -1,4 +1,12 @@
-﻿from __future__ import annotations
+from __future__ import annotations
+
+"""应用控制器。
+
+该层是 UI 与服务层之间的编排中枢，负责：
+1. 初始化与装配（曲库、播放、设置、控制接口）
+2. 生命周期管理（启动恢复、定时保存、关闭保存）
+3. 对外命令分发（本地 UI 与运行时控制协议共用）
+"""
 
 from datetime import datetime
 import json
@@ -76,6 +84,7 @@ class AppController(QObject):
             self.runtime_status_changed.emit(False, self.settings.control_host, self.settings.control_port)
 
     def shutdown(self) -> None:
+        # 关闭阶段是系统流程，不应产生任何新增统计计数。
         self.logger.info("准备关闭应用")
         with self.player_service.suspend_stats_collection():
             self.save_session()
@@ -86,6 +95,7 @@ class AppController(QObject):
             self.player_service.close()
 
     def save_session(self) -> None:
+        # 会话保存同时承担“统计落盘同步”职责，确保 DB 歌单内统计及时更新。
         state = self.player_service.export_session()
         self.session_store.save(state)
         self.library_service.sync_muse_playlist_stats(self.playback_stats_service)
@@ -293,6 +303,7 @@ class AppController(QObject):
         self.library_changed.emit()
 
     def dispatch_command(self, payload: dict) -> dict:
+        """运行时控制接口命令分发入口。"""
         cmd = str(payload.get("cmd", "")).strip().lower()
         if cmd:
             self.logger.info("收到控制命令: %s", cmd)

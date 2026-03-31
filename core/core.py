@@ -232,20 +232,6 @@ class PyAVPlayerCore:
                 end = self._segment_end_frame / self._sample_rate
             return PlaybackWindow(start_sec=start, end_sec=end)
 
-    def export_wav(self, output_path: Path) -> Path:
-        with self._lock:
-            self._require_loaded()
-            output_path = Path(output_path).resolve()
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            pcm = np.clip(self._buffer, -1.0, 1.0)
-            pcm_i16 = (pcm * 32767.0).astype(np.int16, copy=False)
-            with wave.open(str(output_path), "wb") as f:
-                f.setnchannels(self._channels)
-                f.setsampwidth(2)
-                f.setframerate(self._sample_rate)
-                f.writeframes(pcm_i16.tobytes())
-            return output_path
-
     def close(self) -> None:
         with self._lock:
             self._playing = False
@@ -362,7 +348,7 @@ class PyAVPlayerCore:
                     raise PlayerCoreError(f"No audio stream found in {source}")
 
                 if decode_window is not None and start_sec > 0.0:
-                    seek_target = max(0.0, start_sec - 0.30)
+                    seek_target = max(0.0, start_sec - 0.01)
                     try:
                         if stream.time_base is not None and float(stream.time_base) > 0.0:
                             seek_ts = int(seek_target / float(stream.time_base))

@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+"""播放统计服务。
+
+统计口径说明：
+1. `play_count`: 只要触发一次播放起点就 +1（不要求播放完成）。
+2. `active_play_count`: 用户主动触发（如双击、拖入、主动搜索播放）才 +1。
+3. `early_skip_count`: 在歌曲前 5% 被切走时 +1。
+4. `played_percent_total`: 以秒级增量累计，可超过 100%。
+"""
+
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -72,6 +81,7 @@ class PlaybackStatsService:
         self._entries = loaded
 
     def save_if_dirty(self) -> None:
+        # 仅在脏状态写盘，减少不必要磁盘写入。
         if not self._dirty:
             return
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -94,6 +104,7 @@ class PlaybackStatsService:
         self._dirty = True
 
     def record_play_progress(self, track_id: str, played_seconds: float, duration_sec: float) -> None:
+        # 以“增量秒数”累加，避免拖动进度导致重复统计整曲播放。
         track_id = str(track_id or "").strip()
         delta = max(0.0, float(played_seconds))
         duration = max(0.0, float(duration_sec))

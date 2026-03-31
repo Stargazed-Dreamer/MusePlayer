@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+"""应用启动入口。
+
+除常规 Qt 启动外，本文件还负责安装“崩溃/异常保存兜底”：
+- aboutToQuit
+- atexit
+- sys/threading excepthook
+- SIGINT/SIGTERM
+"""
+
 import atexit
 import signal
 import sys
@@ -16,6 +25,7 @@ from app.ui.theme import APP_STYLE
 
 
 def _install_persist_fallbacks(app: QApplication, controller: AppController) -> None:
+    """安装多通道保存兜底，尽量在异常退出时保留统计数据。"""
     saved = {"done": False}
 
     def _save_once(_reason: str) -> None:

@@ -1,4 +1,13 @@
-﻿from __future__ import annotations
+from __future__ import annotations
+
+"""曲库服务层。
+
+核心职责：
+1. 管理曲目与歌单的内存态及持久化读写。
+2. 提供文件夹导入、歌单导入、去重、搜索、歌单管理能力。
+3. 维护“全部歌曲”与其它歌单双向同步关系。
+4. 将播放统计回写到 `.muse_playlist.json`，供后续数据库分析使用。
+"""
 
 import hashlib
 import json
@@ -69,6 +78,7 @@ class LibraryService:
         logger.info("清理失效歌曲记录: %s", len(missing_ids))
 
     def _deduplicate_tracks(self) -> None:
+        # 去重键采用“文件名 + 文件大小 + 时长毫秒”，兼顾速度与可用性。
         if len(self.tracks) <= 1:
             return
 
@@ -322,6 +332,10 @@ class LibraryService:
         recursive: bool = True,
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> list[Track]:
+        # 导入策略：
+        # - 所选目录下的歌曲导入根歌单
+        # - 第一级子目录分别建立/复用独立歌单
+        # - 深层子目录不再展开，控制导入范围
         target = Path(folder).resolve()
         if not target.exists() or not target.is_dir():
             raise FileNotFoundError(str(target))
@@ -467,6 +481,7 @@ class LibraryService:
         return self._import_muse_playlist_data(payload, source_file=virtual_source_file, fallback_name="导入歌单")
 
     def _import_muse_playlist_data(self, payload: dict, *, source_file: Path, fallback_name: str) -> Playlist:
+        # DB 导出歌单导入时保留 source_* 元数据，供后续统计回写和歌词路径解析使用。
         if not isinstance(payload, dict):
             raise ValueError("歌单文件结构无效")
         if str(payload.get("schema", "")).strip() != MUSE_PLAYLIST_SCHEMA:
@@ -585,6 +600,8 @@ class LibraryService:
         return playlist
 
     def sync_muse_playlist_stats(self, playback_stats_service) -> int:
+        # 将运行时统计回写至外部歌单文件。
+        # 若本地无统计，不覆盖文件中已有统计，避免误清空历史数据。
         updated_files = 0
         updated_at = datetime.now(timezone.utc).isoformat()
 

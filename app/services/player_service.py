@@ -1,4 +1,13 @@
-﻿from __future__ import annotations
+from __future__ import annotations
+
+"""播放服务层。
+
+职责边界：
+1. 对接底层 `PyAVPlayerCore`，提供播放/暂停/切歌/进度/音量等控制。
+2. 维护歌单顺序、随机顺序（seed + idx）和播放状态快照。
+3. 在“窗口读取”策略下执行分段预读取与无缝续播。
+4. 统一记录播放统计（播放次数、主动播放、早期跳过、播放百分比）。
+"""
 
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -35,9 +44,9 @@ class PlayerService(QObject):
     random_state_changed = Signal(int, int)
     playback_rate_changed = Signal(float)
     _LAZY_WINDOW_SEC = 6.2
-    # Keep a small overlap to reduce decode churn while still allowing seamless cutover.
+    # 保留少量重叠窗口，降低切块边界处的解码震荡。
     _LAZY_PREFETCH_OVERLAP_SEC = 0.50
-    # Switch shortly before window end to reduce stop/reload fallback.
+    # 在窗口尾部提前切换，尽量避免“先停再重载”造成的听感卡顿。
     _LAZY_SWITCH_AHEAD_SEC = 0.12
     _GLOBAL_GAIN_BOOST = 1.35
 
@@ -163,6 +172,7 @@ class PlayerService(QObject):
             self._align_random_index_with_current_track()
 
     def set_playlist(self, playlist_id: str | None) -> None:
+        # 切歌单是“状态迁移”过程：要同时处理播放状态、随机序和早期跳过统计。
         self._reset_lazy_prefetch(cancel=True)
         was_playing = self.is_playing()
         prev_track_for_skip = self._loaded_track_id or self._current_track_id
@@ -627,6 +637,7 @@ class PlayerService(QObject):
         )
 
     def restore_session(self, state: SessionState) -> None:
+        # 会话恢复属于系统行为，不计入用户行为统计。
         with self.suspend_stats_collection():
             self.set_mode(state.play_mode)
             self.set_volume(state.volume)
@@ -687,6 +698,9 @@ class PlayerService(QObject):
         self._align_random_index_with_current_track()
 
     def _load_current_track(self, *, auto_play: bool, start_sec: float, active_request: bool) -> bool:
+        # 根据读取策略加载：
+        # - window: 先加载短窗口并预读取后续窗口，降低切歌/跳播瞬时开销
+        # - full: 一次性读取完整文件，策略简单直接
         self._reset_lazy_prefetch(cancel=True)
         track = self.current_track()
         if track is None:
@@ -919,6 +933,7 @@ class PlayerService(QObject):
         self._prefetch_transition_sec = 0.0
 
     def _schedule_lazy_prefetch(self, track_id: str, next_start_sec: float) -> None:
+        # 仅在“窗口读取模式 + 当前曲目未变”时调度预读取，避免无效后台任务。
         if not self._lazy_window_mode or self._lazy_promoted_to_full:
             return
         if self._current_track_id != track_id:
@@ -1041,6 +1056,7 @@ class PlayerService(QObject):
             return False
 
     def _try_continue_lazy_window_while_playing(self, *, position: float, duration: float) -> bool:
+        # 在窗口即将结束时优先切入预读取结果，尽量减小切块卡顿概率。
         if not self._lazy_window_mode or self._lazy_promoted_to_full:
             return False
         if not self._expecting_natural_end:
@@ -1098,6 +1114,10 @@ class PlayerService(QObject):
 
     @contextmanager
     def suspend_stats_collection(self):
+        """临时暂停统计收集（支持嵌套）。
+
+        用于会话恢复、应用退出等系统流程，避免污染用户行为统计。
+        """
         self._stats_suspended_depth += 1
         try:
             yield
@@ -1131,6 +1151,7 @@ class PlayerService(QObject):
         if duration_sec <= 0.0:
             return
         played_sec = max(0.0, float(position))
+        # 早期跳过定义：在歌曲前 5% 被切走（且切到其他歌曲）。
         if played_sec >= max(0.0, duration_sec * 0.05):
             return
         try:
