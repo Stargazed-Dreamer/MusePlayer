@@ -5,7 +5,7 @@ from __future__ import annotations
 设计说明（关键点）：
 1. 本类负责界面编排与交互，不直接持久化业务数据；写盘统一经 AppController。
 2. 绘制与控件辅助逻辑拆分到 main_window_helpers.py，本文件聚焦主流程。
-3. 支持无边框窗口下的拖动、吸附、边缘拉伸，以及简洁/丰富模式切换。
+3. 支持简洁/丰富模式切换，并默认使用系统原生窗口边框。
 
 界面状态管理：
 - 丰富模式：展示完整播放器界面，包括歌曲信息、歌词、封面、歌单列表等
@@ -68,7 +68,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
     - 简洁模式：仅保留紧凑控制区与顶部操作栏
     
     核心特性：
-    - 无边框设计，自定义标题栏和窗口控制
+    - 默认使用系统原生标题栏与边框，保证窗口缩放稳定
     - 支持窗口吸附、透明度调节、置顶等桌面增强功能
     - 智能歌词同步和滚动，支持歌词搜索定位
     - Windows任务栏进度显示（通过COM接口）
@@ -177,6 +177,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         # 丰富模式拖拽状态
         self._rich_drag_offset: QPoint | None = None  # 丰富模式拖拽偏移
         self._rich_drag_restore_ratio = 0.5  # 拖拽恢复比例
+        self._use_custom_titlebar = False  # 默认关闭无边框模式，避免影响系统缩放
         
         # 窗口吸附状态
         self._snap_docked = False  # 是否已吸附到屏幕边缘
@@ -201,6 +202,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self._build_menu()    # 构建菜单栏
         self._bind_signals()  # 绑定信号槽
         self._bind_shortcuts() # 绑定快捷键
+        self._apply_window_size_limits()  # 应用窗口最大尺寸限制
         self._restore_window_geometry()  # 恢复窗口位置和大小
 
         # 初始化界面状态
@@ -454,6 +456,15 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.playlist_combo = QComboBox()
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("搜索当前歌单（标题 / 歌手 / 专辑）")
+        self.search_clear_btn = QToolButton(self.search_edit)
+        self.search_clear_btn.setObjectName("SearchClearButton")
+        self.search_clear_btn.setText("×")
+        self.search_clear_btn.setToolTip("清空搜索")
+        self.search_clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.search_clear_btn.setAutoRaise(True)
+        self.search_clear_btn.hide()
+        self.search_edit.setTextMargins(0, 0, 20, 0)
+        self.search_edit.installEventFilter(self)
         self.track_list = QListWidget()
         self.track_list.setObjectName("track_list")
         self.track_list.setMouseTracking(True)
@@ -520,6 +531,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
 
         self.statusBar().showMessage("就绪", 1800)
         QTimer.singleShot(0, self._reposition_volume_value_label)
+        QTimer.singleShot(0, self._position_search_clear_button)
 
     def _build_menu(self) -> None:
         self.menuBar().setNativeMenuBar(False)
@@ -574,6 +586,9 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self._stack_title_and_menu()
 
     def _stack_title_and_menu(self) -> None:
+        if not self._use_custom_titlebar:
+            self.rich_title_bar.hide()
+            return
         if self._top_stack_widget is not None:
             return
         stack = QWidget(self)
@@ -605,6 +620,8 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
 
         self.playlist_combo.currentIndexChanged.connect(self._on_playlist_combo_changed)
         self.search_edit.textChanged.connect(lambda _: self._reload_track_list())
+        self.search_edit.textChanged.connect(self._on_search_text_changed)
+        self.search_clear_btn.clicked.connect(self._clear_search_text)
         self.track_list.itemDoubleClicked.connect(self._on_track_double_clicked)
         self.track_list.verticalScrollBar().valueChanged.connect(lambda _: self._update_locate_current_button())
 
@@ -637,4 +654,36 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         QShortcut(QKeySequence("Down"), self, activated=lambda: self._adjust_volume_by_key(False))
         QShortcut(QKeySequence("Left"), self, activated=lambda: self._seek_by_seconds(-5.0))
         QShortcut(QKeySequence("Right"), self, activated=lambda: self._seek_by_seconds(+5.0))
+        esc = QShortcut(QKeySequence("Esc"), self, activated=self._clear_search_by_esc)
+        esc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+
+    def _on_search_text_changed(self, _text: str) -> None:
+        self._position_search_clear_button()
+        self.search_clear_btn.setVisible(bool(self.search_edit.text().strip()))
+
+    def _position_search_clear_button(self) -> None:
+        if not hasattr(self, "search_edit") or not hasattr(self, "search_clear_btn"):
+            return
+        frame = self.search_edit.style().pixelMetric(self.search_edit.style().PixelMetric.PM_DefaultFrameWidth)
+        button_h = max(16, self.search_edit.height() - 4)
+        self.search_clear_btn.resize(16, button_h)
+        x = max(frame, self.search_edit.width() - self.search_clear_btn.width() - frame - 1)
+        y = max(1, (self.search_edit.height() - self.search_clear_btn.height()) // 2)
+        self.search_clear_btn.move(x, y)
+        self.search_clear_btn.raise_()
+
+    def _clear_search_text(self) -> None:
+        text = self.search_edit.text()
+        if not text:
+            return
+        self.search_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self.search_edit.setSelection(0, len(text))
+        self.search_edit.del_()
+
+    def _clear_search_by_esc(self) -> None:
+        if not self.isActiveWindow():
+            return
+        if not self.search_edit.text():
+            return
+        self._clear_search_text()
 

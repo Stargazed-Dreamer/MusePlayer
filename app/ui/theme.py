@@ -156,6 +156,19 @@ QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QSpinBox:disabled, Q
     border: 1px solid #dde2de;
 }}
 
+QToolButton#SearchClearButton {{
+    border: none;
+    background: transparent;
+    color: #d94f4f;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 0px;
+}}
+
+QToolButton#SearchClearButton:hover {{
+    color: #b23838;
+}}
+
 QListWidget#lyrics_list, QListWidget#track_list, QListWidget {{
     background: transparent;
     border: none;
@@ -518,6 +531,19 @@ QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QSpinBox:disabled, Q
     background: #292929;
     color: #858585;
     border: 1px solid #3a3a3a;
+}}
+
+QToolButton#SearchClearButton {{
+    border: none;
+    background: transparent;
+    color: #ef6b6b;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 0px;
+}}
+
+QToolButton#SearchClearButton:hover {{
+    color: #ff8f8f;
 }}
 
 QListWidget#lyrics_list, QListWidget#track_list, QListWidget {{

@@ -79,6 +79,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         self._core = PyAVPlayerCore()
 
         self._mode = PlayMode.SINGLE_LOOP
+        self._single_loop_enabled = True
         self._playlist_loop_enabled = False
         self._gain_percent = 80
         self._playback_rate = 1.0
@@ -144,16 +145,32 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             self._core.close()
 
     def available_modes(self) -> list[str]:
-        modes = [PlayMode.SINGLE_LOOP.value]
+        modes: list[str] = []
+        if self._single_loop_enabled:
+            modes.append(PlayMode.SINGLE_LOOP.value)
         if self._playlist_loop_enabled:
             modes.append(PlayMode.PLAYLIST_LOOP.value)
         modes.append(PlayMode.RANDOM.value)
         return modes
 
+    def _fallback_mode_for_disabled_option(self) -> PlayMode:
+        if self._single_loop_enabled:
+            return PlayMode.SINGLE_LOOP
+        if self._playlist_loop_enabled:
+            return PlayMode.PLAYLIST_LOOP
+        return PlayMode.RANDOM
+
+    def set_single_loop_mode_enabled(self, enabled: bool) -> None:
+        self._single_loop_enabled = bool(enabled)
+        if not self._single_loop_enabled and self._mode == PlayMode.SINGLE_LOOP:
+            self.set_mode(self._fallback_mode_for_disabled_option())
+        else:
+            self.mode_changed.emit(self._mode.value)
+
     def set_playlist_loop_mode_enabled(self, enabled: bool) -> None:
         self._playlist_loop_enabled = bool(enabled)
         if not self._playlist_loop_enabled and self._mode == PlayMode.PLAYLIST_LOOP:
-            self.set_mode(PlayMode.SINGLE_LOOP)
+            self.set_mode(self._fallback_mode_for_disabled_option())
         else:
             self.mode_changed.emit(self._mode.value)
 
@@ -171,8 +188,10 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         else:
             parsed = mode
 
+        if parsed == PlayMode.SINGLE_LOOP and not self._single_loop_enabled:
+            parsed = self._fallback_mode_for_disabled_option()
         if parsed == PlayMode.PLAYLIST_LOOP and not self._playlist_loop_enabled:
-            parsed = PlayMode.SINGLE_LOOP
+            parsed = self._fallback_mode_for_disabled_option()
 
         self._mode = parsed
         logger.info("播放模式切换: %s", self._mode.value)
@@ -181,6 +200,34 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         if self._mode == PlayMode.RANDOM:
             self._rebuild_random_order(force=True)
             self._align_random_index_with_current_track()
+
+    def reseed_random_after_current_track_removed(self) -> str | None:
+        """当前播放曲目被移除后，重建随机序并切到新序列首曲。"""
+        if self._mode != PlayMode.RANDOM:
+            return None
+        track_ids = self._playlist_track_ids()
+        if not track_ids:
+            self._current_track_id = None
+            self._loaded_track_id = None
+            self._random_order = []
+            self._random_index = 0
+            self.random_state_changed.emit(self._random_seed, self._random_index)
+            self.track_changed.emit(None)
+            self.queue_changed.emit()
+            return None
+        self._random_seed += 1
+        self._rebuild_random_order(force=True)
+        if self._random_order:
+            self._random_index = 0
+            self._current_track_id = self._random_order[0]
+        else:
+            self._current_track_id = track_ids[0]
+            self._random_index = 0
+        self._sequential_index = track_ids.index(self._current_track_id)
+        self._align_random_index_with_current_track()
+        self.track_changed.emit(self.current_track())
+        self.queue_changed.emit()
+        return self._current_track_id
 
     def set_playlist(self, playlist_id: str | None) -> None:
         """切换当前播放歌单，执行完整的状态迁移。

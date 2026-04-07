@@ -849,9 +849,12 @@ class MainWindowPlaybackMixin:
         self._reload_track_list()
         self.statusBar().showMessage("曲库已更新", 2200)
     def _on_settings_changed(self, settings) -> None:
+        self.player.set_single_loop_mode_enabled(bool(getattr(settings, "enable_single_loop_mode", True)))
         self.player.set_playlist_loop_mode_enabled(bool(getattr(settings, "enable_playlist_loop_mode", False)))
         self._refresh_mode_order()
         self._on_mode_changed(self.player.mode.value)
+        self._apply_window_size_limits()
+        self._ensure_window_inside_screen()
         dark = bool(getattr(settings, "dark_theme", self._dark_theme))
         if dark != self._dark_theme:
             self._dark_theme = dark

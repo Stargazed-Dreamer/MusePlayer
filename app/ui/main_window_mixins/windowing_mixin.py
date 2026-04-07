@@ -29,24 +29,14 @@ from __future__ import annotations
 - 通过事件过滤机制处理复杂的交互逻辑
 """
 
-import ctypes
 import sys
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer
-from PySide6.QtGui import QCloseEvent, QCursor, QDragEnterEvent, QDropEvent, QGuiApplication
+from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent, QGuiApplication
 from PySide6.QtWidgets import QComboBox, QLineEdit, QListWidget, QListWidgetItem, QSlider, QToolButton
 
 from app.ui.main_window_helpers import (
-    HTBOTTOM,
-    HTBOTTOMLEFT,
-    HTBOTTOMRIGHT,
-    HTLEFT,
-    HTRIGHT,
-    HTTOP,
-    HTTOPLEFT,
-    HTTOPRIGHT,
-    WM_NCHITTEST,
     TrackItemDelegate,
     _make_lock_icon,
     _make_pin_icon,
@@ -126,6 +116,7 @@ class MainWindowWindowingMixin:
 
             self.setMinimumSize(0, 0)
             self.setMaximumSize(16777215, 16777215)
+            self._apply_window_size_limits()
             self.controls_layout.setContentsMargins(*self._controls_compact_margins)
             self.controls_layout.setSpacing(4)
             self.card_now.hide()
@@ -191,6 +182,7 @@ class MainWindowWindowingMixin:
         self.setWindowOpacity(1.0)
         self.setMinimumSize(0, 0)
         self.setMaximumSize(16777215, 16777215)
+        self._apply_window_size_limits()
         self._refresh_window_flags()
 
         self.card_now.show()
@@ -213,6 +205,7 @@ class MainWindowWindowingMixin:
         self.setMinimumHeight(min_h)
         self.setMaximumWidth(16777215)
         self.setMaximumHeight(16777215)
+        self._apply_window_size_limits()
         restore_width = self._width_before_compact if self._width_before_compact > 0 else self.width()
         restore_height = self._height_before_compact if self._height_before_compact > 0 else self.height()
         screen = self.windowHandle().screen() if self.windowHandle() else QGuiApplication.primaryScreen()
@@ -317,17 +310,32 @@ class MainWindowWindowingMixin:
         """刷新窗口标志位，更新窗口行为特性。
         
         配置窗口的核心行为标志：
-        - 无边框模式：启用自定义窗口装饰
+        - 窗口边框：默认使用系统原生标题栏与边框
         - 置顶显示：根据设置决定是否保持在最前端
         - 确保窗口可见性和正确的Z序
         """
         was_visible = self.isVisible()
-        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, False)
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, self._always_on_top)
         if was_visible:
             self.show()
             if self._always_on_top:
                 self.raise_()
+    def _apply_window_size_limits(self) -> None:
+        """按设置应用窗口最大尺寸限制。
+
+        约定：
+        - 值为 0 表示不限制。
+        - 宽度最小有效值 600，高度最小有效值 800。
+        """
+        settings = self.controller.settings
+        max_w_raw = max(0, int(getattr(settings, "max_window_width", 0)))
+        max_h_raw = max(0, int(getattr(settings, "max_window_height", 0)))
+        max_w = 16777215 if max_w_raw <= 0 else max(600, max_w_raw)
+        max_h = 16777215 if max_h_raw <= 0 else max(800, max_h_raw)
+
+        self.setMaximumWidth(max(max_w, self.minimumWidth()))
+        self.setMaximumHeight(max(max_h, self.minimumHeight()))
     def _refresh_compact_top_buttons(self) -> None:
         """刷新简洁模式顶部控制按钮的图标和提示文本。
         
@@ -426,6 +434,7 @@ class MainWindowWindowingMixin:
         settings = self.controller.settings
         if not bool(getattr(settings, "remember_window_geometry", True)):
             return
+        self._apply_window_size_limits()
         width = max(0, int(getattr(settings, "window_width", 0)))
         height = max(0, int(getattr(settings, "window_height", 0)))
         x = int(getattr(settings, "window_x", -1))
@@ -691,61 +700,7 @@ class MainWindowWindowingMixin:
             self._snap_docked = True
             self._refresh_rich_title_icons()
     def nativeEvent(self, eventType, message):
-        """处理原生窗口事件，主要用于Windows平台的无边框窗口边缘调整。
-        
-        通过拦截WM_NCHITTEST消息，为无边框窗口提供系统级的边缘拖动调整大小功能。
-        只有在Windows平台上且不是紧凑模式或最大化状态下才生效。
-        
-        Args:
-            eventType: 事件类型
-            message: 事件消息指针
-            
-        Returns:
-            (handled, result) 元组，handled表示是否处理了该事件，result为处理结果
-        """
-        if not sys.platform.startswith("win"):
-            return super().nativeEvent(eventType, message)
-        if self._compact_mode or self.isMaximized():
-            return super().nativeEvent(eventType, message)
-
-        if str(eventType) not in {"windows_generic_MSG", "windows_dispatcher_MSG"}:
-            return super().nativeEvent(eventType, message)
-        try:
-            msg_ptr = int(message)
-            msg = ctypes.wintypes.MSG.from_address(msg_ptr)  # type: ignore[attr-defined]
-        except Exception:
-            return super().nativeEvent(eventType, message)
-        if int(msg.message) != WM_NCHITTEST:
-            return super().nativeEvent(eventType, message)
-
-        local = self.mapFromGlobal(QCursor.pos())
-        w = self.width()
-        h = self.height()
-        if local.x() < 0 or local.y() < 0 or local.x() >= w or local.y() >= h:
-            return super().nativeEvent(eventType, message)
-
-        margin = max(4, int(self._resize_margin))
-        left = local.x() <= margin
-        right = local.x() >= (w - margin - 1)
-        top = local.y() <= margin
-        bottom = local.y() >= (h - margin - 1)
-
-        if top and left:
-            return True, HTTOPLEFT
-        if top and right:
-            return True, HTTOPRIGHT
-        if bottom and left:
-            return True, HTBOTTOMLEFT
-        if bottom and right:
-            return True, HTBOTTOMRIGHT
-        if left:
-            return True, HTLEFT
-        if right:
-            return True, HTRIGHT
-        if top:
-            return True, HTTOP
-        if bottom:
-            return True, HTBOTTOM
+        """回退到Qt默认原生事件处理，避免与系统窗口缩放冲突。"""
         return super().nativeEvent(eventType, message)
     def eventFilter(self, watched, event):
         """事件过滤器，处理各种UI组件的交互事件。
@@ -767,6 +722,8 @@ class MainWindowWindowingMixin:
         rich_title_targets = {getattr(self, "rich_title_bar", None), getattr(self, "rich_title_label", None)}
 
         if watched in rich_title_targets and watched is not None:
+            if not bool(getattr(self, "_use_custom_titlebar", False)):
+                return False
             if self._compact_mode:
                 return False
             if event.type() == QEvent.Type.MouseButtonDblClick and event.button() == Qt.MouseButton.LeftButton:
@@ -793,6 +750,10 @@ class MainWindowWindowingMixin:
                 else:
                     self._rich_drag_offset = gpos - self.frameGeometry().topLeft()
                 return True
+
+        if watched is getattr(self, "search_edit", None) and event.type() == QEvent.Type.Resize:
+            self._position_search_clear_button()
+            return False
 
         if track_view is not None and watched is track_view:
             if event.type() == QEvent.Type.MouseMove:
@@ -883,13 +844,6 @@ class MainWindowWindowingMixin:
         Args:
             event: 鼠标按下事件
         """
-        if event.button() == Qt.MouseButton.LeftButton and not self._compact_mode:
-            edges = self._hit_test_resize_edges(event.position().toPoint())
-            if edges is not None:
-                handle = self.windowHandle()
-                if handle is not None and handle.startSystemResize(edges):
-                    event.accept()
-                    return
         if (
             self._compact_mode
             and not self._compact_locked
@@ -918,8 +872,6 @@ class MainWindowWindowingMixin:
             self.move(event.globalPosition().toPoint() - self._drag_offset)
             event.accept()
             return
-        if not (event.buttons() & Qt.MouseButton.LeftButton):
-            self.setCursor(self._cursor_for_resize_edges(self._hit_test_resize_edges(event.position().toPoint())))
         super().mouseMoveEvent(event)
     def mouseReleaseEvent(self, event) -> None:
         """处理鼠标释放事件。
@@ -941,8 +893,6 @@ class MainWindowWindowingMixin:
             self._drag_offset = None
             event.accept()
             return
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.setCursor(self._cursor_for_resize_edges(self._hit_test_resize_edges(event.position().toPoint())))
         super().mouseReleaseEvent(event)
     def leaveEvent(self, event) -> None:
         """处理鼠标离开窗口事件。
@@ -952,7 +902,6 @@ class MainWindowWindowingMixin:
         Args:
             event: 鼠标离开事件
         """
-        self.setCursor(Qt.CursorShape.ArrowCursor)
         super().leaveEvent(event)
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         """处理拖放进入事件。

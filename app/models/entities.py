@@ -216,6 +216,8 @@ class Settings:
     """是否自动恢复上次会话"""
     logging_enabled: bool = False
     """是否启用日志记录"""
+    enable_single_loop_mode: bool = True
+    """是否启用单曲循环模式"""
     enable_playlist_loop_mode: bool = False
     """是否启用歌单循环模式"""
     collect_playback_data: bool = True
@@ -240,6 +242,10 @@ class Settings:
     """窗口宽度，0表示默认"""
     window_height: int = 0
     """窗口高度，0表示默认"""
+    max_window_width: int = 0
+    """最大窗口宽度，0表示不限制"""
+    max_window_height: int = 0
+    """最大窗口高度，0表示不限制"""
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典格式，用于序列化。
@@ -255,6 +261,7 @@ class Settings:
             "control_interface_enabled": bool(self.control_interface_enabled),
             "auto_restore_session": bool(self.auto_restore_session),
             "logging_enabled": bool(self.logging_enabled),
+            "enable_single_loop_mode": bool(self.enable_single_loop_mode),
             "enable_playlist_loop_mode": bool(self.enable_playlist_loop_mode),
             "collect_playback_data": bool(self.collect_playback_data),
             "global_gain_boost": float(self.global_gain_boost),
@@ -267,6 +274,8 @@ class Settings:
             "window_y": int(self.window_y),
             "window_width": int(self.window_width),
             "window_height": int(self.window_height),
+            "max_window_width": int(self.max_window_width),
+            "max_window_height": int(self.max_window_height),
         }
 
     @classmethod
@@ -285,6 +294,12 @@ class Settings:
         read_strategy = str(data.get("read_strategy", "window")).strip().lower()
         if read_strategy not in {"window", "full"}:
             read_strategy = "window"
+        max_window_width = max(0, int(data.get("max_window_width", 0)))
+        max_window_height = max(0, int(data.get("max_window_height", 0)))
+        if 0 < max_window_width < 600:
+            max_window_width = 600
+        if 0 < max_window_height < 800:
+            max_window_height = 800
         
         return cls(
             control_host=str(data.get("control_host", "127.0.0.1")),
@@ -293,6 +308,7 @@ class Settings:
             control_interface_enabled=bool(data.get("control_interface_enabled", False)),
             auto_restore_session=bool(data.get("auto_restore_session", True)),
             logging_enabled=bool(data.get("logging_enabled", False)),
+            enable_single_loop_mode=bool(data.get("enable_single_loop_mode", True)),
             enable_playlist_loop_mode=bool(data.get("enable_playlist_loop_mode", False)),
             collect_playback_data=bool(data.get("collect_playback_data", True)),
             # 限制音量增益在合理范围内
@@ -308,6 +324,8 @@ class Settings:
             # 确保窗口尺寸不为负数
             window_width=max(0, int(data.get("window_width", 0))),
             window_height=max(0, int(data.get("window_height", 0))),
+            max_window_width=max_window_width,
+            max_window_height=max_window_height,
         )
 
 

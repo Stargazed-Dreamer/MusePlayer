@@ -49,17 +49,33 @@ class LibraryStore:
 
         tracks_payload = payload.get("tracks", {})
         playlists_payload = payload.get("playlists", {})
-        tracks = {
-            track_id: Track.from_dict(item)
-            for track_id, item in tracks_payload.items()
-            if isinstance(item, dict)
-        }
-        playlists = {
-            playlist_id: Playlist.from_dict(item)
-            for playlist_id, item in playlists_payload.items()
-            if isinstance(item, dict)
-        }
-        active_playlist_id = payload.get("active_playlist_id")
+        tracks: dict[str, Track] = {}
+        playlists: dict[str, Playlist] = {}
+
+        if isinstance(tracks_payload, dict):
+            for track_id, item in tracks_payload.items():
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    parsed = Track.from_dict(item)
+                except Exception:
+                    continue
+                key = str(track_id or "").strip() or parsed.id
+                tracks[key] = parsed
+
+        if isinstance(playlists_payload, dict):
+            for playlist_id, item in playlists_payload.items():
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    parsed = Playlist.from_dict(item)
+                except Exception:
+                    continue
+                key = str(playlist_id or "").strip() or parsed.id
+                playlists[key] = parsed
+
+        active_raw = payload.get("active_playlist_id")
+        active_playlist_id = str(active_raw).strip() if isinstance(active_raw, str) else None
         return tracks, playlists, active_playlist_id
 
     def save(

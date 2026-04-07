@@ -20,7 +20,7 @@ from app.runtime import ControlServer
 from app.services.library_service import LibraryService
 from app.services.metadata_service import MetadataService
 from app.services.playback_stats_service import PlaybackStatsService
-from app.services.player_service import PlayerService
+from app.services.player_service import PlayMode, PlayerService
 from app.utils import configure_logging, get_logger
 
 
@@ -76,6 +76,7 @@ class AppController(QObject):
             read_strategy_getter=lambda: str(self.settings.read_strategy),
         )
         # 配置播放器功能和连接错误处理信号
+        self.player_service.set_single_loop_mode_enabled(self.settings.enable_single_loop_mode)
         self.player_service.set_playlist_loop_mode_enabled(self.settings.enable_playlist_loop_mode)
         self.player_service.error_occurred.connect(self.error_occurred)
         self.error_occurred.connect(self._record_runtime_error)
@@ -101,6 +102,7 @@ class AppController(QObject):
             gain_boost_getter=lambda: float(self.settings.global_gain_boost),
             read_strategy_getter=lambda: str(self.settings.read_strategy),
         )
+        self.player_service.set_single_loop_mode_enabled(self.settings.enable_single_loop_mode)
         self.player_service.set_playlist_loop_mode_enabled(self.settings.enable_playlist_loop_mode)
         self.player_service.error_occurred.connect(self.error_occurred)
         self.error_occurred.connect(self._record_runtime_error)
@@ -215,6 +217,7 @@ class AppController(QObject):
         """
         self.settings = settings
         self.settings_store.save(settings)
+        self.player_service.set_single_loop_mode_enabled(self.settings.enable_single_loop_mode)
         self.player_service.set_playlist_loop_mode_enabled(self.settings.enable_playlist_loop_mode)
         self.player_service.refresh_output_gain()
         self._apply_save_timer_settings()
@@ -424,6 +427,20 @@ class AppController(QObject):
 
             # 选择接替的曲目继续播放
             if removed_current_from_active:
+                if self.player_service.mode == PlayMode.RANDOM:
+                    target_id = self.player_service.reseed_random_after_current_track_removed()
+                    if target_id is not None:
+                        self.player_service.play_track(
+                            target_id,
+                            auto_play=was_playing,
+                            start_sec=0.0,
+                            manual_select=False,
+                            active_request=False,
+                        )
+                    else:
+                        self.player_service.pause()
+                    self.library_changed.emit()
+                    return
                 playlist_track_ids = [t.id for t in self.player_service.playlist_tracks()]
                 selected_candidate = None
                 # 优先选择下一曲

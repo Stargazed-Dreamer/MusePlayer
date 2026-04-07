@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QPushButton,
     QSpinBox,
@@ -69,7 +70,7 @@ class SettingsDialog(QDialog):
         """
         super().__init__(parent)
         self.setWindowTitle("设置")
-        self.resize(460, 340)
+        self.resize(480, 420)
         self._settings = settings  # 持有Settings实体引用
 
         self._build_ui()
@@ -91,6 +92,8 @@ class SettingsDialog(QDialog):
 
         self.playlist_loop_mode_check = QCheckBox("增加歌单循环到播放模式里")
         self.playlist_loop_mode_check.setChecked(bool(self._settings.enable_playlist_loop_mode))
+        self.single_loop_mode_check = QCheckBox("增加单曲循环到播放模式里")
+        self.single_loop_mode_check.setChecked(bool(getattr(self._settings, "enable_single_loop_mode", True)))
 
         self.collect_playback_data_check = QCheckBox("收集播放数据")
         self.collect_playback_data_check.setChecked(bool(self._settings.collect_playback_data))
@@ -127,16 +130,32 @@ class SettingsDialog(QDialog):
         self.remember_window_geometry_check.setChecked(
             bool(getattr(self._settings, "remember_window_geometry", True))
         )
+        self.max_window_width_edit = QLineEdit()
+        self.max_window_height_edit = QLineEdit()
+        self.max_window_width_edit.setPlaceholderText("0 表示不限制，最小 600")
+        self.max_window_height_edit.setPlaceholderText("0 表示不限制，最小 800")
+        max_w = int(getattr(self._settings, "max_window_width", 0))
+        max_h = int(getattr(self._settings, "max_window_height", 0))
+        self.max_window_width_edit.setText("" if max_w <= 0 else str(max_w))
+        self.max_window_height_edit.setText("" if max_h <= 0 else str(max_h))
+        self.max_window_warning_label = QLabel("")
+        self.max_window_warning_label.setObjectName("InputWarningLabel")
+        self.max_window_warning_label.setStyleSheet("color: #d34545;")
+        self.max_window_warning_label.setVisible(False)
 
         form.addRow("控制接口主机", self.host_edit)
         form.addRow("控制接口端口", self.port_spin)
         form.addRow("全局音量放大倍数", self.gain_boost_spin)
         form.addRow("读取策略", self.read_strategy_combo)
         form.addRow("定时保存间隔", self.timed_save_spin)
+        form.addRow("最大窗口宽度", self.max_window_width_edit)
+        form.addRow("最大窗口高度", self.max_window_height_edit)
+        form.addRow("", self.max_window_warning_label)
         root.addLayout(form)
         root.addWidget(self.control_interface_check)
         root.addWidget(self.auto_restore_check)
         root.addWidget(self.playlist_loop_mode_check)
+        root.addWidget(self.single_loop_mode_check)
         root.addWidget(self.collect_playback_data_check)
         root.addWidget(self.timed_save_check)
         root.addWidget(self.logging_check)
@@ -156,7 +175,40 @@ class SettingsDialog(QDialog):
         root.addLayout(button_row)
 
         self.btn_cancel.clicked.connect(self.reject)
-        self.btn_ok.clicked.connect(self.accept)
+        self.btn_ok.clicked.connect(self._on_accept_clicked)
+
+        self.max_window_width_edit.textChanged.connect(self._validate_window_limits)
+        self.max_window_height_edit.textChanged.connect(self._validate_window_limits)
+        self._validate_window_limits()
+
+    def _parse_max_window_value(self, text: str, minimum: int) -> tuple[int | None, str]:
+        raw = text.strip()
+        if not raw:
+            return 0, ""
+        try:
+            value = int(raw)
+        except Exception:
+            return None, "最大窗口尺寸必须是整数。"
+        if value <= 0:
+            return 0, ""
+        if value < minimum:
+            return None, f"最大窗口尺寸过小：宽度至少 600，高度至少 800。"
+        return value, ""
+
+    def _validate_window_limits(self) -> bool:
+        width, width_error = self._parse_max_window_value(self.max_window_width_edit.text(), 600)
+        height, height_error = self._parse_max_window_value(self.max_window_height_edit.text(), 800)
+        error = width_error or height_error
+        valid = error == "" and width is not None and height is not None
+        self.max_window_warning_label.setVisible(not valid)
+        self.max_window_warning_label.setText(error)
+        self.btn_ok.setEnabled(valid)
+        return valid
+
+    def _on_accept_clicked(self) -> None:
+        if not self._validate_window_limits():
+            return
+        self.accept()
 
     def output_settings(self) -> Settings:
         return Settings(
@@ -165,6 +217,7 @@ class SettingsDialog(QDialog):
             control_interface_enabled=bool(self.control_interface_check.isChecked()),
             auto_restore_session=bool(self.auto_restore_check.isChecked()),
             logging_enabled=bool(self.logging_check.isChecked()),
+            enable_single_loop_mode=bool(self.single_loop_mode_check.isChecked()),
             enable_playlist_loop_mode=bool(self.playlist_loop_mode_check.isChecked()),
             collect_playback_data=bool(self.collect_playback_data_check.isChecked()),
             global_gain_boost=float(self.gain_boost_spin.value()),
@@ -177,6 +230,8 @@ class SettingsDialog(QDialog):
             window_y=int(getattr(self._settings, "window_y", -1)),
             window_width=int(getattr(self._settings, "window_width", 0)),
             window_height=int(getattr(self._settings, "window_height", 0)),
+            max_window_width=int(self._parse_max_window_value(self.max_window_width_edit.text(), 600)[0] or 0),
+            max_window_height=int(self._parse_max_window_value(self.max_window_height_edit.text(), 800)[0] or 0),
         )
 
     def _on_control_interface_toggled(self, enabled: bool) -> None:
