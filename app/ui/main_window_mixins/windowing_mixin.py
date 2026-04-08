@@ -446,23 +446,14 @@ class MainWindowWindowingMixin:
             self.move(x, y)
         self._ensure_window_inside_screen()
     def _persist_window_geometry(self) -> None:
-        """将当前窗口几何信息保存到设置中。
-        
-        在应用关闭或窗口发生变化时调用，记住用户偏好的窗口状态：
-        - 检查是否启用了窗口几何记忆功能
-        - 获取当前窗口的框架几何信息（包含边框的完整尺寸）
-        - 将位置和大小信息转换为整型并保存
-        - 供下次启动时恢复使用
-        """
         settings = self.controller.settings
         if not bool(getattr(settings, "remember_window_geometry", True)):
             return
-        geo = self.frameGeometry()
         self.controller.persist_window_geometry(
-            x=int(geo.x()),
-            y=int(geo.y()),
-            width=int(geo.width()),
-            height=int(geo.height()),
+            x=int(self.x()),
+            y=int(self.y()),
+            width=int(self.width()),
+            height=int(self.height()),
         )
     def _ensure_taskbar_progress_initialized(self) -> None:
         """确保Windows任务栏进度显示功能已初始化。

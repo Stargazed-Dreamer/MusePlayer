@@ -9,22 +9,19 @@ LOG_PREFIX = "museplayer_"
 MAX_LOG_FILES = 10
 
 
-def configure_logging(data_dir: Path, enabled: bool) -> Path | None:
-    """配置应用程序的日志系统。
-    
-    设置日志记录器，包括文件处理器、格式化和日志轮转。
-    
-    Args:
-        data_dir: 数据目录路径，将在其中创建logs子目录
-        enabled: 是否启用日志记录
-        
-    Returns:
-        Path | None: 当前日志文件路径（如果启用），否则返回None
-    """
+def configure_logging(data_dir: Path, enabled: bool, current_log_path: Path | None = None) -> Path | None:
     logger = logging.getLogger(LOGGER_ROOT)
     logger.propagate = False
 
-    # 清理现有的处理器
+    if enabled and current_log_path is not None and current_log_path.exists():
+        existing_file_handler = None
+        for h in logger.handlers:
+            if isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", None):
+                existing_file_handler = h
+                break
+        if existing_file_handler is not None:
+            return current_log_path
+
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
         try:
@@ -33,7 +30,6 @@ def configure_logging(data_dir: Path, enabled: bool) -> Path | None:
             pass
 
     if not enabled:
-        # 禁用日志记录，添加空处理器以避免"No handlers found"警告
         logger.setLevel(logging.CRITICAL + 1)
         logger.addHandler(logging.NullHandler())
         return None
@@ -41,12 +37,10 @@ def configure_logging(data_dir: Path, enabled: bool) -> Path | None:
     logger.setLevel(logging.INFO)
     log_dir = Path(data_dir).resolve() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 清理旧日志文件
+
     _remove_legacy_logs(log_dir)
     _prune_old_logs(log_dir, keep=max(0, MAX_LOG_FILES - 1))
 
-    # 创建新的日志文件
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     log_file = log_dir / f"{LOG_PREFIX}{stamp}.log"
 
@@ -54,7 +48,6 @@ def configure_logging(data_dir: Path, enabled: bool) -> Path | None:
     handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
     logger.addHandler(handler)
 
-    # 最终清理，确保不超过最大文件数
     _prune_old_logs(log_dir, keep=MAX_LOG_FILES)
     return log_file
 

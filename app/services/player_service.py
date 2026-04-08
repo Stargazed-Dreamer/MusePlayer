@@ -156,6 +156,17 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             self.error_occurred.emit(msg)
             return False
 
+    def set_output_device(self, device_name: str) -> bool:
+        try:
+            self._core.set_output_device(device_name if device_name else None)
+            logger.info("输出设备已切换: %s", device_name or "跟随系统")
+            return True
+        except Exception as exc:
+            msg = f"切换输出设备失败: {exc}"
+            logger.exception(msg)
+            self.error_occurred.emit(msg)
+            return False
+
     def available_modes(self) -> list[str]:
         modes: list[str] = []
         if self._single_loop_enabled:

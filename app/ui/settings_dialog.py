@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.entities import Settings
+from core.output import list_output_devices
 
 
 class SettingsDialog(QDialog):
@@ -113,6 +114,14 @@ class SettingsDialog(QDialog):
         idx = self.read_strategy_combo.findData(strategy)
         self.read_strategy_combo.setCurrentIndex(0 if idx < 0 else idx)
 
+        self.output_device_combo = QComboBox()
+        self.output_device_combo.addItem("跟随系统", "")
+        current_device = str(getattr(self._settings, "output_device", "")).strip()
+        for dev_info in list_output_devices():
+            self.output_device_combo.addItem(dev_info["name"], dev_info["name"])
+        dev_idx = self.output_device_combo.findData(current_device)
+        self.output_device_combo.setCurrentIndex(0 if dev_idx < 0 else dev_idx)
+
         self.timed_save_check = QCheckBox("启用定时保存")
         self.timed_save_check.setChecked(bool(self._settings.timed_save_enabled))
         self.timed_save_spin = QSpinBox()
@@ -156,6 +165,7 @@ class SettingsDialog(QDialog):
         form.addRow("控制接口端口", self.port_spin)
         form.addRow("全局音量放大倍数", self.gain_boost_spin)
         form.addRow("读取策略", self.read_strategy_combo)
+        form.addRow("输出硬件", self.output_device_combo)
         form.addRow("定时保存间隔", self.timed_save_spin)
         form.addRow("最大窗口宽度", self.max_window_width_edit)
         form.addRow("最大窗口高度", self.max_window_height_edit)
@@ -235,6 +245,7 @@ class SettingsDialog(QDialog):
             collect_playback_data=bool(self.collect_playback_data_check.isChecked()),
             global_gain_boost=float(self.gain_boost_spin.value()),
             read_strategy=str(self.read_strategy_combo.currentData() or "window"),
+            output_device=str(self.output_device_combo.currentData() or ""),
             timed_save_enabled=bool(self.timed_save_check.isChecked()),
             timed_save_minutes=int(self.timed_save_spin.value()),
             dark_theme=bool(self.dark_theme_check.isChecked()),

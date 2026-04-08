@@ -222,6 +222,18 @@ class PlaybackStatsService:
         item.updated_at = _now_ts()
         self._dirty = True
 
+    def reset_early_skip_count(self, track_id: str) -> None:
+        track_id = str(track_id or "").strip()
+        if not track_id:
+            return
+        item = self._entries.get(track_id)
+        if item is None:
+            return
+        if item.early_skip_count != 0:
+            item.early_skip_count = 0
+            item.updated_at = _now_ts()
+            self._dirty = True
+
     def export_stats_for_track(self, track_id: str) -> dict[str, int] | None:
         """导出指定曲目的统计数据。
         

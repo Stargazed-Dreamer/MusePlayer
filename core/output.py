@@ -58,8 +58,9 @@ class NullOutputBackend(AudioOutputBackend):
 class SoundDeviceOutputBackend(AudioOutputBackend):
     """sounddevice-based realtime output backend."""
 
-    def __init__(self, latency: str | float = "low"):
+    def __init__(self, latency: str | float = "low", device: str | int | None = None):
         self._latency = latency
+        self._device = device
         self._stream = None
 
     def open(
@@ -72,7 +73,7 @@ class SoundDeviceOutputBackend(AudioOutputBackend):
         import sounddevice as sd
 
         self.close()
-        self._stream = sd.OutputStream(
+        kwargs = dict(
             samplerate=sample_rate,
             channels=channels,
             dtype="float32",
@@ -80,6 +81,13 @@ class SoundDeviceOutputBackend(AudioOutputBackend):
             blocksize=blocksize,
             latency=self._latency,
         )
+        if self._device is not None:
+            if isinstance(self._device, str):
+                resolved = resolve_output_device_index(self._device)
+                kwargs["device"] = resolved if resolved is not None else self._device
+            else:
+                kwargs["device"] = self._device
+        self._stream = sd.OutputStream(**kwargs)
 
     def start(self) -> None:
         if self._stream is not None and not self._stream.active:
@@ -98,3 +106,68 @@ class SoundDeviceOutputBackend(AudioOutputBackend):
         finally:
             self._stream.close()
             self._stream = None
+
+
+def list_output_devices() -> list[dict[str, Any]]:
+    try:
+        import sounddevice as sd
+    except Exception:
+        return []
+    devices = sd.query_devices()
+    if isinstance(devices, dict):
+        return []
+    seen_names: set[str] = set()
+    result: list[dict[str, Any]] = []
+    wasapi_entries: dict[str, int] = {}
+    for idx, dev in enumerate(devices):
+        if not isinstance(dev, dict):
+            continue
+        if dev.get("max_output_channels", 0) <= 0:
+            continue
+        name = str(dev.get("name", "")).strip()
+        if not name:
+            continue
+        hostapi = int(dev.get("hostapi", -1))
+        if hostapi == 2 and name not in wasapi_entries:
+            wasapi_entries[name] = idx
+    for idx, dev in enumerate(devices):
+        if not isinstance(dev, dict):
+            continue
+        if dev.get("max_output_channels", 0) <= 0:
+            continue
+        name = str(dev.get("name", "")).strip()
+        if not name or name in seen_names:
+            continue
+        seen_names.add(name)
+        chosen_idx = wasapi_entries.get(name, idx)
+        result.append({"index": chosen_idx, "name": name})
+    return result
+
+
+def resolve_output_device_index(device_name: str) -> int | None:
+    if not device_name:
+        return None
+    try:
+        import sounddevice as sd
+    except Exception:
+        return None
+    devices = sd.query_devices()
+    if isinstance(devices, dict):
+        return None
+    wasapi_idx: int | None = None
+    first_idx: int | None = None
+    for idx, dev in enumerate(devices):
+        if not isinstance(dev, dict):
+            continue
+        if dev.get("max_output_channels", 0) <= 0:
+            continue
+        name = str(dev.get("name", "")).strip()
+        if name != device_name:
+            continue
+        if first_idx is None:
+            first_idx = idx
+        hostapi = int(dev.get("hostapi", -1))
+        if hostapi == 2:
+            wasapi_idx = idx
+            break
+    return wasapi_idx if wasapi_idx is not None else first_idx

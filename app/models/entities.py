@@ -230,6 +230,8 @@ class Settings:
     """全局音量增益（0.5-5.0）"""
     read_strategy: str = "window"
     """读取策略：'window'或'full'"""
+    output_device: str = ""
+    """输出硬件设备名称，空字符串表示跟随系统"""
     timed_save_enabled: bool = False
     """是否启用定时保存"""
     timed_save_minutes: int = 5
@@ -272,6 +274,7 @@ class Settings:
             "collect_playback_data": bool(self.collect_playback_data),
             "global_gain_boost": float(self.global_gain_boost),
             "read_strategy": self.read_strategy,
+            "output_device": self.output_device,
             "timed_save_enabled": bool(self.timed_save_enabled),
             "timed_save_minutes": int(self.timed_save_minutes),
             "dark_theme": bool(self.dark_theme),
@@ -322,6 +325,7 @@ class Settings:
             # 限制音量增益在合理范围内
             global_gain_boost=max(0.5, min(5.0, float(data.get("global_gain_boost", 1.0)))),
             read_strategy=read_strategy,
+            output_device=str(data.get("output_device", "")).strip(),
             timed_save_enabled=bool(data.get("timed_save_enabled", False)),
             # 限制保存间隔在1分钟到24小时内
             timed_save_minutes=max(1, min(1440, int(data.get("timed_save_minutes", 5)))),

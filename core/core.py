@@ -238,6 +238,26 @@ class PyAVPlayerCore:
                 self._output.close()
                 self._stream_open = False
 
+    def set_output_device(self, device: str | int | None) -> None:
+        with self._lock:
+            if isinstance(self._output, SoundDeviceOutputBackend):
+                self._output._device = device if device else None
+            was_playing = bool(self._playing) and self._stream_open
+            if self._stream_open:
+                try:
+                    self._output.close()
+                finally:
+                    self._stream_open = False
+                self._output.open(
+                    sample_rate=self._sample_rate,
+                    channels=self._channels,
+                    callback=self._audio_callback,
+                    blocksize=self._blocksize,
+                )
+                self._stream_open = True
+                if was_playing:
+                    self._output.start()
+
     def rebind_output_device(self) -> None:
         """在不轮询的前提下重绑定输出设备（用于系统设备切换事件）。"""
         with self._lock:

@@ -58,6 +58,7 @@ class AppController(QObject):
 
         # 加载设置并配置日志系统
         self.settings = self.settings_store.load()
+        self.log_file_path: Path | None = None
         self.log_file_path = configure_logging(self.data_dir, self.settings.logging_enabled)
         self.logger = get_logger("app")
         self.logger.info("MusePlayer 启动")
@@ -82,6 +83,7 @@ class AppController(QObject):
         # 配置播放器功能和连接错误处理信号
         self.player_service.set_single_loop_mode_enabled(self.settings.enable_single_loop_mode)
         self.player_service.set_playlist_loop_mode_enabled(self.settings.enable_playlist_loop_mode)
+        self.player_service.set_output_device(getattr(self.settings, "output_device", ""))
         self.player_service.error_occurred.connect(self.error_occurred)
         self.error_occurred.connect(self._record_runtime_error)
 
@@ -209,13 +211,14 @@ class AppController(QObject):
         self.player_service.set_single_loop_mode_enabled(self.settings.enable_single_loop_mode)
         self.player_service.set_playlist_loop_mode_enabled(self.settings.enable_playlist_loop_mode)
         self.player_service.refresh_output_gain()
+        self.player_service.set_output_device(getattr(self.settings, "output_device", ""))
         self._apply_save_timer_settings()
         self.settings_changed.emit(settings)
 
-        self.log_file_path = configure_logging(self.data_dir, self.settings.logging_enabled)
+        self.log_file_path = configure_logging(self.data_dir, self.settings.logging_enabled, self.log_file_path)
         self.logger = get_logger("app")
         if self.settings.logging_enabled:
-            self.logger.info("日志已启用: %s", self.log_file_path)
+            self.logger.info("设置已更新")
 
         ok = self.restart_runtime_server()
         return ok
@@ -357,6 +360,8 @@ class AppController(QObject):
 
     def toggle_track_favorite(self, track_id: str) -> bool:
         state = self.library_service.toggle_favorite(track_id)
+        if state:
+            self.playback_stats_service.reset_early_skip_count(track_id)
         self.library_changed.emit()
         return state
 
