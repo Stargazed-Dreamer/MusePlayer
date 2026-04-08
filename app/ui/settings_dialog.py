@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -122,6 +123,14 @@ class SettingsDialog(QDialog):
 
         self.logging_check = QCheckBox("启用日志（每次启动新建文件，保留最近10个）")
         self.logging_check.setChecked(bool(self._settings.logging_enabled))
+        self.crash_logging_check = QCheckBox("记录崩溃日志（不建议关闭）")
+        self.crash_logging_check.setChecked(bool(getattr(self._settings, "crash_logging_enabled", True)))
+        self.crash_logging_check.toggled.connect(self._on_crash_logging_toggled)
+        self.data_maintenance_logging_check = QCheckBox("记录数据维护日志（不建议关闭）")
+        self.data_maintenance_logging_check.setChecked(
+            bool(getattr(self._settings, "data_maintenance_logging_enabled", True))
+        )
+        self.data_maintenance_logging_check.toggled.connect(self._on_data_maintenance_logging_toggled)
 
         self.dark_theme_check = QCheckBox("默认夜间主题")
         self.dark_theme_check.setChecked(bool(getattr(self._settings, "dark_theme", True)))
@@ -159,6 +168,8 @@ class SettingsDialog(QDialog):
         root.addWidget(self.collect_playback_data_check)
         root.addWidget(self.timed_save_check)
         root.addWidget(self.logging_check)
+        root.addWidget(self.crash_logging_check)
+        root.addWidget(self.data_maintenance_logging_check)
         root.addWidget(self.dark_theme_check)
         root.addWidget(self.remember_window_geometry_check)
         self._on_control_interface_toggled(self.control_interface_check.isChecked())
@@ -217,6 +228,8 @@ class SettingsDialog(QDialog):
             control_interface_enabled=bool(self.control_interface_check.isChecked()),
             auto_restore_session=bool(self.auto_restore_check.isChecked()),
             logging_enabled=bool(self.logging_check.isChecked()),
+            crash_logging_enabled=bool(self.crash_logging_check.isChecked()),
+            data_maintenance_logging_enabled=bool(self.data_maintenance_logging_check.isChecked()),
             enable_single_loop_mode=bool(self.single_loop_mode_check.isChecked()),
             enable_playlist_loop_mode=bool(self.playlist_loop_mode_check.isChecked()),
             collect_playback_data=bool(self.collect_playback_data_check.isChecked()),
@@ -240,3 +253,43 @@ class SettingsDialog(QDialog):
 
     def _on_timed_save_toggled(self, enabled: bool) -> None:
         self.timed_save_spin.setEnabled(bool(enabled))
+
+    def _warn_before_disable(self, title: str, body: str) -> bool:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(title)
+        box.setText(
+            f"<span style='color:#d34545; font-weight:700;'>高风险操作</span><br/>{body}<br/>"
+            "除非你非常确定自己在做什么，否则不建议关闭。"
+        )
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        box.button(QMessageBox.StandardButton.Yes).setText("仍然关闭")
+        box.button(QMessageBox.StandardButton.No).setText("取消")
+        return box.exec() == QMessageBox.StandardButton.Yes
+
+    def _on_crash_logging_toggled(self, enabled: bool) -> None:
+        if enabled:
+            return
+        ok = self._warn_before_disable(
+            "关闭崩溃日志",
+            "关闭后发生崩溃时将缺少追踪信息，可能无法定位问题。",
+        )
+        if ok:
+            return
+        self.crash_logging_check.blockSignals(True)
+        self.crash_logging_check.setChecked(True)
+        self.crash_logging_check.blockSignals(False)
+
+    def _on_data_maintenance_logging_toggled(self, enabled: bool) -> None:
+        if enabled:
+            return
+        ok = self._warn_before_disable(
+            "关闭数据维护日志",
+            "关闭后自动数据清理将不再留下核查记录，排障难度会明显增加。",
+        )
+        if ok:
+            return
+        self.data_maintenance_logging_check.blockSignals(True)
+        self.data_maintenance_logging_check.setChecked(True)
+        self.data_maintenance_logging_check.blockSignals(False)

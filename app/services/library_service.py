@@ -6,7 +6,7 @@ from __future__ import annotations
 1. 管理曲目与歌单的内存态及持久化读写。
 2. 提供文件夹导入、歌单导入、去重、搜索、歌单管理能力。
 3. 维护“全部歌曲”与其它歌单双向同步关系。
-4. 将播放统计回写到 `.muse_playlist.json`，供后续数据库分析使用。
+4. 支持按统一格式导出歌单（含播放统计），供后续数据库分析使用。
 """
 
 import hashlib
@@ -33,6 +33,7 @@ AUDIO_EXTENSIONS = {
 }
 
 ALL_SONGS_ID = "all_songs"
+FAVORITES_ID = "favorites"
 MUSE_PLAYLIST_SCHEMA = "musearc_playlist_export_v1"
 logger = logging.getLogger("museplayer.library")
 
@@ -44,6 +45,11 @@ class LibraryService:
         self.tracks: dict[str, Track] = {}
         self.playlists: dict[str, Playlist] = {}
         self.active_playlist_id: str | None = None
+        self._cleanup_log_path = self._store.path.parent / "logs" / "data_cleanup.log"
+        self._data_maintenance_logging_enabled = True
+
+    def set_data_maintenance_logging_enabled(self, enabled: bool) -> None:
+        self._data_maintenance_logging_enabled = bool(enabled)
 
     def load(self) -> None:
         """加载曲库数据。
@@ -61,39 +67,94 @@ class LibraryService:
         tracks, playlists, active = self._store.load()
         self.tracks = tracks
         self.playlists = playlists
-        self._ensure_all_songs_playlist()
-        self._drop_missing_tracks()
-        self._deduplicate_tracks()
+        self._ensure_system_playlists()
+        changed = False
+        changed = self._drop_missing_tracks() or changed
+        changed = self._cleanup_missing_lyrics_paths() or changed
+        changed = self._deduplicate_tracks() or changed
 
         if active in self.playlists:
             self.active_playlist_id = active
         else:
             self.active_playlist_id = ALL_SONGS_ID
+            self._record_cleanup(
+                item=f"active_playlist_id={active}",
+                reason="活动歌单不存在，已回退到系统歌单",
+            )
 
-        self._normalize_playlist_tracks()
+        changed = self._normalize_playlist_tracks() or changed
+        if changed:
+            self.save()
         logger.info("曲库加载完成: tracks=%s playlists=%s", len(self.tracks), len(self.playlists))
 
-    def _drop_missing_tracks(self) -> None:
+    def _record_cleanup(self, *, item: str, reason: str) -> None:
+        if not self._data_maintenance_logging_enabled:
+            return
+        text = f"数据清理: item={item} reason={reason}"
+        try:
+            logger.warning(text)
+        except Exception:
+            pass
+        try:
+            self._cleanup_log_path.parent.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with self._cleanup_log_path.open("a", encoding="utf-8") as f:
+                f.write(f"{stamp} {text}\n")
+        except Exception:
+            pass
+
+    def _drop_missing_tracks(self) -> bool:
         """清理曲库中指向不存在的文件的跟踪记录。
         
         遍历所有曲目，检查文件路径是否存在，将不存在的文件记录移除。
         这是数据清理的重要步骤，防止播放时出现文件找不到的错误。
         """
-        missing_ids = []
+        missing_ids: list[str] = []
         for track_id, track in self.tracks.items():
             try:
-                if not Path(track.path).exists():
+                source = Path(str(track.path or "")).resolve()
+                if not source.exists() or not source.is_file():
                     missing_ids.append(track_id)
             except Exception:
                 missing_ids.append(track_id)
 
         if not missing_ids:
-            return
+            return False
 
         for track_id in missing_ids:
+            track = self.tracks.get(track_id)
+            path_text = str(track.path) if track is not None else ""
+            self._record_cleanup(
+                item=f"track:{track_id}",
+                reason=f"歌曲文件不存在，已移除（path={path_text}）",
+            )
             self.tracks.pop(track_id, None)
         logger.info("清理失效歌曲记录: %s", len(missing_ids))
-    def _deduplicate_tracks(self) -> None:
+        return True
+
+    def _cleanup_missing_lyrics_paths(self) -> bool:
+        changed = False
+        for track in self.tracks.values():
+            source_lyrics = str(getattr(track, "source_lyrics_path", "") or "").strip()
+            if not source_lyrics:
+                continue
+            try:
+                lyric_path = Path(source_lyrics).resolve()
+                exists = lyric_path.exists() and lyric_path.is_file()
+            except Exception:
+                exists = False
+            if exists:
+                continue
+            self._record_cleanup(
+                item=f"track:{track.id}",
+                reason=f"歌词文件不存在，已清理歌词路径字段（lyrics={source_lyrics}）",
+            )
+            track.source_lyrics_path = ""
+            track.source_lyrics_storage_relpath = ""
+            changed = True
+        return changed
+
+    def _deduplicate_tracks(self) -> bool:
         """基于文件特征检测并合并重复曲目。
         
         使用文件名、文件大小和时长构建唯一键值进行去重，
@@ -124,7 +185,7 @@ class LibraryService:
                 remap[track.id] = owner
 
         if not remap:
-            return
+            return False
 
         for playlist in self.playlists.values():
             new_track_ids: list[str] = []
@@ -132,15 +193,24 @@ class LibraryService:
             for track_id in playlist.track_ids:
                 mapped = remap.get(track_id, track_id)
                 if mapped in seen:
+                    self._record_cleanup(
+                        item=f"playlist:{playlist.id}",
+                        reason=f"歌单内重复歌曲引用已去重（track_id={mapped}）",
+                    )
                     continue
                 seen.add(mapped)
                 new_track_ids.append(mapped)
             playlist.track_ids = new_track_ids
 
         for old_id in remap:
+            self._record_cleanup(
+                item=f"track:{old_id}",
+                reason=f"重复歌曲记录已合并到保留项（target={remap[old_id]}）",
+            )
             self.tracks.pop(old_id, None)
 
         logger.info("清理重复歌曲记录: %s", len(remap))
+        return True
 
     @staticmethod
     def _dedupe_key(track: Track) -> tuple[str, int, int]:
@@ -183,12 +253,67 @@ class LibraryService:
             return
         self.playlists[ALL_SONGS_ID].name = "全部歌曲"
 
-    def _normalize_playlist_tracks(self) -> None:
+    def _ensure_favorites_playlist(self) -> None:
+        if FAVORITES_ID not in self.playlists:
+            self.playlists[FAVORITES_ID] = Playlist(id=FAVORITES_ID, name="我喜欢", track_ids=[])
+            return
+        self.playlists[FAVORITES_ID].name = "我喜欢"
+
+    def _ensure_system_playlists(self) -> None:
+        self._ensure_all_songs_playlist()
+        self._ensure_favorites_playlist()
+
+    def _normalize_playlist_tracks(self) -> bool:
+        changed = False
         existing_track_ids = set(self.tracks.keys())
         for playlist in self.playlists.values():
             original = list(playlist.track_ids)
-            playlist.track_ids = [track_id for track_id in original if track_id in existing_track_ids]
-        self.playlists[ALL_SONGS_ID].track_ids = list(self.tracks.keys())
+            filtered: list[str] = []
+            seen: set[str] = set()
+            removed_invalid = False
+            for track_id in original:
+                if track_id not in existing_track_ids:
+                    removed_invalid = True
+                    changed = True
+                    self._record_cleanup(
+                        item=f"playlist:{playlist.id}",
+                        reason=f"歌单引用了不存在歌曲，已清理（track_id={track_id}）",
+                    )
+                    continue
+                if track_id in seen:
+                    changed = True
+                    self._record_cleanup(
+                        item=f"playlist:{playlist.id}",
+                        reason=f"歌单内重复歌曲已去重（track_id={track_id}）",
+                    )
+                    continue
+                seen.add(track_id)
+                filtered.append(track_id)
+            if filtered != original:
+                playlist.track_ids = filtered
+            if removed_invalid and playlist.source_playlist_hash:
+                self._record_cleanup(
+                    item=f"playlist:{playlist.id}",
+                    reason="歌单出现失效歌曲引用，已清理旧歌单哈希与来源绑定字段",
+                )
+                playlist.source_playlist_hash = ""
+                playlist.source_schema = ""
+                playlist.source_file = ""
+                playlist.source_database_location = ""
+                playlist.source_exported_at = ""
+                changed = True
+            if not playlist.track_ids and playlist.source_playlist_hash:
+                self._record_cleanup(
+                    item=f"playlist:{playlist.id}",
+                    reason="歌单无有效歌曲，已清理歌单哈希字段",
+                )
+                playlist.source_playlist_hash = ""
+                changed = True
+        all_ids = list(self.tracks.keys())
+        if self.playlists[ALL_SONGS_ID].track_ids != all_ids:
+            self.playlists[ALL_SONGS_ID].track_ids = all_ids
+            changed = True
+        return changed
 
     def get_playlist(self, playlist_id: str | None) -> Playlist:
         """获取指定ID的歌单，如果不存在则返回"全部歌曲"歌单。
@@ -212,11 +337,16 @@ class LibraryService:
             排序后的歌单列表
         """
         all_pl = self.playlists.get(ALL_SONGS_ID)
-        others = [p for p in self.playlists.values() if p.id != ALL_SONGS_ID]
+        fav_pl = self.playlists.get(FAVORITES_ID)
+        others = [p for p in self.playlists.values() if p.id not in {ALL_SONGS_ID, FAVORITES_ID}]
         others.sort(key=lambda p: p.name.lower())
-        if all_pl is None:
-            return others
-        return [all_pl, *others]
+        ordered: list[Playlist] = []
+        if all_pl is not None:
+            ordered.append(all_pl)
+        if fav_pl is not None:
+            ordered.append(fav_pl)
+        ordered.extend(others)
+        return ordered
 
     def get_playlist_tracks(self, playlist_id: str | None) -> list[Track]:
         """获取指定歌单的所有曲目。
@@ -282,7 +412,7 @@ class LibraryService:
             playlist_id: 要重命名的歌单ID
             name: 新的歌单名称
         """
-        if playlist_id == ALL_SONGS_ID:
+        if playlist_id in {ALL_SONGS_ID, FAVORITES_ID}:
             return
         playlist = self.playlists.get(playlist_id)
         if playlist is None:
@@ -366,8 +496,8 @@ class LibraryService:
         Args:
             playlist_id: 要删除的歌单ID
         """
-        if playlist_id == ALL_SONGS_ID:
-            return  # 系统保护，不允许删除全部歌曲歌单
+        if playlist_id in {ALL_SONGS_ID, FAVORITES_ID}:
+            return  # 系统保护，不允许删除系统歌单
         if playlist_id not in self.playlists:
             return
         
@@ -439,6 +569,17 @@ class LibraryService:
             self.save()
             return removed_globally
 
+        if playlist_id == FAVORITES_ID:
+            playlist = self.playlists.get(FAVORITES_ID)
+            if playlist is None:
+                return removed_globally
+            before = len(playlist.track_ids)
+            playlist.track_ids = [x for x in playlist.track_ids if x != track_id]
+            if len(playlist.track_ids) != before:
+                playlist.touch()
+                self.save()
+            return removed_globally
+
         playlist = self.playlists.get(playlist_id)
         if playlist is None:
             return removed_globally
@@ -463,6 +604,32 @@ class LibraryService:
         self._normalize_playlist_tracks()
         self.save()
         return removed_globally
+
+    def is_favorite(self, track_id: str | None) -> bool:
+        tid = str(track_id or "").strip()
+        if not tid:
+            return False
+        playlist = self.playlists.get(FAVORITES_ID)
+        if playlist is None:
+            return False
+        return tid in playlist.track_ids
+
+    def toggle_favorite(self, track_id: str) -> bool:
+        """切换歌曲的“我喜欢”状态，返回切换后的状态。"""
+        tid = str(track_id or "").strip()
+        if not tid or tid not in self.tracks:
+            return False
+        self._ensure_favorites_playlist()
+        favorites = self.playlists[FAVORITES_ID]
+        if tid in favorites.track_ids:
+            favorites.track_ids = [x for x in favorites.track_ids if x != tid]
+            favorites.touch()
+            self.save()
+            return False
+        favorites.track_ids.append(tid)
+        favorites.touch()
+        self.save()
+        return True
 
     def get_track(self, track_id: str | None) -> Track | None:
         """根据ID获取单个曲目信息。
@@ -709,10 +876,9 @@ class LibraryService:
             # 更新现有歌单名称
             playlist.name = playlist_name
 
-        # 保存源文件元数据，用于后续的统计回写和路径解析
-        source_file_text = str(source_file) if source_file.exists() else ""
-        playlist.source_schema = MUSE_PLAYLIST_SCHEMA
-        playlist.source_file = source_file_text
+        # 导入后即落地为内部歌单，不保留“后续必须写回源文件”的绑定关系。
+        playlist.source_schema = ""
+        playlist.source_file = ""
         playlist.source_playlist_hash = playlist_hash
         playlist.source_database_location = str(db_root)
         playlist.source_exported_at = exported_at
@@ -812,6 +978,121 @@ class LibraryService:
         logger.info("导入歌单文件: %s, playlist=%s, songs=%s", source_file, playlist.name, len(playlist.track_ids))
         return playlist
 
+    def export_playlist_file(self, playlist_id: str, out_dir: Path, playback_stats_service) -> Path:
+        """导出任意歌单为 musearc_playlist_export_v1（含统计数据）。"""
+        playlist = self.get_playlist(playlist_id)
+        track_ids = [tid for tid in playlist.track_ids if tid in self.tracks]
+        if not track_ids:
+            raise ValueError("歌单没有可导出的歌曲")
+
+        playlist_hash = self._get_or_create_export_hash(playlist)
+        exported_at = datetime.now(timezone.utc).isoformat()
+        database_location = str(
+            Path(str(playlist.source_database_location or "")).resolve()
+            if str(playlist.source_database_location or "").strip()
+            else self._store.path.parent.parent.resolve()
+        )
+
+        tracks_out: list[dict] = []
+        total_play_count = 0
+        total_manual_play_count = 0
+        total_play_seconds = 0
+        total_early_skip_count = 0
+        db_root = Path(database_location)
+
+        for tid in track_ids:
+            track = self.tracks[tid]
+            stats = playback_stats_service.export_stats_for_track(tid) or {
+                "play_count": 0,
+                "manual_play_count": 0,
+                "play_seconds": 0,
+                "early_skip_count": 0,
+            }
+            total_play_count += int(stats.get("play_count", 0) or 0)
+            total_manual_play_count += int(stats.get("manual_play_count", 0) or 0)
+            total_play_seconds += int(stats.get("play_seconds", 0) or 0)
+            total_early_skip_count += int(stats.get("early_skip_count", 0) or 0)
+
+            track_id_export = str(track.source_track_id or tid).strip() or tid
+            tracks_out.append(
+                {
+                    "track_id": track_id_export,
+                    "storage_relpath": self._export_relpath(track=track, db_root=db_root, kind="audio"),
+                    "title": str(track.title or "").strip(),
+                    "artist": str(track.artist or "").strip(),
+                    "album": str(track.album or "").strip(),
+                    "lyrics_storage_relpath": self._export_relpath(track=track, db_root=db_root, kind="lyrics"),
+                    "source_sha256": str(track.source_sha256 or "").strip(),
+                    "stats": {
+                        "play_count": max(0, int(stats.get("play_count", 0) or 0)),
+                        "manual_play_count": max(0, int(stats.get("manual_play_count", 0) or 0)),
+                        "play_seconds": max(0, int(stats.get("play_seconds", 0) or 0)),
+                        "early_skip_count": max(0, int(stats.get("early_skip_count", 0) or 0)),
+                    },
+                }
+            )
+
+        out_root = Path(out_dir).expanduser().resolve()
+        out_root.mkdir(parents=True, exist_ok=True)
+        safe_name = self._sanitize_export_name(playlist.name or "playlist")
+        file_path = out_root / f"{safe_name}_{playlist_hash[:10]}.muse_playlist.json"
+
+        payload = {
+            "schema": MUSE_PLAYLIST_SCHEMA,
+            "playlist_hash": playlist_hash,
+            "playlist_name": str(playlist.name or "").strip(),
+            "exported_at": exported_at,
+            "database_location": database_location,
+            "track_count": len(tracks_out),
+            "stats_summary": {
+                "total_play_count": int(total_play_count),
+                "total_manual_play_count": int(total_manual_play_count),
+                "total_play_seconds": int(total_play_seconds),
+                "total_early_skip_count": int(total_early_skip_count),
+                "updated_at": exported_at,
+            },
+            "tracks": tracks_out,
+        }
+        file_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        logger.info("导出歌单: playlist=%s tracks=%s file=%s", playlist.id, len(tracks_out), file_path)
+        return file_path
+
+    def _get_or_create_export_hash(self, playlist: Playlist) -> str:
+        raw = str(playlist.source_playlist_hash or "").strip().lower()
+        if raw:
+            return raw
+        raw = hashlib.sha1(f"playlist:{playlist.id}".encode("utf-8")).hexdigest()
+        playlist.source_playlist_hash = raw
+        playlist.touch()
+        self.save()
+        return raw
+
+    @staticmethod
+    def _sanitize_export_name(name: str) -> str:
+        safe = "".join(ch if ch not in "\\/:*?\"<>|" else "_" for ch in str(name or "").strip()).strip()
+        return safe or "playlist"
+
+    def _export_relpath(self, *, track: Track, db_root: Path, kind: str) -> str:
+        if kind == "lyrics":
+            rel = self._normalize_relpath(str(track.source_lyrics_storage_relpath or "").strip())
+            if rel:
+                return rel
+            lyrics_abs = str(track.source_lyrics_path or "").strip()
+            if not lyrics_abs:
+                return ""
+            try:
+                return self._normalize_relpath(str(Path(lyrics_abs).resolve().relative_to(db_root)).replace("\\", "/"))
+            except Exception:
+                return self._normalize_relpath(Path(lyrics_abs).name)
+
+        rel = self._normalize_relpath(str(track.source_storage_relpath or "").strip())
+        if rel:
+            return rel
+        try:
+            return self._normalize_relpath(str(Path(track.path).resolve().relative_to(db_root)).replace("\\", "/"))
+        except Exception:
+            return self._normalize_relpath(Path(track.path).name)
+
     def sync_muse_playlist_stats(self, playback_stats_service) -> int:
         """同步播放统计数据到外部歌单文件。
         
@@ -824,6 +1105,11 @@ class LibraryService:
         Returns:
             更新的文件数量
         """
+        _ = playback_stats_service
+        # 按需求停用“导入歌单文件后持续回写源文件统计”。
+        # 导入后的歌单按内部数据管理，导出时再生成新文件。
+        return 0
+
         # 将运行时统计回写至外部歌单文件。
         # 安全策略：本地无统计时，不覆盖文件中已有统计，避免误清空历史数据。
         updated_files = 0
@@ -1030,9 +1316,7 @@ class LibraryService:
     def _find_existing_muse_playlist(self, *, playlist_hash: str, source_file: Path) -> Playlist | None:
         source_text = str(source_file)
         for playlist in self.playlists.values():
-            if playlist.id == ALL_SONGS_ID:
-                continue
-            if playlist.source_schema != MUSE_PLAYLIST_SCHEMA:
+            if playlist.id in {ALL_SONGS_ID, FAVORITES_ID}:
                 continue
             if playlist_hash and playlist.source_playlist_hash == playlist_hash:
                 return playlist

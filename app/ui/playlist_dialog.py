@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.services.app_controller import AppController
+from app.services.library_service import ALL_SONGS_ID, FAVORITES_ID
 
 
 class PlaylistDialog(QDialog):
@@ -87,7 +88,7 @@ class PlaylistDialog(QDialog):
         root = QVBoxLayout(self)
 
         # 功能描述标签
-        desc = QLabel("新建、重命名、删除歌单，并可向歌单导入文件夹。")
+        desc = QLabel("管理歌单、导入音频与歌单文件，并支持导出当前歌单。")
         desc.setObjectName("CaptionLabel")
         root.addWidget(desc)
 
@@ -96,33 +97,41 @@ class PlaylistDialog(QDialog):
         self.list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)  # 单选模式
         root.addWidget(self.list_widget, 1)  # 占据1的伸缩因子
 
-        # 第一行操作按钮：歌单管理
+        # 第一行操作按钮
         row1 = QHBoxLayout()
         self.btn_new = QPushButton("新建")
+        self.btn_import_playlist = QPushButton("导入歌单文件")
         self.btn_rename = QPushButton("重命名")
         self.btn_delete = QPushButton("删除")
-        self.btn_copy = QPushButton("复制歌单")
-        self.btn_merge = QPushButton("合并歌单")
         row1.addWidget(self.btn_new)
+        row1.addWidget(self.btn_import_playlist)
         row1.addWidget(self.btn_rename)
         row1.addWidget(self.btn_delete)
-        row1.addWidget(self.btn_copy)
-        row1.addWidget(self.btn_merge)
         root.addLayout(row1)
 
-        # 第二行操作按钮：导入和设置
+        # 第二行操作按钮
         row2 = QHBoxLayout()
         self.btn_set_active = QPushButton("设为当前")
-        self.btn_import_folder = QPushButton("导入文件夹")
-        self.btn_import_playlist = QPushButton("导入歌单文件")
-        self.btn_close = QPushButton("关闭")
-        self.btn_close.setObjectName("GhostButton")  # 应用幽灵按钮样式
+        self.btn_copy = QPushButton("复制当前歌单")
+        self.btn_merge = QPushButton("将当前添加到歌单")
+        self.btn_export = QPushButton("导出当前歌单")
         row2.addWidget(self.btn_set_active)
-        row2.addWidget(self.btn_import_folder)
-        row2.addWidget(self.btn_import_playlist)
-        row2.addStretch(1)  # 弹性空间，将关闭按钮推到右侧
-        row2.addWidget(self.btn_close)
+        row2.addWidget(self.btn_copy)
+        row2.addWidget(self.btn_merge)
+        row2.addWidget(self.btn_export)
         root.addLayout(row2)
+
+        # 第三行操作按钮
+        row3 = QHBoxLayout()
+        self.btn_import_folder = QPushButton("向当前导入文件夹")
+        self.btn_import_files = QPushButton("向当前导入歌曲文件")
+        self.btn_close = QPushButton("关闭")
+        self.btn_close.setObjectName("GhostButton")
+        row3.addWidget(self.btn_import_folder)
+        row3.addWidget(self.btn_import_files)
+        row3.addStretch(1)  # 弹性空间，将关闭按钮推到右侧
+        row3.addWidget(self.btn_close)
+        root.addLayout(row3)
 
         self.btn_new.clicked.connect(self._create_playlist)
         self.btn_rename.clicked.connect(self._rename_playlist)
@@ -131,7 +140,9 @@ class PlaylistDialog(QDialog):
         self.btn_merge.clicked.connect(self._merge_playlist)
         self.btn_set_active.clicked.connect(self._set_active)
         self.btn_import_folder.clicked.connect(self._import_folder)
+        self.btn_import_files.clicked.connect(self._import_files)
         self.btn_import_playlist.clicked.connect(self._import_playlist_file)
+        self.btn_export.clicked.connect(self._export_playlist_file)
         self.btn_close.clicked.connect(self.accept)
 
     def reload(self) -> None:
@@ -147,7 +158,12 @@ class PlaylistDialog(QDialog):
         self.list_widget.clear()
         active_id = self.controller.library_service.active_playlist_id
         for playlist in self.controller.library_service.list_playlists():
-            display_name = "全部歌曲" if playlist.id == "all_songs" else playlist.name
+            if playlist.id == ALL_SONGS_ID:
+                display_name = "全部歌曲"
+            elif playlist.id == FAVORITES_ID:
+                display_name = "我喜欢"
+            else:
+                display_name = playlist.name
             label = f"{display_name} ({len(playlist.track_ids)})"
             if playlist.id == active_id:
                 label = f"{label}  [当前]"
@@ -187,8 +203,8 @@ class PlaylistDialog(QDialog):
         playlist_id = self._selected_playlist_id()
         if not playlist_id:
             return
-        if playlist_id == "all_songs":
-            QMessageBox.information(self, "提示", '"全部歌曲"不可重命名。')
+        if playlist_id in {ALL_SONGS_ID, FAVORITES_ID}:
+            QMessageBox.information(self, "提示", "系统歌单不可重命名。")
             return
 
         text, ok = QInputDialog.getText(self, "重命名歌单", "新名称：")
@@ -206,8 +222,8 @@ class PlaylistDialog(QDialog):
         playlist_id = self._selected_playlist_id()
         if not playlist_id:
             return
-        if playlist_id == "all_songs":
-            QMessageBox.information(self, "提示", '"全部歌曲"不可删除。')
+        if playlist_id in {ALL_SONGS_ID, FAVORITES_ID}:
+            QMessageBox.information(self, "提示", "系统歌单不可删除。")
             return
 
         answer = QMessageBox.question(self, "确认", "确定删除该歌单？")
@@ -297,7 +313,7 @@ class PlaylistDialog(QDialog):
         导入过程异常时会显示错误信息。
         """
         playlist_id = self._selected_playlist_id() or self.controller.library_service.active_playlist_id
-        if playlist_id == "all_songs":
+        if playlist_id == ALL_SONGS_ID:
             playlist_id = None
 
         folder = QFileDialog.getExistingDirectory(self, "选择音乐文件夹")
@@ -310,6 +326,22 @@ class PlaylistDialog(QDialog):
             QMessageBox.critical(self, "导入失败", str(exc))
             return
 
+        QMessageBox.information(self, "导入完成", f"已导入 {count} 首歌曲")
+        self.reload()
+
+    def _import_files(self) -> None:
+        playlist_id = self._selected_playlist_id() or self.controller.library_service.active_playlist_id
+        if playlist_id == ALL_SONGS_ID:
+            playlist_id = None
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "选择歌曲文件",
+            "",
+            "音频文件 (*.mp3 *.flac *.wav *.m4a *.aac *.ogg *.opus *.wma)",
+        )
+        if not file_paths:
+            return
+        count = self.controller.import_files([Path(p) for p in file_paths], playlist_id=playlist_id)
         QMessageBox.information(self, "导入完成", f"已导入 {count} 首歌曲")
         self.reload()
 
@@ -334,3 +366,17 @@ class PlaylistDialog(QDialog):
             return
         QMessageBox.information(self, "导入完成", "歌单文件已导入。")
         self.reload()
+
+    def _export_playlist_file(self) -> None:
+        playlist_id = self._selected_playlist_id()
+        if not playlist_id:
+            return
+        out_dir = QFileDialog.getExistingDirectory(self, "选择导出目录")
+        if not out_dir:
+            return
+        try:
+            file_path = self.controller.export_playlist(playlist_id, Path(out_dir))
+        except Exception as exc:
+            QMessageBox.critical(self, "导出失败", str(exc))
+            return
+        QMessageBox.information(self, "导出完成", f"歌单已导出：\n{file_path}")

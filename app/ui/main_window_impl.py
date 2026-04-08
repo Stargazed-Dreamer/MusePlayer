@@ -49,6 +49,7 @@ from app.ui.main_window_helpers import (
     _WindowsTaskbarProgress,
     _make_crosshair_icon,
     _make_folder_icon,
+    _make_heart_icon,
     _make_media_icon,
     _make_mode_icon,
     _make_plus_minus_icon,
@@ -387,6 +388,10 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.locate_file_btn.setIcon(_make_folder_icon(color=self._control_icon_color()))
         self.locate_file_btn.setToolTip("在资源管理器中定位当前文件")
 
+        self.favorite_btn = self._new_icon_button("ControlIconButton")
+        self.favorite_btn.setIcon(_make_heart_icon(filled=False, color=self._control_icon_color()))
+        self.favorite_btn.setToolTip("喜欢当前歌曲")
+
         self.mode_btn = self._new_icon_button("ModeButton")
 
         self.prev_btn = self._new_icon_button("ControlIconButton")
@@ -433,6 +438,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
 
         control_row.addWidget(self.theme_btn)
         control_row.addWidget(self.locate_file_btn)
+        control_row.addWidget(self.favorite_btn)
         control_row.addWidget(self.mode_btn)
         control_row.addWidget(self.prev_btn)
         control_row.addWidget(self.play_btn)
@@ -605,6 +611,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
     def _bind_signals(self) -> None:
         self.theme_btn.clicked.connect(self._toggle_theme)
         self.locate_file_btn.clicked.connect(self._open_current_in_explorer)
+        self.favorite_btn.clicked.connect(self._toggle_current_favorite)
         self.prev_btn.clicked.connect(self._play_previous_track)
         self.play_btn.clicked.connect(self.player.toggle_play_pause)
         self.next_btn.clicked.connect(self._play_next_track)
@@ -635,6 +642,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
 
         self.controller.library_changed.connect(self._on_library_changed)
         self.controller.settings_changed.connect(self._on_settings_changed)
+        self.controller.message.connect(lambda text: self.statusBar().showMessage(str(text), 2500))
         self.controller.error_occurred.connect(self._on_error)
         self.controller.runtime_status_changed.connect(self._on_runtime_status_changed)
 

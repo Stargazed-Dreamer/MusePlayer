@@ -32,7 +32,7 @@ import time
 from ctypes import HRESULT, c_int, c_uint, c_ulonglong, c_void_p
 
 from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QListWidget,
@@ -1109,6 +1109,33 @@ def _make_folder_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
     painter.setBrush(Qt.BrushStyle.NoBrush)
     painter.drawRoundedRect(QRectF(4, 8, 16, 11), 2.0, 2.0)
     painter.drawPolyline([QPoint(5, 8), QPoint(9, 5), QPoint(13, 5), QPoint(15, 8)])
+    painter.end()
+    return QIcon(pix)
+
+
+def _make_heart_icon(*, filled: bool, color: QColor | str = "#f4f4f4") -> QIcon:
+    """创建喜欢图标（空心/实心）。"""
+    pix = QPixmap(24, 24)
+    pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
+
+    pen_color = QColor("#c94141") if filled else QColor(color)
+    fill_color = QColor("#e24b4b") if filled else QColor(0, 0, 0, 0)
+    pen = QPen(pen_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(fill_color)
+
+    path = QPainterPath()
+    path.moveTo(12.0, 19.4)
+    path.cubicTo(10.7, 18.1, 6.2, 14.3, 4.7, 11.6)
+    path.cubicTo(3.2, 8.9, 4.2, 5.6, 7.0, 4.7)
+    path.cubicTo(8.9, 4.1, 10.8, 4.8, 12.0, 6.3)
+    path.cubicTo(13.2, 4.8, 15.1, 4.1, 17.0, 4.7)
+    path.cubicTo(19.8, 5.6, 20.8, 8.9, 19.3, 11.6)
+    path.cubicTo(17.8, 14.3, 13.3, 18.1, 12.0, 19.4)
+    path.closeSubpath()
+    painter.drawPath(path)
     painter.end()
     return QIcon(pix)
 

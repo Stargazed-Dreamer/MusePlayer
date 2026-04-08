@@ -144,6 +144,18 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             self._prefetch_executor.shutdown(wait=False, cancel_futures=True)
             self._core.close()
 
+    def rebind_output_device(self) -> bool:
+        """在系统输出设备变更后重绑音频输出。"""
+        try:
+            self._core.rebind_output_device()
+            logger.info("音频输出设备已重绑定")
+            return True
+        except Exception as exc:
+            msg = f"重绑音频输出失败: {exc}"
+            logger.exception(msg)
+            self.error_occurred.emit(msg)
+            return False
+
     def available_modes(self) -> list[str]:
         modes: list[str] = []
         if self._single_loop_enabled:

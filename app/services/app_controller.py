@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtMultimedia import QMediaDevices
 
 from app.models import LibraryStore, SessionState, SessionStore, Settings, SettingsStore
 from app.runtime import ControlServer
@@ -64,6 +65,9 @@ class AppController(QObject):
 
         # 初始化库服务并加载现有数据
         self.library_service = LibraryService(self.library_store, self.metadata_service)
+        self.library_service.set_data_maintenance_logging_enabled(
+            bool(getattr(self.settings, "data_maintenance_logging_enabled", True))
+        )
         self.library_service.load()
 
         # 创建播放统计服务和播放器服务
@@ -91,29 +95,12 @@ class AppController(QObject):
         self._session_save_timer.timeout.connect(self.save_session)
         self._apply_save_timer_settings()
 
-        self.library_service = LibraryService(self.library_store, self.metadata_service)
-        self.library_service.load()
-
-        self.playback_stats_service = PlaybackStatsService(self.data_dir)
-        self.player_service = PlayerService(
-            self.library_service,
-            playback_stats_service=self.playback_stats_service,
-            collect_stats_getter=lambda: bool(self.settings.collect_playback_data),
-            gain_boost_getter=lambda: float(self.settings.global_gain_boost),
-            read_strategy_getter=lambda: str(self.settings.read_strategy),
-        )
-        self.player_service.set_single_loop_mode_enabled(self.settings.enable_single_loop_mode)
-        self.player_service.set_playlist_loop_mode_enabled(self.settings.enable_playlist_loop_mode)
-        self.player_service.error_occurred.connect(self.error_occurred)
-        self.error_occurred.connect(self._record_runtime_error)
-
-        self.control_server = ControlServer(self.dispatch_command)
-        self.control_server.error_occurred.connect(self.error_occurred)
-        self.control_server.listening_changed.connect(self.runtime_status_changed)
-
-        self._session_save_timer = QTimer(self)
-        self._session_save_timer.timeout.connect(self.save_session)
-        self._apply_save_timer_settings()
+        self._audio_change_timer = QTimer(self)
+        self._audio_change_timer.setSingleShot(True)
+        self._audio_change_timer.setInterval(150)
+        self._audio_change_timer.timeout.connect(self._handle_audio_output_changed)
+        self._media_devices = QMediaDevices(self)
+        self._media_devices.audioOutputsChanged.connect(self._on_audio_outputs_changed)
 
         if self.settings.auto_restore_session:
             with self.player_service.suspend_stats_collection():
@@ -151,7 +138,6 @@ class AppController(QObject):
         # 会话保存同时承担"统计落盘同步"职责，确保 DB 歌单内统计及时更新
         state = self.player_service.export_session()
         self.session_store.save(state)
-        self.library_service.sync_muse_playlist_stats(self.playback_stats_service)
         self.playback_stats_service.save_if_dirty()
 
     def save_stats_now(self) -> None:
@@ -217,6 +203,9 @@ class AppController(QObject):
         """
         self.settings = settings
         self.settings_store.save(settings)
+        self.library_service.set_data_maintenance_logging_enabled(
+            bool(getattr(self.settings, "data_maintenance_logging_enabled", True))
+        )
         self.player_service.set_single_loop_mode_enabled(self.settings.enable_single_loop_mode)
         self.player_service.set_playlist_loop_mode_enabled(self.settings.enable_playlist_loop_mode)
         self.player_service.refresh_output_gain()
@@ -337,6 +326,18 @@ class AppController(QObject):
         self.library_changed.emit()
         return playlist.id
 
+    def import_files(self, files: list[Path], playlist_id: str | None = None) -> int:
+        imported = 0
+        for path in files:
+            try:
+                self.library_service.import_file(path, playlist_id=playlist_id)
+                imported += 1
+            except Exception:
+                continue
+        if imported > 0:
+            self.library_changed.emit()
+        return imported
+
     def import_muse_playlist_data(self, payload: dict | str, source_hint: str = "runtime_payload") -> str:
         data: dict
         if isinstance(payload, str):
@@ -353,6 +354,22 @@ class AppController(QObject):
         playlist = self.library_service.create_playlist(name)
         self.library_changed.emit()
         return playlist.id
+
+    def toggle_track_favorite(self, track_id: str) -> bool:
+        state = self.library_service.toggle_favorite(track_id)
+        self.library_changed.emit()
+        return state
+
+    def is_track_favorite(self, track_id: str | None) -> bool:
+        return self.library_service.is_favorite(track_id)
+
+    def export_playlist(self, playlist_id: str, out_dir: Path) -> Path:
+        file_path = self.library_service.export_playlist_file(
+            playlist_id,
+            out_dir,
+            self.playback_stats_service,
+        )
+        return file_path
 
     def rename_playlist(self, playlist_id: str, name: str) -> None:
         self.library_service.rename_playlist(playlist_id, name)
@@ -618,6 +635,15 @@ class AppController(QObject):
 
     def export_session_for_ui(self) -> SessionState:
         return self.player_service.export_session()
+
+    def _on_audio_outputs_changed(self) -> None:
+        # 事件驱动，做短暂去抖后重绑输出设备，避免常驻轮询。
+        self._audio_change_timer.start()
+
+    def _handle_audio_output_changed(self) -> None:
+        ok = self.player_service.rebind_output_device()
+        if ok:
+            self.message.emit("音频输出设备已切换")
 
     def _record_runtime_error(self, message: str) -> None:
         text = str(message).strip()

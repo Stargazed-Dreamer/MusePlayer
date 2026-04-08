@@ -33,6 +33,7 @@ from PySide6.QtGui import QColor, QGuiApplication, QPixmap
 from PySide6.QtWidgets import QApplication, QFileDialog, QListWidget, QListWidgetItem, QMessageBox, QSizePolicy, QToolButton
 
 from app.models.entities import Track
+from app.services.library_service import ALL_SONGS_ID, FAVORITES_ID
 from app.services.player_service import PlayMode
 from app.ui.playlist_dialog import PlaylistDialog
 from app.ui.settings_dialog import SettingsDialog
@@ -44,6 +45,7 @@ from app.ui.main_window_helpers import (
     _format_time,
     _make_crosshair_icon,
     _make_folder_icon,
+    _make_heart_icon,
     _make_media_icon,
     _make_mode_icon,
     _make_moon_icon,
@@ -149,7 +151,12 @@ class MainWindowPlaybackMixin:
 
         index_to_select = 0
         for idx, playlist in enumerate(self.controller.library_service.list_playlists()):
-            display_name = "全部歌曲" if playlist.id == "all_songs" else playlist.name
+            if playlist.id == ALL_SONGS_ID:
+                display_name = "全部歌曲"
+            elif playlist.id == FAVORITES_ID:
+                display_name = "我喜欢"
+            else:
+                display_name = playlist.name
             self.playlist_combo.addItem(display_name, playlist.id)
             if playlist.id == current:
                 index_to_select = idx
@@ -276,6 +283,7 @@ class MainWindowPlaybackMixin:
             self._load_lyrics("")
             self._refresh_now_card_layout()
             self._refresh_random_state_hint()
+            self._refresh_favorite_button(None)
             return
 
         self._current_track_title = track.title or "未知标题"
@@ -294,6 +302,7 @@ class MainWindowPlaybackMixin:
         self._refresh_now_card_layout()
         self._update_window_title()
         self._refresh_random_state_hint()
+        self._refresh_favorite_button(track.id)
 
         self._sync_current_track_row(center=True)
         self._update_locate_current_button()
@@ -603,6 +612,29 @@ class MainWindowPlaybackMixin:
         self.mode_btn.setToolTip(f"播放模式: {title}（点击切换）")
         self._next_track_preview_announced = False
         self._refresh_random_state_hint()
+    def _toggle_current_favorite(self) -> None:
+        track = self.player.current_track()
+        if track is None:
+            return
+        now_favorite = self.controller.toggle_track_favorite(track.id)
+        self._refresh_favorite_button(track.id)
+        self.statusBar().showMessage("已加入我喜欢" if now_favorite else "已取消喜欢", 2200)
+    def _refresh_favorite_button(self, track_id: str | None) -> None:
+        if not hasattr(self, "favorite_btn"):
+            return
+        if not track_id:
+            self.favorite_btn.setEnabled(False)
+            self.favorite_btn.setIcon(_make_heart_icon(filled=False, color=self._control_icon_color()))
+            self.favorite_btn.setToolTip("喜欢当前歌曲")
+            return
+        self.favorite_btn.setEnabled(True)
+        is_fav = self.controller.is_track_favorite(track_id)
+        icon = _make_heart_icon(
+            filled=is_fav,
+            color=self._control_icon_color(),
+        )
+        self.favorite_btn.setIcon(icon)
+        self.favorite_btn.setToolTip("取消喜欢" if is_fav else "喜欢当前歌曲")
     def _toggle_theme(self) -> None:
         self._dark_theme = not self._dark_theme
         self._apply_theme_stylesheet()
@@ -649,6 +681,8 @@ class MainWindowPlaybackMixin:
         self.next_btn.setIcon(_make_media_icon("next", color=color))
         self.play_btn.setIcon(_make_media_icon("pause" if self.player.is_playing() else "play", color=color))
         self.locate_file_btn.setIcon(_make_folder_icon(color=color))
+        current_track_id = self.player.current_track_id
+        self._refresh_favorite_button(current_track_id)
         self.compact_btn.setIcon(_make_plus_minus_icon(self._compact_mode, color=color))
         self.locate_current_btn.setIcon(_make_crosshair_icon(color=color))
         self._refresh_rich_title_icons()
@@ -835,7 +869,7 @@ class MainWindowPlaybackMixin:
         self.player.play_track(str(track_id), auto_play=True, manual_select=True, active_request=True)
         self.statusBar().showMessage(f"播放歌曲：{display_text}", 2500)
     def _on_remove_track_clicked(self, track_id: str) -> None:
-        playlist_id = self.player.current_playlist_id or "all_songs"
+        playlist_id = self.player.current_playlist_id or ALL_SONGS_ID
         try:
             self.controller.remove_track_from_playlist(str(playlist_id), str(track_id))
             self.statusBar().showMessage("已从歌单移除歌曲", 2500)
@@ -844,9 +878,11 @@ class MainWindowPlaybackMixin:
     def _on_queue_changed(self) -> None:
         self._reload_playlist_combo()
         self._reload_track_list()
+        self._refresh_favorite_button(self.player.current_track_id)
     def _on_library_changed(self) -> None:
         self._reload_playlist_combo()
         self._reload_track_list()
+        self._refresh_favorite_button(self.player.current_track_id)
         self.statusBar().showMessage("曲库已更新", 2200)
     def _on_settings_changed(self, settings) -> None:
         self.player.set_single_loop_mode_enabled(bool(getattr(settings, "enable_single_loop_mode", True)))

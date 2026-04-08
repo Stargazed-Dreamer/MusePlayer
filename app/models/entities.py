@@ -216,6 +216,10 @@ class Settings:
     """是否自动恢复上次会话"""
     logging_enabled: bool = False
     """是否启用日志记录"""
+    crash_logging_enabled: bool = True
+    """是否记录崩溃日志"""
+    data_maintenance_logging_enabled: bool = True
+    """是否记录数据维护日志"""
     enable_single_loop_mode: bool = True
     """是否启用单曲循环模式"""
     enable_playlist_loop_mode: bool = False
@@ -261,6 +265,8 @@ class Settings:
             "control_interface_enabled": bool(self.control_interface_enabled),
             "auto_restore_session": bool(self.auto_restore_session),
             "logging_enabled": bool(self.logging_enabled),
+            "crash_logging_enabled": bool(self.crash_logging_enabled),
+            "data_maintenance_logging_enabled": bool(self.data_maintenance_logging_enabled),
             "enable_single_loop_mode": bool(self.enable_single_loop_mode),
             "enable_playlist_loop_mode": bool(self.enable_playlist_loop_mode),
             "collect_playback_data": bool(self.collect_playback_data),
@@ -308,6 +314,8 @@ class Settings:
             control_interface_enabled=bool(data.get("control_interface_enabled", False)),
             auto_restore_session=bool(data.get("auto_restore_session", True)),
             logging_enabled=bool(data.get("logging_enabled", False)),
+            crash_logging_enabled=bool(data.get("crash_logging_enabled", True)),
+            data_maintenance_logging_enabled=bool(data.get("data_maintenance_logging_enabled", True)),
             enable_single_loop_mode=bool(data.get("enable_single_loop_mode", True)),
             enable_playlist_loop_mode=bool(data.get("enable_playlist_loop_mode", False)),
             collect_playback_data=bool(data.get("collect_playback_data", True)),
