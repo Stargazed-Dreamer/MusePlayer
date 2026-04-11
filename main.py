@@ -12,6 +12,7 @@ from __future__ import annotations
 import atexit
 from datetime import datetime
 import faulthandler
+import json
 import signal
 import sys
 import threading
@@ -64,6 +65,16 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
             stream.write(f"[{stamp}] reason={reason}\n")
             if exc_type is not None:
                 traceback.print_exception(exc_type, exc_value, exc_tb, file=stream)
+            try:
+                snapshot = controller.player_service.state_snapshot()
+                stream.write(f"Playback state: {json.dumps(snapshot, ensure_ascii=False)}\n")
+                track_id = snapshot.get("track_id", "")
+                if track_id:
+                    stats = controller.playback_stats_service.export_stats_for_track(track_id)
+                    if stats:
+                        stream.write(f"Track stats: {json.dumps(stats)}\n")
+            except Exception:
+                pass
             stream.write("\n")
             stream.flush()
         except Exception:
@@ -74,8 +85,11 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
             return
         saved["done"] = True
         try:
-            controller.save_stats_now()
             controller.playback_stats_service.save_if_dirty()
+        except Exception:
+            pass
+        try:
+            controller.save_session()
         except Exception:
             pass
 

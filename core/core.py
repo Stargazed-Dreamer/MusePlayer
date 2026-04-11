@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -44,6 +45,7 @@ class PyAVPlayerCore:
         self._playback_rate = 1.0
         self._playing = False
         self._stream_open = False
+        self._need_stream_cooldown = False
         self._error_callback: Callable[[str], None] | None = None
         self._last_runtime_error: str | None = None
 
@@ -248,6 +250,10 @@ class PyAVPlayerCore:
                     self._output.close()
                 finally:
                     self._stream_open = False
+                    self._need_stream_cooldown = True
+                if self._need_stream_cooldown:
+                    time.sleep(0.05)
+                    self._need_stream_cooldown = False
                 self._output.open(
                     sample_rate=self._sample_rate,
                     channels=self._channels,
@@ -268,6 +274,10 @@ class PyAVPlayerCore:
                 self._output.close()
             finally:
                 self._stream_open = False
+                self._need_stream_cooldown = True
+            if self._need_stream_cooldown:
+                time.sleep(0.05)
+                self._need_stream_cooldown = False
             self._output.open(
                 sample_rate=self._sample_rate,
                 channels=self._channels,
@@ -294,6 +304,9 @@ class PyAVPlayerCore:
 
     def _ensure_stream_started(self) -> None:
         if not self._stream_open:
+            if self._need_stream_cooldown:
+                time.sleep(0.05)
+                self._need_stream_cooldown = False
             self._output.open(
                 sample_rate=self._sample_rate,
                 channels=self._channels,
@@ -307,6 +320,7 @@ class PyAVPlayerCore:
         if self._stream_open:
             self._output.close()
             self._stream_open = False
+            self._need_stream_cooldown = True
 
     def _audio_callback(self, outdata, frames, _time_info, _status) -> None:
         try:
