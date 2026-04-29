@@ -47,12 +47,13 @@ from app.ui.main_window_helpers import (
     MultiHintStatusBar,
     TrackItemDelegate,
     _WindowsTaskbarProgress,
+    _make_compact_icon,
     _make_crosshair_icon,
     _make_folder_icon,
     _make_heart_icon,
     _make_media_icon,
     _make_mode_icon,
-    _make_plus_minus_icon,
+    _make_plus_icon,
     _make_rich_title_icon,
 )
 
@@ -392,6 +393,10 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.favorite_btn.setIcon(_make_heart_icon(filled=False, color=self._control_icon_color()))
         self.favorite_btn.setToolTip("喜欢当前歌曲")
 
+        self.add_to_playlist_btn = self._new_icon_button("ControlIconButton")
+        self.add_to_playlist_btn.setIcon(_make_plus_icon(color=self._control_icon_color()))
+        self.add_to_playlist_btn.setToolTip("添加到歌单")
+
         self.mode_btn = self._new_icon_button("ModeButton")
 
         self.prev_btn = self._new_icon_button("ControlIconButton")
@@ -427,7 +432,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.volume_slider.setMinimumWidth(150)
 
         self.compact_btn = self._new_icon_button("CompactButton")
-        self.compact_btn.setIcon(_make_plus_minus_icon(False, color=self._control_icon_color()))
+        self.compact_btn.setIcon(_make_compact_icon(False, color=self._control_icon_color()))
         self.compact_btn.setToolTip("切换到简洁模式")
 
         self.speed_combo = QComboBox()
@@ -439,6 +444,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         control_row.addWidget(self.theme_btn)
         control_row.addWidget(self.locate_file_btn)
         control_row.addWidget(self.favorite_btn)
+        control_row.addWidget(self.add_to_playlist_btn)
         control_row.addWidget(self.mode_btn)
         control_row.addWidget(self.prev_btn)
         control_row.addWidget(self.play_btn)
@@ -521,6 +527,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.compact_top_title_label.setObjectName("CompactTopTitle")
         self.compact_top_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.compact_top_title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.compact_top_title_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.compact_close_btn = self._new_icon_button("CompactTopButton")
         self.compact_close_btn.setIcon(_make_rich_title_icon("close", color=self._control_icon_color()))
         self.compact_close_btn.setToolTip("返回丰富模式")
@@ -531,6 +538,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         compact_bar_layout.addWidget(self.pin_btn)
         compact_bar_layout.addWidget(self.compact_close_btn)
         self.compact_top_bar.setMinimumHeight(30)
+        self.compact_top_bar.installEventFilter(self)
         self.controls_layout.insertWidget(0, self.compact_top_bar)
         self.compact_top_bar.hide()
         self._refresh_compact_top_buttons()
@@ -612,6 +620,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.theme_btn.clicked.connect(self._toggle_theme)
         self.locate_file_btn.clicked.connect(self._open_current_in_explorer)
         self.favorite_btn.clicked.connect(self._toggle_current_favorite)
+        self.add_to_playlist_btn.clicked.connect(self._add_current_to_playlist)
         self.prev_btn.clicked.connect(self._play_previous_track)
         self.play_btn.clicked.connect(self.player.toggle_play_pause)
         self.next_btn.clicked.connect(self._play_next_track)

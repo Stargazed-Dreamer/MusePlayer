@@ -636,6 +636,43 @@ class AppController(QObject):
             playlist_id = self.create_playlist(name)
             return {"ok": True, "result": {"playlist_id": playlist_id}}
 
+        if cmd == "current_track":
+            track = self.player_service.current_track()
+            if track is None:
+                return {"ok": True, "result": None}
+            result = track.to_dict()
+            stats = self.playback_stats_service.export_stats_for_track(track.id)
+            if stats:
+                result["stats"] = stats
+            is_fav = self.library_service.is_favorite(track.id)
+            result["is_favorite"] = is_fav
+            return {"ok": True, "result": result}
+
+        if cmd == "current_playlist":
+            playlist_id = self.player_service.current_playlist_id()
+            if not playlist_id:
+                return {"ok": True, "result": None}
+            playlist = self.library_service.playlists.get(playlist_id)
+            if playlist is None:
+                return {"ok": True, "result": None}
+            result = playlist.to_dict()
+            tracks_info = []
+            for tid in playlist.track_ids:
+                t = self.library_service.tracks.get(tid)
+                if t is not None:
+                    tracks_info.append({"id": t.id, "title": t.title, "artist": t.artist, "duration_sec": float(t.duration_sec)})
+            result["tracks"] = tracks_info
+            return {"ok": True, "result": result}
+
+        if cmd == "add_track_to_playlist":
+            track_id = payload.get("track_id")
+            playlist_id = payload.get("playlist_id")
+            if not track_id or not playlist_id:
+                return {"ok": False, "error": "missing track_id or playlist_id"}
+            self.library_service.add_track_ids_to_playlist(str(playlist_id), [str(track_id)])
+            self.library_changed.emit()
+            return {"ok": True}
+
         return {"ok": False, "error": f"unknown cmd: {cmd}"}
 
     def export_session_for_ui(self) -> SessionState:

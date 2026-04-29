@@ -999,6 +999,35 @@ def _make_plus_minus_icon(is_plus: bool, *, color: QColor | str = "#f4f4f4") -> 
     return QIcon(pix)
 
 
+def _make_compact_icon(is_compact: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
+    pix = QPixmap(24, 24)
+    pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(color), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(QColor(0, 0, 0, 0))
+    if is_compact:
+        painter.drawRoundedRect(2, 4, 20, 16, 2, 2)
+    else:
+        painter.drawRoundedRect(4, 7, 16, 10, 2, 2)
+    painter.end()
+    return QIcon(pix)
+
+
+def _make_plus_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
+    pix = QPixmap(24, 24)
+    pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(color), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+    painter.setPen(pen)
+    painter.drawLine(6, 12, 18, 12)
+    painter.drawLine(12, 6, 12, 18)
+    painter.end()
+    return QIcon(pix)
+
+
 def _make_crosshair_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
     """创建十字准星图标.
 

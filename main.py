@@ -40,8 +40,10 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
         stream = crash_stream_holder.get("file")
         if stream is not None:
             return stream
-        crash_file = controller.data_dir / "crashlog.log"
-        crash_file.parent.mkdir(parents=True, exist_ok=True)
+        crash_dir = controller.data_dir / "crashlogs"
+        crash_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        crash_file = crash_dir / f"crash_{stamp}.log"
         stream = crash_file.open("a", encoding="utf-8")
         crash_stream_holder["file"] = stream
         return stream
@@ -77,6 +79,7 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
                 pass
             stream.write("\n")
             stream.flush()
+            _close_crash_stream()
         except Exception:
             pass
 
@@ -108,6 +111,7 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
             if fh_enabled["value"]:
                 faulthandler.disable()
                 fh_enabled["value"] = False
+                _close_crash_stream()
         except Exception:
             pass
 

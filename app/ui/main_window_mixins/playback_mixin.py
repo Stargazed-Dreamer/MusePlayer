@@ -30,7 +30,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QPixmap
-from PySide6.QtWidgets import QApplication, QFileDialog, QListWidget, QListWidgetItem, QMessageBox, QSizePolicy, QToolButton
+from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QFileDialog, QListWidget, QListWidgetItem, QMessageBox, QSizePolicy, QToolButton, QVBoxLayout
 
 from app.models.entities import Track
 from app.services.library_service import ALL_SONGS_ID, FAVORITES_ID
@@ -45,11 +45,11 @@ from app.ui.main_window_helpers import (
     _format_time,
     _make_crosshair_icon,
     _make_folder_icon,
+    _make_compact_icon,
     _make_heart_icon,
     _make_media_icon,
     _make_mode_icon,
     _make_moon_icon,
-    _make_plus_minus_icon,
     _make_sun_icon,
     _make_volume_icon,
     _parse_lrc_entries,
@@ -619,6 +619,47 @@ class MainWindowPlaybackMixin:
         now_favorite = self.controller.toggle_track_favorite(track.id)
         self._refresh_favorite_button(track.id)
         self.statusBar().showMessage("已加入我喜欢" if now_favorite else "已取消喜欢", 2200)
+
+    def _add_current_to_playlist(self) -> None:
+        track = self.player.current_track()
+        if track is None:
+            return
+        playlists = self.controller.library_service.list_playlists()
+        items = []
+        for pl in playlists:
+            if pl.id in {ALL_SONGS_ID, FAVORITES_ID}:
+                continue
+            already = track.id in pl.track_ids
+            items.append((pl.id, pl.name, already))
+        if not items:
+            self.statusBar().showMessage("没有可添加的歌单", 2200)
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("添加到歌单")
+        dialog.setMinimumWidth(280)
+        layout = QVBoxLayout(dialog)
+        list_widget = QListWidget(dialog)
+        for pl_id, pl_name, already in items:
+            item = QListWidgetItem(f"{pl_name}{' (已存在)' if already else ''}")
+            item.setData(Qt.ItemDataRole.UserRole, pl_id)
+            if already:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            list_widget.addItem(item)
+        layout.addWidget(list_widget)
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btn_box.accepted.connect(dialog.accept)
+        btn_box.rejected.connect(dialog.reject)
+        layout.addWidget(btn_box)
+        list_widget.itemDoubleClicked.connect(lambda: dialog.accept())
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            current = list_widget.currentItem()
+            if current is None:
+                return
+            target_id = current.data(Qt.ItemDataRole.UserRole)
+            self.controller.library_service.add_track_ids_to_playlist(target_id, [track.id])
+            self.controller.library_changed.emit()
+            pl_name = current.text().replace(" (已存在)", "")
+            self.statusBar().showMessage(f"已添加到「{pl_name}」", 2200)
     def _refresh_favorite_button(self, track_id: str | None) -> None:
         if not hasattr(self, "favorite_btn"):
             return
@@ -683,7 +724,7 @@ class MainWindowPlaybackMixin:
         self.locate_file_btn.setIcon(_make_folder_icon(color=color))
         current_track_id = self.player.current_track_id
         self._refresh_favorite_button(current_track_id)
-        self.compact_btn.setIcon(_make_plus_minus_icon(self._compact_mode, color=color))
+        self.compact_btn.setIcon(_make_compact_icon(self._compact_mode, color=color))
         self.locate_current_btn.setIcon(_make_crosshair_icon(color=color))
         self._refresh_rich_title_icons()
         self._refresh_theme_button()

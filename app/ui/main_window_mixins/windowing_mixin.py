@@ -38,9 +38,9 @@ from PySide6.QtWidgets import QComboBox, QLineEdit, QListWidget, QListWidgetItem
 
 from app.ui.main_window_helpers import (
     TrackItemDelegate,
+    _make_compact_icon,
     _make_lock_icon,
     _make_pin_icon,
-    _make_plus_minus_icon,
     _make_rich_title_icon,
     _make_sidebar_toggle_icon,
 )
@@ -140,7 +140,7 @@ class MainWindowWindowingMixin:
             self._on_opacity_changed(self.opacity_slider.value())
             self._layout_compact_top_bar()
 
-            self.compact_btn.setIcon(_make_plus_minus_icon(True, color=self._control_icon_color()))
+            self.compact_btn.setIcon(_make_compact_icon(True, color=self._control_icon_color()))
             self.compact_btn.setToolTip("切换到丰富模式")
 
             self.centralWidget().layout().activate()
@@ -172,14 +172,13 @@ class MainWindowWindowingMixin:
             self.statusBar().showMessage("已进入简洁模式", 2500)
             return
 
-        rich_anchor = self.frameGeometry().topLeft()
-
         self.compact_info_widget.hide()
         self.progress_center_label.hide()
         self.compact_top_bar.hide()
         self.controls_layout.setContentsMargins(*self._controls_normal_margins)
         self.controls_layout.setSpacing(8)
-        self.setWindowOpacity(1.0)
+        self.setWindowOpacity(0.0)
+        self._always_on_top = False
         self.setMinimumSize(0, 0)
         self.setMaximumSize(16777215, 16777215)
         self._apply_window_size_limits()
@@ -193,7 +192,7 @@ class MainWindowWindowingMixin:
             self._top_stack_widget.show()
         self.statusBar().show()
 
-        self.compact_btn.setIcon(_make_plus_minus_icon(False, color=self._control_icon_color()))
+        self.compact_btn.setIcon(_make_compact_icon(False, color=self._control_icon_color()))
         self.compact_btn.setToolTip("切换到简洁模式")
 
         self.centralWidget().layout().activate()
@@ -214,7 +213,15 @@ class MainWindowWindowingMixin:
             restore_width = min(max(restore_width, min_w), max(480, avail.width()))
             restore_height = min(max(restore_height, min_h), max(240, avail.height()))
         self.resize(restore_width, restore_height)
-        self.move(rich_anchor)
+        if screen is not None:
+            avail = screen.availableGeometry()
+            frame_w = self.frameGeometry().width()
+            frame_h = self.frameGeometry().height()
+            center_x = avail.x() + (avail.width() - frame_w) // 2
+            center_y = avail.y() + (avail.height() - frame_h) // 2
+            self.move(center_x, center_y)
+        self._refresh_window_flags()
+        self.setWindowOpacity(1.0)
 
         total = max(1, sum(self.main_splitter.sizes()))
         if self._sidebar_was_collapsed_before_compact:
@@ -307,15 +314,8 @@ class MainWindowWindowingMixin:
         self.rich_max_btn.setIcon(_make_rich_title_icon("restore" if self._is_rich_restore_state() else "max", color=color))
         self.rich_close_btn.setIcon(_make_rich_title_icon("close", color=color))
     def _refresh_window_flags(self) -> None:
-        """刷新窗口标志位，更新窗口行为特性。
-        
-        配置窗口的核心行为标志：
-        - 窗口边框：默认使用系统原生标题栏与边框
-        - 置顶显示：根据设置决定是否保持在最前端
-        - 确保窗口可见性和正确的Z序
-        """
         was_visible = self.isVisible()
-        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, False)
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, self._compact_mode)
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, self._always_on_top)
         if was_visible:
             self.show()
@@ -351,29 +351,20 @@ class MainWindowWindowingMixin:
         self.pin_btn.setToolTip("取消置顶" if self._always_on_top else "置顶窗口")
         self.compact_close_btn.setIcon(_make_rich_title_icon("close", color=color))
     def _layout_compact_top_bar(self) -> None:
-        """布局简洁模式顶部控制栏的各个组件。
-        
-        动态计算并设置顶部栏各元素的尺寸和位置：
-        - 计算可用空间，考虑左右控制按钮的宽度
-        - 动态调整标题标签的宽度和位置
-        - 确保标题在可用空间内居中显示
-        - 提升标题标签的层级确保可见性
-        """
         if not hasattr(self, "compact_top_bar"):
             return
         if not self.compact_top_bar.isVisible():
             return
         width = max(220, self.compact_top_bar.width())
         height = max(self.compact_top_bar.minimumHeight(), self.compact_top_bar.height())
-        title_h = self.compact_top_title_label.sizeHint().height()
         right_controls_width = (
             self.lock_btn.width() + self.pin_btn.width() + self.compact_close_btn.width() + 12
         )
         left_controls_width = self.opacity_slider.width() + 12
         max_title_width = max(80, width - left_controls_width - right_controls_width - 16)
-        title_w = min(max_title_width, self.compact_top_title_label.sizeHint().width())
-        self.compact_top_title_label.resize(title_w, title_h)
-        self.compact_top_title_label.move((width - title_w) // 2, (height - title_h) // 2)
+        title_h = self.compact_top_title_label.sizeHint().height()
+        self.compact_top_title_label.resize(max_title_width, title_h)
+        self.compact_top_title_label.move((width - max_title_width) // 2, (height - title_h) // 2)
         self.compact_top_title_label.raise_()
     def _reposition_volume_value_label(self) -> None:
         if not hasattr(self, "mute_btn") or not hasattr(self, "volume_value_label"):
@@ -741,6 +732,22 @@ class MainWindowWindowingMixin:
                 else:
                     self._rich_drag_offset = gpos - self.frameGeometry().topLeft()
                 return True
+
+        if watched is getattr(self, "compact_top_bar", None) and self._compact_mode:
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                if not self._compact_locked and not self._is_interactive_widget_at(
+                    watched.mapToParent(event.position().toPoint())
+                ):
+                    self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                    return True
+            elif event.type() == QEvent.Type.MouseMove and (event.buttons() & Qt.MouseButton.LeftButton):
+                if self._drag_offset is not None:
+                    self.move(event.globalPosition().toPoint() - self._drag_offset)
+                    return True
+            elif event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+                if self._drag_offset is not None:
+                    self._drag_offset = None
+                    return True
 
         if watched is getattr(self, "search_edit", None) and event.type() == QEvent.Type.Resize:
             self._position_search_clear_button()
