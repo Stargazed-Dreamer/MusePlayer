@@ -11,6 +11,7 @@ import sys
 import textwrap
 import urllib.request
 import zipfile
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -116,6 +117,21 @@ def write_runtime_launcher(bundle_root: Path) -> None:
     """)
     write_bat_ansi(bundle_root / "start.bat", launcher)
 
+    debug_launcher = textwrap.dedent("""\
+        @echo off
+        setlocal
+        cd /d "%~dp0"
+        if exist ".\\python\\python.exe" (
+            ".\\python\\python.exe" ".\\main.py"
+            pause
+            exit /b %errorlevel%
+        )
+        echo Embedded python executable not found.
+        pause
+        exit /b 1
+    """)
+    write_bat_ansi(bundle_root / "start_debug.bat", debug_launcher)
+
 
 def write_environments_file(
     bundle_root: Path,
@@ -199,7 +215,8 @@ def _prepare_configured_runtime(
         print("[CACHE HIT] skipping embed download, get-pip, and pip install")
         if runtime_python_dir.exists():
             shutil.rmtree(runtime_python_dir)
-        shutil.copytree(cached_runtime, runtime_python_dir)
+        ignore_fn = _make_pyside6_trim_ignore()
+        shutil.copytree(cached_runtime, runtime_python_dir, ignore=ignore_fn)
         return
 
     # ---- cache miss: full bootstrap ----
@@ -366,6 +383,55 @@ _PYSIDE6_TRIM_RUNTIME_DEPS = frozenset({
     "Qt6OpenGL", "Qt6OpenGLWidgets", "Qt6Svg", "Qt6SvgWidgets",
     "Qt6Sql", "Qt6MultimediaWidgets",
 })
+
+
+def _make_pyside6_trim_ignore() -> Callable[[str, list[str]], set[str]]:
+    source_dirs = [PROJECT_ROOT / "app", PROJECT_ROOT / "core", PROJECT_ROOT]
+    used_modules = _scan_pyside6_imports(source_dirs)
+    keep_modules = used_modules | {"QtCore", "QtGui", "QtWidgets"}
+    keep_dlls: set[str] = set()
+    for mod in keep_modules:
+        keep_dlls.update(_pyside6_module_dll_names(mod))
+    keep_dlls.update(_PYSIDE6_TRIM_RUNTIME_DEPS)
+
+    pyside6_dir_prefix = os.path.join("Lib", "site-packages", "PySide6")
+
+    def _ignore(directory: str, contents: list[str]) -> set[str]:
+        norm = directory.replace("\\", "/")
+        if pyside6_dir_prefix.replace("\\", "/") not in norm:
+            return set()
+
+        ignored: set[str] = set()
+        for name in contents:
+            if name in _PYSIDE6_TRIM_SKIP_DIRS:
+                ignored.add(name)
+                continue
+            if name == "plugins":
+                plugin_path = os.path.join(directory, name)
+                for sub in os.listdir(plugin_path) if os.path.isdir(plugin_path) else []:
+                    if sub not in _PYSIDE6_TRIM_KEEP_PLUGIN_DIRS:
+                        ignored.add(sub)
+                continue
+            if name.startswith("Qt") and name not in keep_modules:
+                full = os.path.join(directory, name)
+                if os.path.isdir(full):
+                    ignored.add(name)
+                continue
+            name_lower = name.lower()
+            if name_lower.endswith((".pyd", ".dll")):
+                stem = name
+                for ext in (".pyd", ".dll"):
+                    if stem.endswith(ext):
+                        stem = stem[: -len(ext)]
+                        break
+                is_keep = any(stem == k or stem.startswith(k + "_") for k in keep_dlls | keep_modules)
+                if not is_keep and not stem.startswith("pyside6") and not stem.startswith("shiboken"):
+                    if stem.startswith("Qt3D") or stem.startswith("Qt6") or stem.startswith("Qt"):
+                        ignored.add(name)
+
+        return ignored
+
+    return _ignore
 
 
 def _scan_pyside6_imports(source_dirs: list[Path]) -> set[str]:

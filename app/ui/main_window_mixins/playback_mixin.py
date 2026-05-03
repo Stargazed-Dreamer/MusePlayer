@@ -50,6 +50,7 @@ from app.ui.main_window_helpers import (
     _make_media_icon,
     _make_mode_icon,
     _make_moon_icon,
+    _make_plus_icon,
     _make_sun_icon,
     _make_volume_icon,
     _parse_lrc_entries,
@@ -661,6 +662,7 @@ class MainWindowPlaybackMixin:
             idx = 0
         next_mode = self._mode_order[(idx + 1) % len(self._mode_order)]
         self.player.set_mode(next_mode)
+        self._reload_track_list()
         title = self._mode_titles.get(next_mode, next_mode)
         self.statusBar().showMessage(f"播放模式：{title}", 2500)
     def _on_mode_changed(self, mode: str) -> None:
@@ -671,7 +673,6 @@ class MainWindowPlaybackMixin:
         self.mode_btn.setToolTip(f"播放模式: {title}（点击切换）")
         self._next_track_preview_announced = False
         self._refresh_random_state_hint()
-        self._reload_track_list()
     def _toggle_current_favorite(self) -> None:
         track = self.player.current_track()
         if track is None:
@@ -740,6 +741,7 @@ class MainWindowPlaybackMixin:
         self._dark_theme = not self._dark_theme
         self._apply_theme_stylesheet()
         self._refresh_theme_button()
+        self._skip_next_settings_reload = True
         self.controller.set_theme_preference(self._dark_theme)
         self.statusBar().showMessage("主题：夜间模式" if self._dark_theme else "主题：日间模式", 1800)
     def _apply_theme_stylesheet(self) -> None:
@@ -782,6 +784,7 @@ class MainWindowPlaybackMixin:
         self.next_btn.setIcon(_make_media_icon("next", color=color))
         self.play_btn.setIcon(_make_media_icon("pause" if self.player.is_playing() else "play", color=color))
         self.locate_file_btn.setIcon(_make_folder_icon(color=color))
+        self.add_to_playlist_btn.setIcon(_make_plus_icon(color=color))
         current_track_id = self.player.current_track_id
         self._refresh_favorite_button(current_track_id)
         self.compact_btn.setIcon(_make_compact_icon(self._compact_mode, color=color))
@@ -791,19 +794,28 @@ class MainWindowPlaybackMixin:
         self._update_sidebar_toggle_icon()
         self._refresh_compact_top_buttons()
         self._refresh_volume_ui()
-        self._on_mode_changed(self.player.mode.value)
-    def _on_random_state_changed(self, seed: int, idx: int) -> None:
-        _ = seed, idx
+        self.mode_btn.setIcon(self._mode_icons.get(self.player.mode.value, self._mode_icons[PlayMode.SINGLE_LOOP.value]))
         self._refresh_random_state_hint()
+    def _on_random_state_changed(self, seed: int, idx: int) -> None:
+        self._refresh_random_state_hint()
+        if self.player.mode == PlayMode.RANDOM and str(getattr(self.controller.settings, "random_display_order", "original")) == "random":
+            if getattr(self, "_last_random_seed", None) is not None and seed != self._last_random_seed:
+                self._reload_track_list()
+        self._last_random_seed = seed
     def _refresh_random_state_hint(self) -> None:
         if not hasattr(self, "random_state_label"):
             return
         if self.player.mode != PlayMode.RANDOM:
             self.random_state_label.setText("")
             self.random_state_label.hide()
+            if hasattr(self, "menu_hint_widget"):
+                self.menu_hint_widget.updateGeometry()
             return
         self.random_state_label.setText(f"seed:{self.player.random_seed} idx:{self.player.random_index}")
         self.random_state_label.show()
+        if hasattr(self, "menu_hint_widget"):
+            self.menu_hint_widget.updateGeometry()
+        self.menuBar().setCornerWidget(self.menu_hint_widget, Qt.Corner.TopRightCorner)
     def _update_window_title(self) -> None:
         title = (self._current_track_title or "").strip()
         if not title or title == "未选择歌曲":
@@ -992,15 +1004,25 @@ class MainWindowPlaybackMixin:
     def _on_settings_changed(self, settings) -> None:
         self.player.set_single_loop_mode_enabled(bool(getattr(settings, "enable_single_loop_mode", True)))
         self.player.set_playlist_loop_mode_enabled(bool(getattr(settings, "enable_playlist_loop_mode", False)))
+        old_mode = self.player.mode.value
         self._refresh_mode_order()
         self._on_mode_changed(self.player.mode.value)
+        new_mode = self.player.mode.value
+        need_reload = old_mode != new_mode
+        if getattr(self, "_skip_next_settings_reload", False):
+            self._skip_next_settings_reload = False
+        else:
+            dark = bool(getattr(settings, "dark_theme", self._dark_theme))
+            if dark != self._dark_theme:
+                self._dark_theme = dark
+                self._apply_theme_stylesheet()
+                self._refresh_theme_button()
+            else:
+                need_reload = True
+        if need_reload:
+            self._reload_track_list()
         self._apply_window_size_limits()
         self._ensure_window_inside_screen()
-        dark = bool(getattr(settings, "dark_theme", self._dark_theme))
-        if dark != self._dark_theme:
-            self._dark_theme = dark
-            self._apply_theme_stylesheet()
-            self._refresh_theme_button()
     def _on_error(self, message: str) -> None:
         self.statusBar().showMessage(message, 7000)
     def _on_runtime_status_changed(self, listening: bool, host: str, port: int) -> None:

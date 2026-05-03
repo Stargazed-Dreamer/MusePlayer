@@ -95,6 +95,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         self._random_seed = 1
         self._random_index = 0
         self._random_order: list[str] = []
+        self._RANDOM_SEED_MAX = 2_000_000_000
 
         self._expecting_natural_end = False
         self._last_playing = False
@@ -209,6 +210,11 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
     def set_random_display_order_getter(self, getter: Callable[[], str]) -> None:
         self._random_display_order_getter = getter
 
+    def _increment_random_seed(self) -> None:
+        self._random_seed += 1
+        if self._random_seed > self._RANDOM_SEED_MAX:
+            self._random_seed = 1
+
     def set_mode(self, mode: str | PlayMode) -> None:
         if isinstance(mode, str):
             cleaned = mode.strip().lower()
@@ -250,7 +256,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             self.track_changed.emit(None)
             self.queue_changed.emit()
             return None
-        self._random_seed += 1
+        self._increment_random_seed()
         self._rebuild_random_order(force=True)
         if self._random_order:
             self._random_index = 0
@@ -640,7 +646,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
 
         if self._mode == PlayMode.RANDOM:
             if manual_select and not preserve_random:
-                self._random_seed += 1
+                self._increment_random_seed()
                 self._rebuild_random_order(force=True)
                 self._align_random_index_with_current_track()
             elif preserve_random:
@@ -701,7 +707,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
                     self._random_index = DeterministicShuffle.clamp_index(self._random_order, self._random_index)
 
                 if self._random_index + 1 >= len(self._random_order):
-                    self._random_seed += 1
+                    self._increment_random_seed()
                     self._rebuild_random_order(force=True)
                     self._random_index = 0
                 else:
