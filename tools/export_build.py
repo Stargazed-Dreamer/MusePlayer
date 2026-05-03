@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -322,7 +323,6 @@ def build_portable_runtime(runtime_python: str, *, force_download: bool = False)
     runtime_python_dir = bundle_root / "python"
     runtime_python_dir.mkdir(parents=True, exist_ok=True)
 
-    # CHANGED: use cached runtime helper instead of inlining everything
     _prepare_configured_runtime(
         runtime_python_dir, runtime_python, force=force_download,
     )
@@ -331,7 +331,8 @@ def build_portable_runtime(runtime_python: str, *, force_download: bool = False)
     if not python_exe.exists():
         raise RuntimeError("python.exe not found in embedded runtime")
 
-    # Collect metadata (always runs, lightweight)
+    _trim_pyside6(runtime_python_dir)
+
     runtime_version = subprocess.check_output(
         [str(python_exe), "-c", "import sys; print(sys.version.replace('\\n', ' '))"],
         text=True, cwd=str(bundle_root),
@@ -349,6 +350,128 @@ def build_portable_runtime(runtime_python: str, *, force_download: bool = False)
         runtime_freeze=runtime_freeze,
     )
     return bundle_root
+
+
+_PYSIDE6_TRIM_SKIP_DIRS = frozenset({
+    "__pycache__", "include", "typesystems", "scripts", "glue",
+    "resources", "metatypes", "QtAsyncio", "qml", "translations",
+})
+
+_PYSIDE6_TRIM_KEEP_PLUGIN_DIRS = frozenset({
+    "platforms", "styles", "imageformats", "iconengines",
+    "multimedia", "networkinformation", "tls", "generic", "sqldrivers",
+})
+
+_PYSIDE6_TRIM_RUNTIME_DEPS = frozenset({
+    "Qt6OpenGL", "Qt6OpenGLWidgets", "Qt6Svg", "Qt6SvgWidgets",
+    "Qt6Sql", "Qt6MultimediaWidgets",
+})
+
+
+def _scan_pyside6_imports(source_dirs: list[Path]) -> set[str]:
+    import_re = re.compile(r"from\s+PySide6\.(\w+)\s+import|import\s+PySide6\.(\w+)")
+    skip_dirs = {".build", ".venv", "__pycache__", "node_modules"}
+    modules: set[str] = set()
+    for src_dir in source_dirs:
+        for py_file in src_dir.rglob("*.py"):
+            if any(part in skip_dirs for part in py_file.parts):
+                continue
+            try:
+                text = py_file.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for m in import_re.finditer(text):
+                mod = m.group(1) or m.group(2)
+                if mod and mod[0].isupper():
+                    modules.add(mod)
+    return modules
+
+
+def _pyside6_module_dll_names(module_name: str) -> set[str]:
+    names = {module_name, f"Qt6{module_name[2:]}"}
+    if module_name == "QtWidgets":
+        names.update({"Qt6MultimediaWidgets", "Qt6OpenGLWidgets", "Qt6SvgWidgets"})
+    if module_name == "QtGui":
+        names.update({"Qt6OpenGL", "Qt6Svg"})
+    if module_name == "QtMultimedia":
+        names.add("Qt6MultimediaWidgets")
+    return names
+
+
+def _trim_pyside6(runtime_python_dir: Path, *, source_dirs: list[Path] | None = None) -> None:
+    site_packages = runtime_python_dir / "Lib" / "site-packages"
+    pyside6_dir = site_packages / "PySide6"
+    if not pyside6_dir.is_dir():
+        print("[TRIM] PySide6 not found, skipping trim")
+        return
+
+    if source_dirs is None:
+        source_dirs = [PROJECT_ROOT / "app", PROJECT_ROOT / "core", PROJECT_ROOT]
+
+    used_modules = _scan_pyside6_imports(source_dirs)
+    keep_modules = used_modules | {"QtCore", "QtGui", "QtWidgets"}
+    keep_dlls: set[str] = set()
+    for mod in keep_modules:
+        keep_dlls.update(_pyside6_module_dll_names(mod))
+    keep_dlls.update(_PYSIDE6_TRIM_RUNTIME_DEPS)
+
+    print(f"[TRIM] PySide6 modules detected: {sorted(used_modules)}")
+    print(f"[TRIM] Keeping modules: {sorted(keep_modules)}")
+    print(f"[TRIM] Keeping DLLs: {sorted(keep_dlls)}")
+
+    removed_count = 0
+    removed_bytes = 0
+
+    for item in list(pyside6_dir.iterdir()):
+        name = item.name
+        name_lower = name.lower()
+
+        if item.is_dir():
+            if name in _PYSIDE6_TRIM_SKIP_DIRS:
+                size = sum(f.stat().st_size for f in item.rglob("*") if f.is_file())
+                shutil.rmtree(item, ignore_errors=True)
+                removed_count += 1
+                removed_bytes += size
+                continue
+            if name == "plugins":
+                for sub in list(item.iterdir()):
+                    if sub.is_dir() and sub.name not in _PYSIDE6_TRIM_KEEP_PLUGIN_DIRS:
+                        size = sum(f.stat().st_size for f in sub.rglob("*") if f.is_file())
+                        shutil.rmtree(sub, ignore_errors=True)
+                        removed_count += 1
+                        removed_bytes += size
+                continue
+            if name.startswith("Qt") and name not in keep_modules:
+                size = sum(f.stat().st_size for f in item.rglob("*") if f.is_file())
+                shutil.rmtree(item, ignore_errors=True)
+                removed_count += 1
+                removed_bytes += size
+                continue
+
+        if item.is_file() and name_lower.endswith((".pyd", ".dll")):
+            stem = name
+            for ext in (".pyd", ".dll"):
+                if stem.endswith(ext):
+                    stem = stem[: -len(ext)]
+                    break
+            is_keep = False
+            for keep in keep_dlls | keep_modules:
+                if stem == keep or stem.startswith(keep + "_"):
+                    is_keep = True
+                    break
+            if not is_keep and not stem.startswith("pyside6") and not stem.startswith("shiboken"):
+                if stem.startswith("Qt3D") or stem.startswith("Qt6") or stem.startswith("Qt"):
+                    try:
+                        size = item.stat().st_size
+                        item.unlink()
+                        removed_count += 1
+                        removed_bytes += size
+                    except OSError:
+                        pass
+
+    if removed_bytes > 0:
+        mb = removed_bytes / (1024 * 1024)
+        print(f"[TRIM] Removed {removed_count} items, saved {mb:.1f} MB")
 
 
 def parse_args() -> argparse.Namespace:

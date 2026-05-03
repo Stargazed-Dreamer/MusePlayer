@@ -1,0 +1,34 @@
+# 发版检查清单
+
+## 构建前
+
+- [ ] 确认 `app/version.py` 中的版本号已更新
+- [ ] 确认 `requirements.txt` 中的依赖版本正确
+- [ ] 确认所有新功能在 `docs/` 目录有对应文档
+
+## 构建时
+
+- [ ] 运行 `build.bat` 或 `python tools/export_build.py`
+- [ ] 检查构建输出中的 `[TRIM]` 日志，确认：
+  - 检测到的 PySide6 模块列表与预期一致
+  - 裁剪节省的空间合理（通常 70%+）
+- [ ] 如果新增了 PySide6 模块依赖（如 QtWebSockets、QtSql 等），确认：
+  - `_scan_pyside6_imports` 能自动检测到新模块
+  - 如有运行时隐式依赖（非 import 方式加载），需在 `_PYSIDE6_TRIM_RUNTIME_DEPS` 中手动添加对应 DLL 名
+- [ ] 如果新增了 Qt 插件依赖，需在 `_PYSIDE6_TRIM_KEEP_PLUGIN_DIRS` 中添加对应插件目录名
+
+## 构建后验证
+
+- [ ] 在构建产物目录运行 `start.bat`，确认应用正常启动
+- [ ] 播放一首歌曲，确认音频输出正常
+- [ ] 打开设置对话框，确认所有设置项可正常修改和保存
+- [ ] 切换播放模式（单曲循环/歌单循环/随机），确认功能正常
+- [ ] 拖入歌词文件，确认歌词显示正常
+- [ ] 如有日语歌词，确认注音/罗马音/翻译分行显示
+- [ ] 关闭应用后重新打开，确认会话恢复正常
+- [ ] 检查 `data/crashlogs/` 目录，确认无异常崩溃日志
+
+## 发版
+
+- [ ] 将 `.build/portable_runtime_vX.Y.Z/` 目录打包为 zip
+- [ ] 在 Release 页面附上 zip 和更新说明

@@ -90,12 +90,6 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
             stream.close()
         except Exception:
             pass
-        crash_file = crash_dir / _CRASHLOG_FILENAME
-        try:
-            if crash_file.exists() and crash_file.stat().st_size == 0:
-                crash_file.unlink()
-        except OSError:
-            pass
 
     def _write_crash(reason: str, exc_type=None, exc_value=None, exc_tb=None) -> None:
         if not _is_crash_logging_enabled():
