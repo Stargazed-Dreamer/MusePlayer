@@ -12,10 +12,10 @@ from __future__ import annotations
 - MultiHintStatusBar: 支持多消息并发的状态栏，用于同时显示音量/播放状态/下一首预告等
 - LyricsListWidget: 歌词显示列表，支持用户交互检测和复制操作
 - ClickJumpSlider: 点击跳转滑条，用于进度条和音量控制，支持滚轮音量调节
-- LyricsItemDelegate: 歌词项绘制委托，支持高亮当前歌词和时间轴显示
+- LyricsItemDelegate: 歌词项绘制委托，支持高亮当前歌词和多行歌词显示
 - _WindowsTaskbarProgress: Windows任务栏进度集成，通过COM接口实现
 - 图标绘制函数: 各种播放控制图标的矢量绘制工具
-- LRC歌词解析: 标准LRC格式歌词的时间戳解析和内容提取
+- LRC/QRC歌词解析: 标准LRC格式和QQ音乐QRC格式歌词的时间戳解析和内容提取
 
 设计目的：
 - 将高复用 UI 细节从主窗口类中剥离，降低主类复杂度
@@ -30,6 +30,7 @@ import re
 import sys
 import time
 from ctypes import HRESULT, c_int, c_uint, c_ulonglong, c_void_p
+from dataclasses import dataclass, field
 
 from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap
@@ -61,6 +62,64 @@ except Exception:
     IUnknown = object
 
 _LRC_RE = re.compile(r"\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]")
+_KANA_RE = re.compile(r"^\[kana:(.*)\]$", re.MULTILINE)
+
+
+@dataclass(slots=True)
+class FuriganaAnnotation:
+    char_index: int
+    text: str
+
+
+@dataclass(slots=True)
+class LyricWord:
+    text: str
+    start_ms: int
+    duration_ms: int
+
+
+@dataclass(slots=True)
+class LyricEntry:
+    timestamp: float
+    original: str = ""
+    romaji: str = ""
+    translation: str = ""
+    original_words: list[LyricWord] = field(default_factory=list)
+    romaji_words: list[LyricWord] = field(default_factory=list)
+    furigana: list[FuriganaAnnotation] = field(default_factory=list)
+
+    def line_count(self, *, show_japanese: bool = True, show_romaji: bool = True) -> int:
+        count = 0
+        if show_japanese and self.original:
+            count += 1
+            if self.furigana:
+                count += 1
+        if show_romaji and self.romaji:
+            count += 1
+        if self.translation:
+            count += 1
+        return max(1, count)
+
+    def display_text(self, *, show_japanese: bool = True, show_romaji: bool = True) -> str:
+        parts: list[str] = []
+        if show_japanese and self.original:
+            parts.append(self.original)
+        if show_romaji and self.romaji:
+            parts.append(self.romaji)
+        if self.translation:
+            parts.append(self.translation)
+        if not parts:
+            return self.original or self.romaji or self.translation or "♪"
+        return "\n".join(parts)
+
+    def compact_text(self, *, show_japanese: bool = True, show_romaji: bool = True) -> str:
+        if show_japanese and self.original:
+            return self.original
+        if show_romaji and self.romaji:
+            return self.romaji
+        if self.translation:
+            return self.translation
+        return self.original or self.romaji or self.translation or "♪"
 
 TBPF_NOPROGRESS = 0x00000000
 TBPF_INDETERMINATE = 0x00000001
@@ -478,48 +537,33 @@ class ClickJumpSlider(QSlider):
 class LyricsItemDelegate(QStyledItemDelegate):
     """用于显示歌词的自定义列表项委托类.
 
-    此类负责渲染歌词列表，支持显示时间戳和悬停效果。
-    可以在歌词项中显示开始和结束时间。
+    此类负责渲染歌词列表，支持显示时间戳、悬停效果和多行歌词。
+    当歌词包含日语原文和罗马音时，可以按行对齐显示。
 
     Attributes:
         _hover_row: 当前鼠标悬停的行号。
         _start_times: 歌词开始时间列表。
         _end_times: 歌词结束时间列表。
+        _structured: 结构化歌词数据列表。
     """
     def __init__(self, parent=None):
         super().__init__(parent)
         self._hover_row = -1
         self._start_times: list[float] = []
         self._end_times: list[float] = []
+        self._structured: list[LyricEntry] | None = None
 
     def set_times(self, starts: list[float], ends: list[float]) -> None:
-        """设置歌词时间戳.
-
-        Args:
-            starts: 歌词开始时间列表（以秒为单位）。
-            ends: 歌词结束时间列表（以秒为单位）。
-        """
         self._start_times = list(starts)
         self._end_times = list(ends)
 
-    def set_hover_row(self, row: int) -> None:
-        """设置当前悬停的行号.
+    def set_structured_lyrics(self, entries: list[LyricEntry] | None) -> None:
+        self._structured = entries
 
-        Args:
-            row: 悬停的行号，如果没有悬停则为-1。
-        """
+    def set_hover_row(self, row: int) -> None:
         self._hover_row = int(row)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
-        """绘制歌词列表项，显示歌词文本和时间戳.
-
-        如果鼠标悬停在该行上，会显示开始和结束时间。
-
-        Args:
-            painter: Qt绘画对象。
-            option: 样式选项，包含绘制所需的信息。
-            index: 当前绘制项的模型索引。
-        """
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         style = opt.widget.style() if opt.widget is not None else QApplication.style()
@@ -540,24 +584,103 @@ class LyricsItemDelegate(QStyledItemDelegate):
             painter.drawText(left_rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), _format_lrc_time(self._start_times[row]))
             painter.drawText(right_rect, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), _format_lrc_time(self._end_times[row]))
 
+        if self._structured and 0 <= row < len(self._structured):
+            entry = self._structured[row]
+            self._paint_structured_entry(painter, entry, text_rect, opt)
+        else:
+            text_pen = opt.palette.color(opt.palette.ColorRole.Text)
+            painter.setPen(text_pen)
+            painter.drawText(text_rect, int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), text)
+        painter.restore()
+
+    def _paint_structured_entry(self, painter: QPainter, entry: LyricEntry, rect: QRect, opt: QStyleOptionViewItem) -> None:
         text_pen = opt.palette.color(opt.palette.ColorRole.Text)
-        painter.setPen(text_pen)
-        painter.drawText(text_rect, int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), text)
+        secondary_pen = QColor(text_pen)
+        secondary_pen.setAlpha(160)
+        fm = opt.fontMetrics
+        base_line_h = fm.height() + 4
+        furi_line_h = max(10, int(fm.height() * 0.6) + 2)
+        y = rect.top()
+        has_japanese = bool(entry.original)
+        has_furigana = bool(entry.furigana)
+        has_romaji = bool(entry.romaji)
+        has_translation = bool(entry.translation)
+
+        if has_japanese:
+            if has_furigana:
+                self._paint_furigana_line(painter, entry, rect, y, furi_line_h, secondary_pen, fm)
+                y += furi_line_h
+            painter.setPen(text_pen)
+            painter.drawText(QRect(rect.left(), y, rect.width(), base_line_h), int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), entry.original)
+            y += base_line_h
+
+        if has_romaji:
+            painter.setPen(secondary_pen)
+            romaji_font = painter.font()
+            romaji_font.setPointSize(max(7, romaji_font.pointSize() - 1))
+            painter.setFont(romaji_font)
+            painter.drawText(QRect(rect.left(), y, rect.width(), base_line_h), int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), entry.romaji)
+            romaji_font.setPointSize(romaji_font.pointSize() + 1)
+            painter.setFont(romaji_font)
+            y += base_line_h
+
+        if has_translation:
+            painter.setPen(secondary_pen)
+            painter.drawText(QRect(rect.left(), y, rect.width(), base_line_h), int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), entry.translation)
+
+    def _paint_furigana_line(self, painter: QPainter, entry: LyricEntry, rect: QRect, y: int, line_h: int, pen: QColor, fm) -> None:
+        text = entry.original
+        if not text or not entry.furigana:
+            return
+        painter.save()
+        furi_font = painter.font()
+        furi_font.setPointSize(max(6, furi_font.pointSize() - 2))
+        painter.setFont(furi_font)
+        painter.setPen(pen)
+
+        furi_map: dict[int, str] = {f.char_index: f.text for f in entry.furigana}
+        char_widths: list[float] = []
+        furi_fm = painter.fontMetrics()
+        for ch in text:
+            char_widths.append(float(fm.horizontalAdvance(ch)))
+
+        furi_widths: list[float] = []
+        for i, ch in enumerate(text):
+            if i in furi_map:
+                furi_widths.append(float(furi_fm.horizontalAdvance(furi_map[i])))
+            else:
+                furi_widths.append(0.0)
+
+        total_char_w = sum(char_widths)
+        total_furi_w = sum(furi_widths)
+        extra = max(0.0, total_furi_w - total_char_w)
+        extra_per_char = extra / max(1, len(text)) if extra > 0 else 0.0
+
+        total_w = total_char_w + extra * 1.0
+        start_x = rect.left() + (rect.width() - total_w) / 2.0
+
+        x = start_x
+        for i, ch in enumerate(text):
+            if i in furi_map:
+                furi_text = furi_map[i]
+                furi_w = furi_fm.horizontalAdvance(furi_text)
+                cell_w = char_widths[i] + extra_per_char
+                furi_x = x + (cell_w - furi_w) / 2.0
+                painter.drawText(QRectF(furi_x, y, furi_w + 4, line_h), int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), furi_text)
+            x += char_widths[i] + extra_per_char
+
         painter.restore()
 
     def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
-        """返回歌词列表项的建议大小.
-
-        Args:
-            option: 样式选项，包含字体等信息。
-            index: 当前项的模型索引。
-
-        Returns:
-            QSize: 建议的宽度和高度。
-        """
         text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-        h = max(24, option.fontMetrics.height() + 8)
-        w = max(160, option.fontMetrics.horizontalAdvance(text) + 20)
+        line_count = max(1, text.count("\n") + 1)
+        if self._structured and 0 <= index.row() < len(self._structured):
+            entry = self._structured[index.row()]
+            line_count = entry.line_count(show_japanese=True, show_romaji=True)
+        base_h = option.fontMetrics.height() + 4
+        furi_h = max(10, int(option.fontMetrics.height() * 0.6) + 2) if (self._structured and 0 <= index.row() < len(self._structured) and self._structured[index.row()].furigana) else 0
+        h = max(24, base_h * line_count + furi_h + 4)
+        w = max(160, option.fontMetrics.horizontalAdvance(text.split("\n")[0] if "\n" in text else text) + 20)
         return QSize(w, h)
 
 
@@ -927,6 +1050,259 @@ def _parse_lrc_entries(raw: str) -> list[tuple[float, str]]:
 
     result.sort(key=lambda x: x[0])
     return result
+
+
+_QRC_LINE_RE = re.compile(r"\[(\d+),(\d+)\]([^\[]*)")
+_QRC_WORD_RE = re.compile(r"\((\d+),(\d+)\)")
+_QRC_WORD_PART_RE = re.compile(r"([^(]+)\((\d+),(\d+)\)")
+
+
+def _parse_qrc_words(text_raw: str) -> list[LyricWord]:
+    words: list[LyricWord] = []
+    for m in _QRC_WORD_PART_RE.finditer(text_raw):
+        words.append(LyricWord(text=m.group(1), start_ms=int(m.group(2)), duration_ms=int(m.group(3))))
+    return words
+
+
+def _parse_qrc_entries(raw: str) -> list[tuple[float, str]]:
+    content = raw.strip()
+    if content.startswith("<?xml") or content.startswith("<QrcInfos"):
+        import xml.etree.ElementTree as ET
+        try:
+            root = ET.fromstring(content)
+            for lyric_elem in root.iter():
+                lc = lyric_elem.get("LyricContent", "")
+                if lc:
+                    content = lc
+                    break
+        except Exception:
+            pass
+    result: list[tuple[float, str]] = []
+    for m in _QRC_LINE_RE.finditer(content):
+        start_ms = int(m.group(1))
+        text_raw = m.group(3)
+        text = _QRC_WORD_RE.sub("", text_raw).strip()
+        if not text:
+            continue
+        sec = start_ms / 1000.0
+        result.append((sec, text))
+    result.sort(key=lambda x: x[0])
+    return result
+
+
+def _parse_qrc_structured(raw: str, *, is_romaji: bool = False) -> list[tuple[float, str, list[LyricWord]]]:
+    content = raw.strip()
+    if content.startswith("<?xml") or content.startswith("<QrcInfos"):
+        import xml.etree.ElementTree as ET
+        try:
+            root = ET.fromstring(content)
+            for lyric_elem in root.iter():
+                lc = lyric_elem.get("LyricContent", "")
+                if lc:
+                    content = lc
+                    break
+        except Exception:
+            pass
+    result: list[tuple[float, str, list[LyricWord]]] = []
+    for m in _QRC_LINE_RE.finditer(content):
+        start_ms = int(m.group(1))
+        text_raw = m.group(3)
+        text = _QRC_WORD_RE.sub("", text_raw).strip()
+        if not text:
+            continue
+        words = _parse_qrc_words(text_raw)
+        sec = start_ms / 1000.0
+        result.append((sec, text, words))
+    result.sort(key=lambda x: x[0])
+    return result
+
+
+def _detect_lyrics_format(raw: str) -> str:
+    stripped = raw.strip()
+    if stripped.startswith("<?xml") or stripped.startswith("<QrcInfos"):
+        return "qrc"
+    if "_qm.qrc" in raw or "_qmRoma.qrc" in raw or "_qmts.qrc" in raw:
+        return "qrc"
+    if _QRC_LINE_RE.search(stripped[:500]):
+        return "qrc"
+    return "lrc"
+
+
+def _parse_lyrics_entries(raw: str) -> list[tuple[float, str]]:
+    fmt = _detect_lyrics_format(raw)
+    if fmt == "qrc":
+        return _parse_qrc_entries(raw)
+    return _parse_lrc_entries(raw)
+
+
+def _detect_lyrics_lang(filename: str) -> str:
+    name = (filename or "").lower()
+    if name.endswith("_qmroma.qrc.txt") or "_qmroma." in name:
+        return "romaji"
+    if name.endswith("_qmts.qrc.txt") or "_qmts." in name:
+        return "translation"
+    if name.endswith("_qm.qrc.txt") or "_qm." in name:
+        return "japanese"
+    return "original"
+
+
+def _extract_kana_content(raw: str) -> str:
+    m = _KANA_RE.search(raw)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def _parse_kana_to_furigana_list(kana_content: str) -> list[str | None]:
+    cleaned = _QRC_WORD_RE.sub("", kana_content)
+    result: list[str | None] = []
+    i = 0
+    while i < len(cleaned):
+        ch = cleaned[i]
+        if ch == "1":
+            result.append(None)
+            i += 1
+        else:
+            reading_chars: list[str] = []
+            while i < len(cleaned) and cleaned[i] != "1":
+                reading_chars.append(cleaned[i])
+                i += 1
+            result.append("".join(reading_chars))
+    return result
+
+
+def _parse_kana_timed(kana_content: str) -> list[tuple[str | None, int]]:
+    result: list[tuple[str | None, int]] = []
+    i = 0
+    n = len(kana_content)
+    while i < n:
+        ch = kana_content[i]
+        if ch == "1":
+            start_ms = 0
+            j = i + 1
+            if j < n and kana_content[j] == "(":
+                m = _QRC_WORD_RE.match(kana_content, j)
+                if m:
+                    start_ms = int(m.group(1))
+                    j = m.end()
+            result.append((None, start_ms))
+            i = j
+        elif ch == "(":
+            m = _QRC_WORD_RE.match(kana_content, i)
+            if m:
+                i = m.end()
+            else:
+                i += 1
+        else:
+            reading_chars: list[str] = []
+            start_ms = 0
+            while i < n and kana_content[i] not in ("1", "("):
+                reading_chars.append(kana_content[i])
+                i += 1
+            reading = "".join(reading_chars)
+            if i < n and kana_content[i] == "(":
+                m = _QRC_WORD_RE.match(kana_content, i)
+                if m:
+                    start_ms = int(m.group(1))
+                    i = m.end()
+            result.append((reading if reading else None, start_ms))
+    return result
+
+
+def _assign_furigana_to_entries(entries: list[LyricEntry], kana_content: str) -> None:
+    if not kana_content:
+        return
+    furigana_list = _parse_kana_to_furigana_list(kana_content)
+    if not furigana_list:
+        return
+    kana_idx = 0
+    for entry in entries:
+        if not entry.original:
+            continue
+        char_count = sum(1 for ch in entry.original if ch not in (" ", "　"))
+        if kana_idx + char_count > len(furigana_list):
+            break
+        char_idx = 0
+        entry.furigana = []
+        for ch in entry.original:
+            if ch in (" ", "　"):
+                char_idx += 1
+                continue
+            if kana_idx >= len(furigana_list):
+                break
+            furi = furigana_list[kana_idx]
+            if furi is not None:
+                entry.furigana.append(FuriganaAnnotation(char_index=char_idx, text=furi))
+            kana_idx += 1
+            char_idx += 1
+
+
+def build_structured_lyrics(
+    main_raw: str,
+    main_filename: str = "",
+    extra_files: list[tuple[str, str]] | None = None,
+) -> list[LyricEntry]:
+    entries_list: list[LyricEntry] = []
+    kana_content = ""
+    _MERGE_TOLERANCE = 0.05
+
+    def _find_or_create(ts: float) -> LyricEntry:
+        for e in entries_list:
+            if abs(e.timestamp - ts) < _MERGE_TOLERANCE:
+                return e
+        e = LyricEntry(timestamp=ts)
+        entries_list.append(e)
+        return e
+
+    def _extract_kana(raw: str) -> None:
+        nonlocal kana_content
+        kana = _extract_kana_content(raw)
+        if kana and len(kana) > len(kana_content):
+            kana_content = kana
+
+    def _merge_lrc(raw: str, lang: str) -> None:
+        for sec, text in _parse_lrc_entries(raw):
+            e = _find_or_create(sec)
+            if lang == "translation":
+                e.translation = text
+            elif lang == "romaji":
+                e.romaji = text
+            else:
+                e.original = text
+
+    def _merge_qrc(raw: str, lang: str) -> None:
+        for sec, text, words in _parse_qrc_structured(raw):
+            e = _find_or_create(sec)
+            if lang == "romaji":
+                e.romaji = text
+                e.romaji_words = words
+            elif lang == "japanese":
+                e.original = text
+                e.original_words = words
+            else:
+                e.original = text
+                e.original_words = words
+
+    def _merge(raw: str, filename: str) -> None:
+        lang = _detect_lyrics_lang(filename)
+        fmt = _detect_lyrics_format(raw)
+        _extract_kana(raw)
+        if fmt == "qrc":
+            _merge_qrc(raw, lang)
+        else:
+            _merge_lrc(raw, lang)
+
+    _merge(main_raw, main_filename)
+
+    if extra_files:
+        for raw, filename in extra_files:
+            _merge(raw, filename)
+
+    entries_list.sort(key=lambda e: e.timestamp)
+
+    if kana_content:
+        _assign_furigana_to_entries(entries_list, kana_content)
+    return entries_list
 
 
 def _make_mode_icon(mode: str, *, color: QColor | str = "#f4f4f4") -> QIcon:

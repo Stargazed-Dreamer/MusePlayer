@@ -58,6 +58,8 @@ class Track:
     """源歌词文件的相对路径"""
     source_lyrics_path: str = ""
     """歌词文件绝对路径"""
+    extra_lyrics_paths: str = ""
+    """额外歌词文件路径，用|分隔"""
     source_sha256: str = ""
     """源文件的SHA256哈希值"""
 
@@ -90,6 +92,7 @@ class Track:
             "source_storage_relpath": self.source_storage_relpath,
             "source_lyrics_storage_relpath": self.source_lyrics_storage_relpath,
             "source_lyrics_path": self.source_lyrics_path,
+            "extra_lyrics_paths": self.extra_lyrics_paths,
             "source_sha256": self.source_sha256,
         }
 
@@ -117,6 +120,7 @@ class Track:
             source_storage_relpath=str(data.get("source_storage_relpath", "")),
             source_lyrics_storage_relpath=str(data.get("source_lyrics_storage_relpath", "")),
             source_lyrics_path=str(data.get("source_lyrics_path", "")),
+            extra_lyrics_paths=str(data.get("extra_lyrics_paths", "")),
             source_sha256=str(data.get("source_sha256", "")),
         )
 
@@ -148,6 +152,8 @@ class Playlist:
     """源数据库位置"""
     source_exported_at: str = ""
     """源播放列表导出时间"""
+    ordered: bool = True
+    """曲目顺序是否有意义"""
 
     def touch(self) -> None:
         """更新播放列表的修改时间戳。
@@ -173,6 +179,7 @@ class Playlist:
             "source_playlist_hash": self.source_playlist_hash,
             "source_database_location": self.source_database_location,
             "source_exported_at": self.source_exported_at,
+            "ordered": self.ordered,
         }
 
     @classmethod
@@ -196,6 +203,7 @@ class Playlist:
             source_playlist_hash=str(data.get("source_playlist_hash", "")),
             source_database_location=str(data.get("source_database_location", "")),
             source_exported_at=str(data.get("source_exported_at", "")),
+            ordered=bool(data.get("ordered", True)),
         )
 
 
@@ -224,6 +232,16 @@ class Settings:
     """是否启用单曲循环模式"""
     enable_playlist_loop_mode: bool = False
     """是否启用歌单循环模式"""
+    prefer_playlist_order: bool = False
+    """优先使用歌单指定的顺序"""
+    playlist_loop_sort: str = "default"
+    """歌单循环排序方式：default/title/artist"""
+    random_display_order: str = "original"
+    """随机模式显示顺序：original/random"""
+    show_romaji: bool = True
+    """日语歌词显示罗马音"""
+    show_japanese_lyrics: bool = True
+    """显示日语歌词"""
     collect_playback_data: bool = True
     """是否收集播放统计信息"""
     global_gain_boost: float = 1.0
@@ -271,6 +289,11 @@ class Settings:
             "data_maintenance_logging_enabled": bool(self.data_maintenance_logging_enabled),
             "enable_single_loop_mode": bool(self.enable_single_loop_mode),
             "enable_playlist_loop_mode": bool(self.enable_playlist_loop_mode),
+            "prefer_playlist_order": bool(self.prefer_playlist_order),
+            "playlist_loop_sort": self.playlist_loop_sort,
+            "random_display_order": self.random_display_order,
+            "show_romaji": bool(self.show_romaji),
+            "show_japanese_lyrics": bool(self.show_japanese_lyrics),
             "collect_playback_data": bool(self.collect_playback_data),
             "global_gain_boost": float(self.global_gain_boost),
             "read_strategy": self.read_strategy,
@@ -321,6 +344,11 @@ class Settings:
             data_maintenance_logging_enabled=bool(data.get("data_maintenance_logging_enabled", True)),
             enable_single_loop_mode=bool(data.get("enable_single_loop_mode", True)),
             enable_playlist_loop_mode=bool(data.get("enable_playlist_loop_mode", False)),
+            prefer_playlist_order=bool(data.get("prefer_playlist_order", False)),
+            playlist_loop_sort=str(data.get("playlist_loop_sort", "default")),
+            random_display_order=str(data.get("random_display_order", "original")),
+            show_romaji=bool(data.get("show_romaji", True)),
+            show_japanese_lyrics=bool(data.get("show_japanese_lyrics", True)),
             collect_playback_data=bool(data.get("collect_playback_data", True)),
             # 限制音量增益在合理范围内
             global_gain_boost=max(0.5, min(5.0, float(data.get("global_gain_boost", 1.0)))),

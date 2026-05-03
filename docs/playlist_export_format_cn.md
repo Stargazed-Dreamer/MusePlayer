@@ -1,13 +1,14 @@
-# 歌单导出格式（`musearc_playlist_export_v1`）
+# 歌单导出格式（`musearc_playlist_export_v2`）
 
 ## 文件类型
 
 - 扩展名：`*.muse_playlist.json`
 - 编码：`UTF-8`
 - 顶层字段：
-  - `schema`：固定为 `musearc_playlist_export_v1`
+  - `schema`：固定为 `musearc_playlist_export_v2`
   - `playlist_hash`：歌单唯一哈希（由导出时歌曲顺序+导出时间计算）
   - `playlist_name`：导出时的歌单名称
+  - `ordered`：布尔值，表示歌单的曲目顺序是否有意义（默认 `true`）。当设为 `false` 时，导入后播放器可按自身排序规则重排曲目；当设为 `true` 时，若用户勾选"优先使用歌单指定的顺序"，则保持导出时的原始顺序
   - `exported_at`：UTC ISO8601 时间
   - `database_location`：导出时数据库根目录绝对路径
   - `track_count`：歌曲数量
@@ -22,12 +23,58 @@
 - `title`：标题
 - `artist`：艺术家
 - `album`：专辑
-- `lyrics_storage_relpath`：数据库内歌词相对路径（无则空字符串）
+- `lyrics`：歌词文件数组（支持多个歌词文件，见下方歌词格式说明）
+- `lyrics_storage_relpath`：主歌词文件相对路径（向后兼容，取 `lyrics[0].relpath`）
 - `stats`：播放器回填统计对象
   - `play_count`：播放次数（整数）
   - `manual_play_count`：指定播放次数（整数）
   - `play_seconds`：播放总秒数（整数）
   - `early_skip_count`：早期跳过次数（前 5% 没播完就跳过）
+
+## 歌词格式说明
+
+每首歌曲的 `lyrics` 字段是一个数组，允许关联多个歌词文件。每个元素包含：
+
+- `relpath`：歌词文件相对路径（相对于 `database_location`）
+- `lang`：歌词语言类型，取值如下：
+  - `"original"`：原始歌词（默认）
+  - `"japanese"`：日语原文歌词（QQ音乐 QRC 格式，文件名含 `_qm`）
+  - `"romaji"`：罗马音歌词（文件名含 `_qmRoma`）
+  - `"translation"`：翻译歌词（文件名含 `_qmts`）
+
+### 歌词文件格式
+
+播放器支持以下歌词文件格式：
+
+1. **LRC 格式**（`.lrc`）
+   - 标准时间标签格式：`[mm:ss.xx]歌词文本`
+   - 支持毫秒精度
+
+2. **QRC 格式**（`.qrc` / `.qrc.txt`）
+   - QQ音乐增强歌词格式，可包含 XML 封装
+   - 行级时间标签：`[start_ms,duration_ms]文本`
+   - 字级时间标签：`文本(start_ms,duration_ms)`（解析时用于提取纯文本）
+   - `[kana:...]` 行：假名注音数据（保留但当前未用于显示）
+   - 自动检测：文件名含 `_qm`、`_qmRoma`、`_qmts` 或内容匹配 QRC 模式
+
+### 多歌词合并显示
+
+当一首歌曲关联了多个歌词文件时（如日语原文 + 罗马音 + 翻译），播放器会按时间戳自动合并，在同一歌词行中分行显示：
+
+- 第一行：日语原文（或原始歌词）
+- 第二行：罗马音（字号略小，颜色稍淡）
+- 第三行：翻译文本（颜色稍淡）
+
+用户可通过设置控制显示：
+- ☐ 显示日语歌词
+- ☐ 日语歌词显示罗马音
+
+### 拖入歌词文件
+
+将 `.lrc` 或 QRC 格式文件拖入播放器窗口时：
+- 如果当前正在播放歌曲，歌词文件会自动关联到该歌曲
+- 第一个拖入的歌词设为主歌词（`source_lyrics_path`），后续拖入的添加到额外歌词列表（`extra_lyrics_paths`，用 `|` 分隔）
+- 关联信息在下次保存时持久化到播放器状态/歌单文件
 
 ## 统计回导规则
 
@@ -62,3 +109,13 @@
   - `t4 = d / a`
   - `t = 0.1*t3 + 0.4*t1 + 0.5*t2 - t4`
   - `喜爱程度 = clamp(round(t*100), -100, 100)`
+
+## v1 → v2 变更
+
+| 项目 | v1 | v2 |
+|------|----|----|
+| schema | `musearc_playlist_export_v1` | `musearc_playlist_export_v2` |
+| `ordered` | 无 | 新增，布尔值，表示曲目顺序是否有意义 |
+| `lyrics` | 无 | 新增，歌词文件数组，支持多语言歌词 |
+| `lyrics_storage_relpath` | 单个字符串 | 保留，向后兼容，取 lyrics[0].relpath |
+| 歌词语言 | 无 | 通过 `lang` 字段区分 original/japanese/romaji/translation |

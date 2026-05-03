@@ -34,7 +34,7 @@ AUDIO_EXTENSIONS = {
 
 ALL_SONGS_ID = "all_songs"
 FAVORITES_ID = "favorites"
-MUSE_PLAYLIST_SCHEMA = "musearc_playlist_export_v1"
+MUSE_PLAYLIST_SCHEMA = "musearc_playlist_export_v2"
 logger = logging.getLogger("museplayer.library")
 
 
@@ -843,12 +843,14 @@ class LibraryService:
         # DB 导出歌单导入时保留 source_* 元数据，供后续统计回写和歌词路径解析使用。
         if not isinstance(payload, dict):
             raise ValueError("歌单文件结构无效")
-        if str(payload.get("schema", "")).strip() != MUSE_PLAYLIST_SCHEMA:
+        schema_raw = str(payload.get("schema", "")).strip()
+        if schema_raw not in {"musearc_playlist_export_v1", "musearc_playlist_export_v2"}:
             raise ValueError("歌单 schema 不匹配")
 
         # 解析歌单基本信息
         playlist_hash = str(payload.get("playlist_hash", "")).strip()
         playlist_name = self._normalize_playlist_name(str(payload.get("playlist_name", "")).strip() or fallback_name)
+        playlist_ordered = bool(payload.get("ordered", True))
         exported_at = str(payload.get("exported_at", "")).strip()
         database_location = str(payload.get("database_location", "")).strip()
         tracks_payload = payload.get("tracks", [])
@@ -870,11 +872,12 @@ class LibraryService:
         if playlist is None:
             # 创建新歌单
             playlist_id = self._generate_muse_playlist_id(playlist_hash=playlist_hash, source_file=source_file)
-            playlist = Playlist(id=playlist_id, name=playlist_name)
+            playlist = Playlist(id=playlist_id, name=playlist_name, ordered=playlist_ordered)
             self.playlists[playlist.id] = playlist
         else:
             # 更新现有歌单名称
             playlist.name = playlist_name
+            playlist.ordered = playlist_ordered
 
         # 导入后即落地为内部歌单，不保留“后续必须写回源文件”的绑定关系。
         playlist.source_schema = ""
@@ -896,12 +899,12 @@ class LibraryService:
             source_track_id = str(raw.get("track_id", "")).strip()
             storage_relpath = self._normalize_relpath(str(raw.get("storage_relpath", "")).strip())
             lyrics_relpath = self._normalize_relpath(str(raw.get("lyrics_storage_relpath", "")).strip())
+            lyrics_array = raw.get("lyrics", [])
             source_sha256 = str(raw.get("source_sha256", "")).strip().lower()
             title = str(raw.get("title", "")).strip()
             artist = str(raw.get("artist", "")).strip()
             album = str(raw.get("album", "")).strip()
 
-            # 解析文件路径
             track_path = self._resolve_muse_track_path(db_root=db_root, storage_relpath=storage_relpath)
             lyrics_path = self._resolve_muse_track_path(db_root=db_root, storage_relpath=lyrics_relpath) if lyrics_relpath else None
             
@@ -942,6 +945,19 @@ class LibraryService:
             track.source_lyrics_storage_relpath = lyrics_relpath
             track.source_lyrics_path = str(lyrics_path) if lyrics_path is not None else ""
             track.source_sha256 = source_sha256
+            if isinstance(lyrics_array, list) and lyrics_array:
+                extra_paths: list[str] = []
+                for lentry in lyrics_array:
+                    if not isinstance(lentry, dict):
+                        continue
+                    lrel = self._normalize_relpath(str(lentry.get("relpath", "")).strip())
+                    if not lrel:
+                        continue
+                    lpath = self._resolve_muse_track_path(db_root=db_root, storage_relpath=lrel)
+                    lstr = str(lpath) if lpath else ""
+                    if lstr and lstr != track.source_lyrics_path:
+                        extra_paths.append(lstr)
+                track.extra_lyrics_paths = "|".join(extra_paths)
             if track_path.exists():
                 track.path = str(track_path)
 
@@ -979,7 +995,6 @@ class LibraryService:
         return playlist
 
     def export_playlist_file(self, playlist_id: str, out_dir: Path, playback_stats_service) -> Path:
-        """导出任意歌单为 musearc_playlist_export_v1（含统计数据）。"""
         playlist = self.get_playlist(playlist_id)
         track_ids = [tid for tid in playlist.track_ids if tid in self.tracks]
         if not track_ids:
@@ -1014,6 +1029,7 @@ class LibraryService:
             total_early_skip_count += int(stats.get("early_skip_count", 0) or 0)
 
             track_id_export = str(track.source_track_id or tid).strip() or tid
+            lyrics_list = self._export_track_lyrics(track, db_root)
             tracks_out.append(
                 {
                     "track_id": track_id_export,
@@ -1021,7 +1037,8 @@ class LibraryService:
                     "title": str(track.title or "").strip(),
                     "artist": str(track.artist or "").strip(),
                     "album": str(track.album or "").strip(),
-                    "lyrics_storage_relpath": self._export_relpath(track=track, db_root=db_root, kind="lyrics"),
+                    "lyrics": lyrics_list,
+                    "lyrics_storage_relpath": lyrics_list[0]["relpath"] if lyrics_list else "",
                     "source_sha256": str(track.source_sha256 or "").strip(),
                     "stats": {
                         "play_count": max(0, int(stats.get("play_count", 0) or 0)),
@@ -1041,6 +1058,7 @@ class LibraryService:
             "schema": MUSE_PLAYLIST_SCHEMA,
             "playlist_hash": playlist_hash,
             "playlist_name": str(playlist.name or "").strip(),
+            "ordered": bool(getattr(playlist, "ordered", True)),
             "exported_at": exported_at,
             "database_location": database_location,
             "track_count": len(tracks_out),
@@ -1071,6 +1089,39 @@ class LibraryService:
     def _sanitize_export_name(name: str) -> str:
         safe = "".join(ch if ch not in "\\/:*?\"<>|" else "_" for ch in str(name or "").strip()).strip()
         return safe or "playlist"
+
+    def _export_track_lyrics(self, track: Track, db_root: Path) -> list[dict]:
+        result: list[dict] = []
+        lyrics_paths = self._get_track_lyrics_paths(track)
+        for lp in lyrics_paths:
+            rel = ""
+            try:
+                rel = str(Path(lp).resolve().relative_to(db_root)).replace("\\", "/")
+            except Exception:
+                rel = Path(lp).name
+            suffix = Path(lp).suffix.lower()
+            lang = "original"
+            if "_qmRoma" in Path(lp).stem or suffix == ".qmroma":
+                lang = "romaji"
+            elif "_qmts" in Path(lp).stem or suffix == ".qmts":
+                lang = "translation"
+            elif "_qm" in Path(lp).stem or suffix == ".qrc":
+                lang = "japanese"
+            result.append({"relpath": self._normalize_relpath(rel), "lang": lang})
+        return result
+
+    def _get_track_lyrics_paths(self, track: Track) -> list[str]:
+        paths: list[str] = []
+        main = str(track.source_lyrics_path or "").strip()
+        if main:
+            paths.append(main)
+        extra = str(getattr(track, "extra_lyrics_paths", "") or "").strip()
+        if extra:
+            for p in extra.split("|"):
+                p = p.strip()
+                if p and p not in paths:
+                    paths.append(p)
+        return paths
 
     def _export_relpath(self, *, track: Track, db_root: Path, kind: str) -> str:
         if kind == "lyrics":

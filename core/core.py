@@ -305,20 +305,31 @@ class PyAVPlayerCore:
     def _ensure_stream_started(self) -> None:
         if not self._stream_open:
             if self._need_stream_cooldown:
-                time.sleep(0.05)
+                time.sleep(0.08)
                 self._need_stream_cooldown = False
-            self._output.open(
-                sample_rate=self._sample_rate,
-                channels=self._channels,
-                callback=self._audio_callback,
-                blocksize=self._blocksize,
-            )
-            self._stream_open = True
+            try:
+                self._output.open(
+                    sample_rate=self._sample_rate,
+                    channels=self._channels,
+                    callback=self._audio_callback,
+                    blocksize=self._blocksize,
+                )
+                self._stream_open = True
+            except Exception:
+                self._stream_open = False
+                raise
         self._output.start()
 
     def _reopen_stream(self) -> None:
         if self._stream_open:
-            self._output.close()
+            try:
+                self._output.stop()
+            except Exception:
+                pass
+            try:
+                self._output.close()
+            except Exception:
+                pass
             self._stream_open = False
             self._need_stream_cooldown = True
 

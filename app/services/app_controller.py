@@ -80,6 +80,9 @@ class AppController(QObject):
             gain_boost_getter=lambda: float(self.settings.global_gain_boost),
             read_strategy_getter=lambda: str(self.settings.read_strategy),
         )
+        self.player_service.set_playlist_loop_sort_getter(lambda: str(getattr(self.settings, "playlist_loop_sort", "default")))
+        self.player_service.set_prefer_playlist_order_getter(lambda: bool(getattr(self.settings, "prefer_playlist_order", False)))
+        self.player_service.set_random_display_order_getter(lambda: str(getattr(self.settings, "random_display_order", "original")))
         # 配置播放器功能和连接错误处理信号
         self.player_service.set_single_loop_mode_enabled(self.settings.enable_single_loop_mode)
         self.player_service.set_playlist_loop_mode_enabled(self.settings.enable_playlist_loop_mode)
@@ -254,20 +257,9 @@ class AppController(QObject):
         self.settings_store.save(self.settings)
 
     def get_current_lyrics(self) -> str:
-        """获取当前播放曲目的歌词。
-        
-        优先从曲目文件同目录的外部歌词文件读取，
-        其次从音频文件内嵌的元数据中提取。
-        
-        支持UTF-8和GBK编码格式。
-        
-        Returns:
-            str: 歌词文本，如果没有找到则返回空字符串
-        """
         track = self.player_service.current_track()
         if track is None:
             return ""
-        # 优先检查外部歌词文件
         ext_lyrics = str(getattr(track, "source_lyrics_path", "") or "").strip()
         if ext_lyrics:
             lyric_path = Path(ext_lyrics)
@@ -281,8 +273,43 @@ class AppController(QObject):
                         pass
                 except Exception:
                     pass
-        # 回退到从音频文件内嵌元数据读取
         return self.metadata_service.read_lyrics(Path(track.path))
+
+    def get_current_lyrics_extra_files(self) -> list[tuple[str, str]]:
+        track = self.player_service.current_track()
+        if track is None:
+            return []
+        extra_raw = str(getattr(track, "extra_lyrics_paths", "") or "").strip()
+        if not extra_raw:
+            return []
+        result: list[tuple[str, str]] = []
+        for p in extra_raw.split("|"):
+            p = p.strip()
+            if not p:
+                continue
+            lyric_path = Path(p)
+            if not lyric_path.exists() or not lyric_path.is_file():
+                continue
+            try:
+                content = lyric_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                try:
+                    content = lyric_path.read_text(encoding="gbk")
+                except Exception:
+                    continue
+            except Exception:
+                continue
+            result.append((content, lyric_path.name))
+        return result
+
+    def get_current_lyrics_filename(self) -> str:
+        track = self.player_service.current_track()
+        if track is None:
+            return ""
+        ext_lyrics = str(getattr(track, "source_lyrics_path", "") or "").strip()
+        if ext_lyrics:
+            return Path(ext_lyrics).name
+        return ""
 
     def get_current_cover(self) -> bytes | None:
         """获取当前播放曲目的封面图像。

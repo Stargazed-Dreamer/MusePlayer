@@ -53,6 +53,7 @@ from app.ui.main_window_helpers import (
     _make_sun_icon,
     _make_volume_icon,
     _parse_lrc_entries,
+    build_structured_lyrics,
 )
 
 
@@ -179,7 +180,13 @@ class MainWindowPlaybackMixin:
         - 动态计算项目高度以支持文本换行
         """
         keyword = self.search_edit.text().strip()
-        tracks = self.player.search_playlist_tracks(keyword)
+        if keyword:
+            tracks = self.player.search_playlist_tracks(keyword)
+        elif self.player.mode == PlayMode.RANDOM and str(getattr(self.controller.settings, "random_display_order", "original")) == "random":
+            ordered_ids = self.player.display_ordered_track_ids()
+            tracks = [self.player.library.tracks[tid] for tid in ordered_ids if tid in self.player.library.tracks]
+        else:
+            tracks = self.player.search_playlist_tracks("")
 
         self.track_delegate.set_hover_row(-1)
         self.track_list.setUpdatesEnabled(False)
@@ -297,7 +304,9 @@ class MainWindowPlaybackMixin:
             self.progress_center_label.setText("")
 
         lyrics = self.controller.get_current_lyrics()
-        self._load_lyrics(lyrics)
+        lyrics_filename = self.controller.get_current_lyrics_filename()
+        lyrics_extra = self.controller.get_current_lyrics_extra_files()
+        self._load_lyrics(lyrics, main_filename=lyrics_filename, extra_files=lyrics_extra)
         self._set_cover(self.controller.get_current_cover())
         self._refresh_now_card_layout()
         self._update_window_title()
@@ -340,11 +349,55 @@ class MainWindowPlaybackMixin:
         self.cover_label.show()
         self.cover_label.setText("")
         self.cover_label.setPixmap(scaled)
-    def _load_lyrics(self, raw_lyrics: str) -> None:
-        # 歌词来源可能含 HTML 转义（数据库导出时常见），先统一反转义。
+    def _reload_current_lyrics(self) -> None:
+        track = self.player.current_track()
+        if track is None:
+            return
+        raw = self.controller.get_current_lyrics()
+        filename = self.controller.get_current_lyrics_filename()
+        extra_files = self.controller.get_current_lyrics_extra_files()
+        self._load_lyrics(raw, main_filename=filename, extra_files=extra_files)
+
+    def _load_lyrics(self, raw_lyrics: str, *, main_filename: str = "", extra_files: list[tuple[str, str]] | None = None) -> None:
         clean = html.unescape((raw_lyrics or "").replace("\r\n", "\n").replace("\r", "\n"))
+
+        show_japanese = bool(getattr(self.controller.settings, "show_japanese_lyrics", True))
+        show_romaji = bool(getattr(self.controller.settings, "show_romaji", True))
+
+        if extra_files:
+            structured = build_structured_lyrics(clean, main_filename=main_filename, extra_files=extra_files)
+            if structured:
+                self._lyrics_structured = structured
+                self._lyrics_entries = [(e.timestamp, e.display_text(show_japanese=show_japanese, show_romaji=show_romaji)) for e in structured]
+                self._lyrics_times = [e.timestamp for e in structured]
+                self._lyrics_end_times = self._build_lyrics_end_times(self._lyrics_entries)
+                self._lyrics_current_index = -1
+                self._lyrics_user_scrolling = False
+                self._lyrics_auto_adjusting = False
+
+                self.lyrics_list.clear()
+                self.lyrics_delegate.set_times(self._lyrics_times, self._lyrics_end_times)
+                self.lyrics_delegate.set_structured_lyrics(structured)
+                self.lyrics_delegate.set_hover_row(-1)
+
+                self._has_lyrics_content = True
+                self.lyrics_list.show()
+                fm = self.lyrics_list.fontMetrics()
+                for entry in structured:
+                    text = entry.display_text(show_japanese=show_japanese, show_romaji=show_romaji)
+                    lc = entry.line_count(show_japanese=show_japanese, show_romaji=show_romaji)
+                    base_h = fm.height() + 4
+                    furi_h = max(10, int(fm.height() * 0.6) + 2) if entry.furigana else 0
+                    item = QListWidgetItem(text or "♪")
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                    item.setSizeHint(QSize(0, max(24, base_h * lc + furi_h + 4)))
+                    self.lyrics_list.addItem(item)
+                self._sync_lyrics_with_position(0.0)
+                return
+
         entries = _parse_lrc_entries(clean)
 
+        self._lyrics_structured = None
         self._lyrics_entries = entries
         self._lyrics_times = [x[0] for x in entries]
         self._lyrics_end_times = self._build_lyrics_end_times(entries)
@@ -354,6 +407,7 @@ class MainWindowPlaybackMixin:
 
         self.lyrics_list.clear()
         self.lyrics_delegate.set_times(self._lyrics_times, self._lyrics_end_times)
+        self.lyrics_delegate.set_structured_lyrics(None)
         self.lyrics_delegate.set_hover_row(-1)
 
         if entries:
@@ -488,7 +542,12 @@ class MainWindowPlaybackMixin:
 
         self._lyrics_current_index = idx
         if self._compact_mode:
-            self.progress_center_label.setText(self._lyrics_entries[idx][1] or "♪")
+            if self._lyrics_structured and idx < len(self._lyrics_structured):
+                show_japanese = bool(getattr(self.controller.settings, "show_japanese_lyrics", True))
+                show_romaji = bool(getattr(self.controller.settings, "show_romaji", True))
+                self.progress_center_label.setText(self._lyrics_structured[idx].compact_text(show_japanese=show_japanese, show_romaji=show_romaji))
+            else:
+                self.progress_center_label.setText(self._lyrics_entries[idx][1] or "♪")
         self._lyrics_auto_adjusting = True
         self.lyrics_list.setCurrentRow(idx)
         item = self.lyrics_list.item(idx)
@@ -612,6 +671,7 @@ class MainWindowPlaybackMixin:
         self.mode_btn.setToolTip(f"播放模式: {title}（点击切换）")
         self._next_track_preview_announced = False
         self._refresh_random_state_hint()
+        self._reload_track_list()
     def _toggle_current_favorite(self) -> None:
         track = self.player.current_track()
         if track is None:
@@ -907,7 +967,11 @@ class MainWindowPlaybackMixin:
             return
         if not track_id:
             return
-        self.player.play_track(str(track_id), auto_play=True, manual_select=True, active_request=True)
+        preserve_random = (
+            self.player.mode == PlayMode.RANDOM
+            and str(getattr(self.controller.settings, "random_display_order", "original")) == "random"
+        )
+        self.player.play_track(str(track_id), auto_play=True, manual_select=True, active_request=True, preserve_random=preserve_random)
         self.statusBar().showMessage(f"播放歌曲：{display_text}", 2500)
     def _on_remove_track_clicked(self, track_id: str) -> None:
         playlist_id = self.player.current_playlist_id or ALL_SONGS_ID

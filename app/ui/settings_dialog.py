@@ -1,26 +1,4 @@
-﻿from __future__ import annotations
-
-"""设置对话框。
-
-提供应用的全面配置选项：
-- 网络控制接口（IP地址、端口、启用状态）
-- 播放行为（自动恢复、播放模式、数据收集）
-- 音频处理（全局增益增强、读取策略）
-- 界面偏好（主题、窗口记忆）
-- 数据管理（定时保存、日志记录）
-
-配置分类：
-1. 控制接口设置：运行时TCP控制协议配置
-2. 播放设置：会话恢复、播放模式偏好
-3. 音频设置：增益增强、解码策略
-4. 界面设置：主题、透明度、窗口行为
-5. 数据设置：自动保存、日志记录
-
-数据绑定：
-- 所有控件直接绑定到Settings实体属性
-- 实时验证输入的有效性（如端口号范围）
-- 部分设置需要重启相关服务生效
-"""
+from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -28,13 +6,16 @@ from PySide6.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
+    QWidget,
 )
 
 from app.models.entities import Settings
@@ -42,63 +23,116 @@ from core.output import list_output_devices
 
 
 class SettingsDialog(QDialog):
-    """应用设置对话框。
-    
-    功能特性：
-    - 网络设置：配置运行时控制接口的监听地址和端口
-    - 播放设置：控制会话恢复、播放模式扩展、统计收集等行为
-    - 音频设置：调整全局增益增强系数和文件读取策略
-    - 界面设置：主题选择、窗口记忆、透明度控制
-    - 数据设置：定时保存间隔、日志记录等持久化选项
-    
-    设计特点：
-    - 表单式布局，清晰的分组和相关性
-    - 实时输入验证，防止无效配置
-    - 条件启用/禁用相关选项组
-    - 支持取消操作，不保存未确认的修改
-    
-    与Settings实体关系：
-    - 对话框持有Settings实例的引用
-    - 修改直接作用于实体属性
-    - 需要外部代码调用SettingsStore保存到文件
-    """
-    
+
     def __init__(self, settings: Settings, parent=None):
-        """初始化设置对话框。
-        
-        Args:
-            settings: Settings实体实例，包含当前配置值
-            parent: 父级窗口，用于模态显示
-        """
         super().__init__(parent)
         self.setWindowTitle("设置")
-        self.resize(480, 420)
-        self._settings = settings  # 持有Settings实体引用
-
+        self.resize(520, 560)
+        self._settings = settings
         self._build_ui()
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
 
-        form = QFormLayout()
-        self.host_edit = QLineEdit(self._settings.control_host)
-        self.port_spin = QSpinBox()
-        self.port_spin.setRange(1, 65535)
-        self.port_spin.setValue(int(self._settings.control_port))
-        self.control_interface_check = QCheckBox("启用控制接口")
-        self.control_interface_check.setChecked(bool(self._settings.control_interface_enabled))
-        self.control_interface_check.toggled.connect(self._on_control_interface_toggled)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setSpacing(10)
+
+        self._build_playback_group(layout)
+        self._build_lyrics_group(layout)
+        self._build_audio_group(layout)
+        self._build_interface_group(layout)
+        self._build_network_group(layout)
+        self._build_data_group(layout)
+
+        layout.addStretch(1)
+        scroll.setWidget(container)
+        root.addWidget(scroll, 1)
+
+        button_row = QHBoxLayout()
+        self.btn_cancel = QPushButton("取消")
+        self.btn_cancel.setObjectName("GhostButton")
+        self.btn_ok = QPushButton("保存")
+        button_row.addStretch(1)
+        button_row.addWidget(self.btn_cancel)
+        button_row.addWidget(self.btn_ok)
+        root.addLayout(button_row)
+
+        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_ok.clicked.connect(self._on_accept_clicked)
+
+        self._on_control_interface_toggled(self.control_interface_check.isChecked())
+        self._on_timed_save_toggled(self.timed_save_check.isChecked())
+        self._validate_window_limits()
+
+    def _build_playback_group(self, parent_layout: QVBoxLayout) -> None:
+        group = QGroupBox("播放")
+        form = QFormLayout(group)
+        form.setSpacing(6)
 
         self.auto_restore_check = QCheckBox("启动时恢复上次歌曲与进度")
         self.auto_restore_check.setChecked(bool(self._settings.auto_restore_session))
 
-        self.playlist_loop_mode_check = QCheckBox("增加歌单循环到播放模式里")
-        self.playlist_loop_mode_check.setChecked(bool(self._settings.enable_playlist_loop_mode))
         self.single_loop_mode_check = QCheckBox("增加单曲循环到播放模式里")
         self.single_loop_mode_check.setChecked(bool(getattr(self._settings, "enable_single_loop_mode", True)))
 
+        self.playlist_loop_mode_check = QCheckBox("增加歌单循环到播放模式里")
+        self.playlist_loop_mode_check.setChecked(bool(self._settings.enable_playlist_loop_mode))
+
+        self.playlist_loop_sort_combo = QComboBox()
+        self.playlist_loop_sort_combo.addItem("歌单导入默认顺序", "default")
+        self.playlist_loop_sort_combo.addItem("歌名顺序", "title")
+        self.playlist_loop_sort_combo.addItem("歌手顺序", "artist")
+        sort_val = str(getattr(self._settings, "playlist_loop_sort", "default")).strip().lower()
+        sort_idx = self.playlist_loop_sort_combo.findData(sort_val)
+        self.playlist_loop_sort_combo.setCurrentIndex(0 if sort_idx < 0 else sort_idx)
+
+        self.prefer_playlist_order_check = QCheckBox("优先使用歌单指定的顺序")
+        self.prefer_playlist_order_check.setChecked(bool(getattr(self._settings, "prefer_playlist_order", False)))
+
+        self.random_display_order_combo = QComboBox()
+        self.random_display_order_combo.addItem("随机前顺序（默认）", "original")
+        self.random_display_order_combo.addItem("随机后顺序", "random")
+        rdo_val = str(getattr(self._settings, "random_display_order", "original")).strip().lower()
+        rdo_idx = self.random_display_order_combo.findData(rdo_val)
+        self.random_display_order_combo.setCurrentIndex(0 if rdo_idx < 0 else rdo_idx)
+
         self.collect_playback_data_check = QCheckBox("收集播放数据")
         self.collect_playback_data_check.setChecked(bool(self._settings.collect_playback_data))
+
+        form.addRow(self.auto_restore_check)
+        form.addRow(self.single_loop_mode_check)
+        form.addRow(self.playlist_loop_mode_check)
+        form.addRow("歌单循环排序", self.playlist_loop_sort_combo)
+        form.addRow(self.prefer_playlist_order_check)
+        form.addRow("随机模式显示顺序", self.random_display_order_combo)
+        form.addRow(self.collect_playback_data_check)
+
+        parent_layout.addWidget(group)
+
+    def _build_lyrics_group(self, parent_layout: QVBoxLayout) -> None:
+        group = QGroupBox("歌词")
+        form = QFormLayout(group)
+        form.setSpacing(6)
+
+        self.show_japanese_lyrics_check = QCheckBox("显示日语歌词")
+        self.show_japanese_lyrics_check.setChecked(bool(getattr(self._settings, "show_japanese_lyrics", True)))
+
+        self.show_romaji_check = QCheckBox("日语歌词显示罗马音")
+        self.show_romaji_check.setChecked(bool(getattr(self._settings, "show_romaji", True)))
+
+        form.addRow(self.show_japanese_lyrics_check)
+        form.addRow(self.show_romaji_check)
+
+        parent_layout.addWidget(group)
+
+    def _build_audio_group(self, parent_layout: QVBoxLayout) -> None:
+        group = QGroupBox("音频")
+        form = QFormLayout(group)
+        form.setSpacing(6)
 
         self.gain_boost_spin = QDoubleSpinBox()
         self.gain_boost_spin.setRange(0.5, 5.0)
@@ -122,6 +156,74 @@ class SettingsDialog(QDialog):
         dev_idx = self.output_device_combo.findData(current_device)
         self.output_device_combo.setCurrentIndex(0 if dev_idx < 0 else dev_idx)
 
+        form.addRow("全局音量放大倍数", self.gain_boost_spin)
+        form.addRow("读取策略", self.read_strategy_combo)
+        form.addRow("输出硬件", self.output_device_combo)
+
+        parent_layout.addWidget(group)
+
+    def _build_interface_group(self, parent_layout: QVBoxLayout) -> None:
+        group = QGroupBox("界面")
+        form = QFormLayout(group)
+        form.setSpacing(6)
+
+        self.dark_theme_check = QCheckBox("默认夜间主题")
+        self.dark_theme_check.setChecked(bool(getattr(self._settings, "dark_theme", True)))
+
+        self.remember_window_geometry_check = QCheckBox("记住上次窗口大小和位置")
+        self.remember_window_geometry_check.setChecked(
+            bool(getattr(self._settings, "remember_window_geometry", True))
+        )
+
+        self.max_window_width_edit = QLineEdit()
+        self.max_window_height_edit = QLineEdit()
+        self.max_window_width_edit.setPlaceholderText("0 表示不限制，最小 600")
+        self.max_window_height_edit.setPlaceholderText("0 表示不限制，最小 800")
+        max_w = int(getattr(self._settings, "max_window_width", 0))
+        max_h = int(getattr(self._settings, "max_window_height", 0))
+        self.max_window_width_edit.setText("" if max_w <= 0 else str(max_w))
+        self.max_window_height_edit.setText("" if max_h <= 0 else str(max_h))
+        self.max_window_warning_label = QLabel("")
+        self.max_window_warning_label.setObjectName("InputWarningLabel")
+        self.max_window_warning_label.setStyleSheet("color: #d34545;")
+        self.max_window_warning_label.setVisible(False)
+
+        form.addRow(self.dark_theme_check)
+        form.addRow(self.remember_window_geometry_check)
+        form.addRow("最大窗口宽度", self.max_window_width_edit)
+        form.addRow("最大窗口高度", self.max_window_height_edit)
+        form.addRow("", self.max_window_warning_label)
+
+        self.max_window_width_edit.textChanged.connect(self._validate_window_limits)
+        self.max_window_height_edit.textChanged.connect(self._validate_window_limits)
+
+        parent_layout.addWidget(group)
+
+    def _build_network_group(self, parent_layout: QVBoxLayout) -> None:
+        group = QGroupBox("网络控制接口")
+        form = QFormLayout(group)
+        form.setSpacing(6)
+
+        self.control_interface_check = QCheckBox("启用控制接口")
+        self.control_interface_check.setChecked(bool(self._settings.control_interface_enabled))
+        self.control_interface_check.toggled.connect(self._on_control_interface_toggled)
+
+        self.host_edit = QLineEdit(self._settings.control_host)
+        self.port_spin = QSpinBox()
+        self.port_spin.setRange(1, 65535)
+        self.port_spin.setValue(int(self._settings.control_port))
+
+        form.addRow(self.control_interface_check)
+        form.addRow("主机", self.host_edit)
+        form.addRow("端口", self.port_spin)
+
+        parent_layout.addWidget(group)
+
+    def _build_data_group(self, parent_layout: QVBoxLayout) -> None:
+        group = QGroupBox("数据与日志")
+        form = QFormLayout(group)
+        form.setSpacing(6)
+
         self.timed_save_check = QCheckBox("启用定时保存")
         self.timed_save_check.setChecked(bool(self._settings.timed_save_enabled))
         self.timed_save_spin = QSpinBox()
@@ -141,66 +243,13 @@ class SettingsDialog(QDialog):
         )
         self.data_maintenance_logging_check.toggled.connect(self._on_data_maintenance_logging_toggled)
 
-        self.dark_theme_check = QCheckBox("默认夜间主题")
-        self.dark_theme_check.setChecked(bool(getattr(self._settings, "dark_theme", True)))
-
-        self.remember_window_geometry_check = QCheckBox("记住上次窗口大小和位置")
-        self.remember_window_geometry_check.setChecked(
-            bool(getattr(self._settings, "remember_window_geometry", True))
-        )
-        self.max_window_width_edit = QLineEdit()
-        self.max_window_height_edit = QLineEdit()
-        self.max_window_width_edit.setPlaceholderText("0 表示不限制，最小 600")
-        self.max_window_height_edit.setPlaceholderText("0 表示不限制，最小 800")
-        max_w = int(getattr(self._settings, "max_window_width", 0))
-        max_h = int(getattr(self._settings, "max_window_height", 0))
-        self.max_window_width_edit.setText("" if max_w <= 0 else str(max_w))
-        self.max_window_height_edit.setText("" if max_h <= 0 else str(max_h))
-        self.max_window_warning_label = QLabel("")
-        self.max_window_warning_label.setObjectName("InputWarningLabel")
-        self.max_window_warning_label.setStyleSheet("color: #d34545;")
-        self.max_window_warning_label.setVisible(False)
-
-        form.addRow("控制接口主机", self.host_edit)
-        form.addRow("控制接口端口", self.port_spin)
-        form.addRow("全局音量放大倍数", self.gain_boost_spin)
-        form.addRow("读取策略", self.read_strategy_combo)
-        form.addRow("输出硬件", self.output_device_combo)
+        form.addRow(self.timed_save_check)
         form.addRow("定时保存间隔", self.timed_save_spin)
-        form.addRow("最大窗口宽度", self.max_window_width_edit)
-        form.addRow("最大窗口高度", self.max_window_height_edit)
-        form.addRow("", self.max_window_warning_label)
-        root.addLayout(form)
-        root.addWidget(self.control_interface_check)
-        root.addWidget(self.auto_restore_check)
-        root.addWidget(self.playlist_loop_mode_check)
-        root.addWidget(self.single_loop_mode_check)
-        root.addWidget(self.collect_playback_data_check)
-        root.addWidget(self.timed_save_check)
-        root.addWidget(self.logging_check)
-        root.addWidget(self.crash_logging_check)
-        root.addWidget(self.data_maintenance_logging_check)
-        root.addWidget(self.dark_theme_check)
-        root.addWidget(self.remember_window_geometry_check)
-        self._on_control_interface_toggled(self.control_interface_check.isChecked())
-        self._on_timed_save_toggled(self.timed_save_check.isChecked())
+        form.addRow(self.logging_check)
+        form.addRow(self.crash_logging_check)
+        form.addRow(self.data_maintenance_logging_check)
 
-        button_row = QHBoxLayout()
-        self.btn_cancel = QPushButton("取消")
-        self.btn_cancel.setObjectName("GhostButton")
-        self.btn_ok = QPushButton("保存")
-        button_row.addStretch(1)
-        button_row.addWidget(self.btn_cancel)
-        button_row.addWidget(self.btn_ok)
-        root.addStretch(1)
-        root.addLayout(button_row)
-
-        self.btn_cancel.clicked.connect(self.reject)
-        self.btn_ok.clicked.connect(self._on_accept_clicked)
-
-        self.max_window_width_edit.textChanged.connect(self._validate_window_limits)
-        self.max_window_height_edit.textChanged.connect(self._validate_window_limits)
-        self._validate_window_limits()
+        parent_layout.addWidget(group)
 
     def _parse_max_window_value(self, text: str, minimum: int) -> tuple[int | None, str]:
         raw = text.strip()
@@ -242,6 +291,11 @@ class SettingsDialog(QDialog):
             data_maintenance_logging_enabled=bool(self.data_maintenance_logging_check.isChecked()),
             enable_single_loop_mode=bool(self.single_loop_mode_check.isChecked()),
             enable_playlist_loop_mode=bool(self.playlist_loop_mode_check.isChecked()),
+            prefer_playlist_order=bool(self.prefer_playlist_order_check.isChecked()),
+            playlist_loop_sort=str(self.playlist_loop_sort_combo.currentData() or "default"),
+            random_display_order=str(self.random_display_order_combo.currentData() or "original"),
+            show_romaji=bool(self.show_romaji_check.isChecked()),
+            show_japanese_lyrics=bool(self.show_japanese_lyrics_check.isChecked()),
             collect_playback_data=bool(self.collect_playback_data_check.isChecked()),
             global_gain_boost=float(self.gain_boost_spin.value()),
             read_strategy=str(self.read_strategy_combo.currentData() or "window"),

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """应用启动入口。
 
-除常规 Qt 启动外，本文件还负责安装“崩溃/异常保存兜底”：
+除常规 Qt 启动外，本文件还负责安装"崩溃/异常保存兜底"：
 - aboutToQuit
 - atexit
 - sys/threading excepthook
@@ -13,6 +13,7 @@ import atexit
 from datetime import datetime
 import faulthandler
 import json
+import os
 import signal
 import sys
 import threading
@@ -26,12 +27,47 @@ from app.services.app_controller import AppController
 from app.ui.main_window import MainWindow
 from app.ui.theme import APP_STYLE
 
+_CRASHLOG_FILENAME = "crashlog.log"
+
+
+def _archive_previous_crashlog(crash_dir: Path) -> None:
+    prev = crash_dir / _CRASHLOG_FILENAME
+    if not prev.exists():
+        return
+    try:
+        size = prev.stat().st_size
+    except OSError:
+        return
+    if size == 0:
+        try:
+            prev.unlink()
+        except OSError:
+            pass
+        return
+    stamp = datetime.fromtimestamp(prev.stat().st_mtime).strftime("%Y%m%d_%H%M%S")
+    archived = crash_dir / f"crash_{stamp}.log"
+    if archived.exists():
+        i = 1
+        while True:
+            archived = crash_dir / f"crash_{stamp}_{i}.log"
+            if not archived.exists():
+                break
+            i += 1
+    try:
+        prev.rename(archived)
+    except OSError:
+        pass
+
 
 def _install_persist_fallbacks(app: QApplication, controller: AppController) -> None:
     """安装多通道保存兜底，尽量在异常退出时保留统计数据。"""
     saved = {"done": False}
     crash_stream_holder: dict[str, object] = {"file": None}
     fh_enabled = {"value": False}
+    crash_dir = controller.data_dir / "crashlogs"
+    crash_dir.mkdir(parents=True, exist_ok=True)
+
+    _archive_previous_crashlog(crash_dir)
 
     def _is_crash_logging_enabled() -> bool:
         return bool(getattr(controller.settings, "crash_logging_enabled", True))
@@ -40,10 +76,7 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
         stream = crash_stream_holder.get("file")
         if stream is not None:
             return stream
-        crash_dir = controller.data_dir / "crashlogs"
-        crash_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        crash_file = crash_dir / f"crash_{stamp}.log"
+        crash_file = crash_dir / _CRASHLOG_FILENAME
         stream = crash_file.open("a", encoding="utf-8")
         crash_stream_holder["file"] = stream
         return stream
@@ -56,6 +89,12 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
         try:
             stream.close()
         except Exception:
+            pass
+        crash_file = crash_dir / _CRASHLOG_FILENAME
+        try:
+            if crash_file.exists() and crash_file.stat().st_size == 0:
+                crash_file.unlink()
+        except OSError:
             pass
 
     def _write_crash(reason: str, exc_type=None, exc_value=None, exc_tb=None) -> None:
@@ -79,7 +118,6 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
                 pass
             stream.write("\n")
             stream.flush()
-            _close_crash_stream()
         except Exception:
             pass
 

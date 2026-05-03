@@ -919,14 +919,6 @@ class MainWindowWindowingMixin:
                 return
         event.ignore()
     def dropEvent(self, event: QDropEvent) -> None:
-        """处理文件拖放事件。
-        
-        用户可以直接将音频文件拖拽到播放器窗口中进行播放。
-        只处理第一个有效的本地文件。
-        
-        Args:
-            event: 拖放事件
-        """
         mime = event.mimeData()
         if not mime.hasUrls():
             event.ignore()
@@ -934,12 +926,43 @@ class MainWindowWindowingMixin:
         for url in mime.urls():
             if not url.isLocalFile():
                 continue
-            ok = self.player.play_file(Path(url.toLocalFile()), active_request=True)
+            file_path = Path(url.toLocalFile())
+            if file_path.suffix.lower() in {".lrc", ".qrc", ".txt"} and file_path.name.endswith(("_qm.qrc.txt", "_qmRoma.qrc.txt", "_qmts.qrc.txt")) or file_path.suffix.lower() == ".lrc":
+                track = self.player.current_track()
+                if track is None:
+                    self.statusBar().showMessage("请先播放一首歌曲再拖入歌词", 3000)
+                    event.acceptProposedAction()
+                    return
+                self._attach_lyrics_to_current_track(file_path)
+                event.acceptProposedAction()
+                return
+            ok = self.player.play_file(file_path, active_request=True)
             if ok:
                 self.statusBar().showMessage("已播放拖入文件", 3000)
             event.acceptProposedAction()
             return
         event.ignore()
+
+    def _attach_lyrics_to_current_track(self, lyrics_path: Path) -> None:
+        track = self.player.current_track()
+        if track is None:
+            return
+        main_lyrics = str(track.source_lyrics_path or "").strip()
+        if not main_lyrics:
+            track.source_lyrics_path = str(lyrics_path)
+            self.statusBar().showMessage(f"歌词已关联: {lyrics_path.name}", 3000)
+        else:
+            existing = str(getattr(track, "extra_lyrics_paths", "") or "").strip()
+            existing_list = [p for p in existing.split("|") if p.strip()] if existing else []
+            new_path = str(lyrics_path)
+            if new_path not in existing_list and new_path != main_lyrics:
+                existing_list.append(new_path)
+                track.extra_lyrics_paths = "|".join(existing_list)
+                self.statusBar().showMessage(f"额外歌词已添加: {lyrics_path.name}", 3000)
+            else:
+                self.statusBar().showMessage("该歌词已关联", 3000)
+        self.controller.library_service.save()
+        self._reload_current_lyrics()
     def _is_interactive_widget_at(self, pos: QPoint) -> bool:
         """检查指定位置是否在交互控件上。
         

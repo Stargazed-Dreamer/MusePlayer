@@ -81,6 +81,9 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         self._mode = PlayMode.SINGLE_LOOP
         self._single_loop_enabled = True
         self._playlist_loop_enabled = False
+        self._playlist_loop_sort_getter: Callable[[], str] = lambda: "default"
+        self._prefer_playlist_order_getter: Callable[[], bool] = lambda: False
+        self._random_display_order_getter: Callable[[], str] = lambda: "original"
         self._gain_percent = 80
         self._playback_rate = 1.0
 
@@ -196,6 +199,15 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             self.set_mode(self._fallback_mode_for_disabled_option())
         else:
             self.mode_changed.emit(self._mode.value)
+
+    def set_playlist_loop_sort_getter(self, getter: Callable[[], str]) -> None:
+        self._playlist_loop_sort_getter = getter
+
+    def set_prefer_playlist_order_getter(self, getter: Callable[[], bool]) -> None:
+        self._prefer_playlist_order_getter = getter
+
+    def set_random_display_order_getter(self, getter: Callable[[], str]) -> None:
+        self._random_display_order_getter = getter
 
     def set_mode(self, mode: str | PlayMode) -> None:
         if isinstance(mode, str):
@@ -589,6 +601,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         manual_select: bool = False,
         from_random_navigation: bool = False,
         active_request: bool = False,
+        preserve_random: bool = False,
     ) -> bool:
         """播放指定曲目，处理复杂的播放逻辑和状态转换。
         
@@ -626,9 +639,12 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             self._sequential_index = playlist_ids.index(track_id)
 
         if self._mode == PlayMode.RANDOM:
-            if manual_select:
+            if manual_select and not preserve_random:
                 self._random_seed += 1
                 self._rebuild_random_order(force=True)
+                self._align_random_index_with_current_track()
+            elif preserve_random:
+                self._rebuild_random_order(force=False)
                 self._align_random_index_with_current_track()
             elif from_random_navigation:
                 pass
@@ -668,17 +684,6 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         )
 
     def next_track(self, *, user_triggered: bool = True) -> bool:
-        """切换到下一首曲目，支持不同播放模式。
-        
-        在随机模式下会根据随机序列切换到下一首，如果当前曲目无法播放
-        会继续尝试后续曲目直到找到可播放的曲目。
-        
-        Args:
-            user_triggered: 是否为用户触切的切换（用于统计记录）
-            
-        Returns:
-            bool: 是否成功切换到下一曲
-        """
         track_ids = self._playlist_track_ids()
         if not track_ids:
             return False
@@ -717,15 +722,25 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             self.error_occurred.emit("歌单内歌曲均无法播放")
             return False
 
-        if self._current_track_id in track_ids:
-            idx = track_ids.index(self._current_track_id)
+        if self._mode == PlayMode.PLAYLIST_LOOP:
+            sort_mode = self._playlist_loop_sort_getter()
+            prefer_order = self._prefer_playlist_order_getter()
+            if prefer_order:
+                sorted_ids = track_ids
+            else:
+                sorted_ids = self._sorted_playlist_track_ids(sort_mode)
         else:
-            idx = 0
+            sorted_ids = track_ids
 
-        attempts = len(track_ids)
+        if self._current_track_id in sorted_ids:
+            idx = sorted_ids.index(self._current_track_id)
+        else:
+            idx = -1
+
+        attempts = len(sorted_ids)
         while attempts > 0:
-            idx = (idx + 1) % len(track_ids)
-            target_id = track_ids[idx]
+            idx = (idx + 1) % len(sorted_ids)
+            target_id = sorted_ids[idx]
             if self.play_track(
                 target_id,
                 auto_play=True,
@@ -966,12 +981,27 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         return True
 
     def _playlist_track_ids(self) -> list[str]:
-        """
-        获取当前播放列表中存在的所有曲目ID。
-        过滤掉曲目库中不存在的ID，确保返回的ID都是有效的。
-        """
         playlist = self.library.get_playlist(self._current_playlist_id)
         return [track_id for track_id in playlist.track_ids if track_id in self.library.tracks]
+
+    def display_ordered_track_ids(self) -> list[str]:
+        track_ids = self._playlist_track_ids()
+        if self._mode == PlayMode.RANDOM and self._random_display_order_getter() == "random":
+            self._rebuild_random_order(force=False)
+            if self._random_order:
+                return list(self._random_order)
+        return track_ids
+
+    def _sorted_playlist_track_ids(self, sort_mode: str = "default") -> list[str]:
+        track_ids = self._playlist_track_ids()
+        if sort_mode == "default":
+            return track_ids
+        tracks = self.library.tracks
+        if sort_mode == "title":
+            return sorted(track_ids, key=lambda tid: (tracks[tid].title or "").lower())
+        if sort_mode == "artist":
+            return sorted(track_ids, key=lambda tid: (tracks[tid].artist or "").lower())
+        return track_ids
 
     def _rebuild_random_order(self, *, force: bool) -> None:
         """

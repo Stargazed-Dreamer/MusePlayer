@@ -153,12 +153,13 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         }
 
         # 歌词系统状态
-        self._lyrics_entries: list[tuple[float, str]] = []  # 歌词条目列表 (时间戳, 歌词文本)
-        self._lyrics_times: list[float] = []  # 歌词开始时间列表（用于二分查找）
-        self._lyrics_end_times: list[float] = []  # 歌词结束时间列表
-        self._lyrics_current_index = -1  # 当前高亮歌词索引
-        self._lyrics_user_scrolling = False  # 用户是否正在手动滚动歌词
-        self._lyrics_auto_adjusting = False  # 是否正在自动调整歌词位置
+        self._lyrics_entries: list[tuple[float, str]] = []
+        self._lyrics_times: list[float] = []
+        self._lyrics_end_times: list[float] = []
+        self._lyrics_current_index = -1
+        self._lyrics_user_scrolling = False
+        self._lyrics_auto_adjusting = False
+        self._lyrics_structured: list | None = None
         
         # 媒体内容状态
         self._has_cover_content = False  # 是否有封面图片
