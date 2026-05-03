@@ -103,8 +103,6 @@ class SoundDeviceOutputBackend(AudioOutputBackend):
         try:
             if self._stream.active:
                 self._stream.stop()
-                import time
-                time.sleep(0.02)
         except Exception:
             pass
         try:

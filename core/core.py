@@ -45,7 +45,8 @@ class PyAVPlayerCore:
         self._playback_rate = 1.0
         self._playing = False
         self._stream_open = False
-        self._need_stream_cooldown = False
+        self._last_open_sample_rate = 0
+        self._last_open_channels = 0
         self._error_callback: Callable[[str], None] | None = None
         self._last_runtime_error: str | None = None
 
@@ -79,7 +80,7 @@ class PyAVPlayerCore:
             self._frame_cursor = 0
             self._segment_end_frame = None
             self._playing = False
-            self._reopen_stream()
+            self._try_reuse_or_reopen_stream()
             return self.meta()
 
     def decode_window(self, source: Path, *, start_sec: float = 0.0, window_sec: float | None = None) -> tuple[np.ndarray, int, int]:
@@ -128,7 +129,7 @@ class PyAVPlayerCore:
                 self._playing = bool(keep_playing)
             self._segment_end_frame = None
             if need_reopen:
-                self._reopen_stream()
+                self._try_reuse_or_reopen_stream()
             if self._playing:
                 self._ensure_stream_started()
             return AudioMeta(
@@ -246,38 +247,7 @@ class PyAVPlayerCore:
                 self._output._device = device if device else None
             was_playing = bool(self._playing) and self._stream_open
             if self._stream_open:
-                try:
-                    self._output.close()
-                finally:
-                    self._stream_open = False
-                    self._need_stream_cooldown = True
-                if self._need_stream_cooldown:
-                    time.sleep(0.05)
-                    self._need_stream_cooldown = False
-                self._output.open(
-                    sample_rate=self._sample_rate,
-                    channels=self._channels,
-                    callback=self._audio_callback,
-                    blocksize=self._blocksize,
-                )
-                self._stream_open = True
-                if was_playing:
-                    self._output.start()
-
-    def rebind_output_device(self) -> None:
-        """在不轮询的前提下重绑定输出设备（用于系统设备切换事件）。"""
-        with self._lock:
-            if not self._stream_open:
-                return
-            was_playing = bool(self._playing)
-            try:
-                self._output.close()
-            finally:
-                self._stream_open = False
-                self._need_stream_cooldown = True
-            if self._need_stream_cooldown:
-                time.sleep(0.05)
-                self._need_stream_cooldown = False
+                self._async_close_stream()
             self._output.open(
                 sample_rate=self._sample_rate,
                 channels=self._channels,
@@ -285,6 +255,26 @@ class PyAVPlayerCore:
                 blocksize=self._blocksize,
             )
             self._stream_open = True
+            self._last_open_sample_rate = self._sample_rate
+            self._last_open_channels = self._channels
+            if was_playing:
+                self._output.start()
+
+    def rebind_output_device(self) -> None:
+        with self._lock:
+            if not self._stream_open:
+                return
+            was_playing = bool(self._playing)
+            self._async_close_stream()
+            self._output.open(
+                sample_rate=self._sample_rate,
+                channels=self._channels,
+                callback=self._audio_callback,
+                blocksize=self._blocksize,
+            )
+            self._stream_open = True
+            self._last_open_sample_rate = self._sample_rate
+            self._last_open_channels = self._channels
             if was_playing:
                 self._output.start()
 
@@ -304,9 +294,6 @@ class PyAVPlayerCore:
 
     def _ensure_stream_started(self) -> None:
         if not self._stream_open:
-            if self._need_stream_cooldown:
-                time.sleep(0.08)
-                self._need_stream_cooldown = False
             try:
                 self._output.open(
                     sample_rate=self._sample_rate,
@@ -315,23 +302,45 @@ class PyAVPlayerCore:
                     blocksize=self._blocksize,
                 )
                 self._stream_open = True
+                self._last_open_sample_rate = self._sample_rate
+                self._last_open_channels = self._channels
             except Exception:
                 self._stream_open = False
                 raise
         self._output.start()
 
-    def _reopen_stream(self) -> None:
-        if self._stream_open:
+    def _try_reuse_or_reopen_stream(self) -> None:
+        same_params = (
+            self._stream_open
+            and self._sample_rate == self._last_open_sample_rate
+            and self._channels == self._last_open_channels
+        )
+        if same_params:
             try:
                 self._output.stop()
             except Exception:
                 pass
-            try:
-                self._output.close()
-            except Exception:
-                pass
-            self._stream_open = False
-            self._need_stream_cooldown = True
+            return
+        self._async_close_stream()
+
+    def _async_close_stream(self) -> None:
+        if not self._stream_open:
+            return
+        old_output = self._output
+        self._stream_open = False
+        try:
+            old_output.stop()
+        except Exception:
+            pass
+        threading.Thread(target=self._close_output_in_background, args=(old_output,), daemon=True).start()
+
+    @staticmethod
+    def _close_output_in_background(backend: AudioOutputBackend) -> None:
+        try:
+            time.sleep(0.05)
+            backend.close()
+        except Exception:
+            pass
 
     def _audio_callback(self, outdata, frames, _time_info, _status) -> None:
         try:

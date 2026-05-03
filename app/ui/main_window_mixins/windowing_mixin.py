@@ -923,25 +923,92 @@ class MainWindowWindowingMixin:
         if not mime.hasUrls():
             event.ignore()
             return
+
+        local_paths: list[Path] = []
         for url in mime.urls():
-            if not url.isLocalFile():
-                continue
-            file_path = Path(url.toLocalFile())
-            if file_path.suffix.lower() in {".lrc", ".qrc", ".txt"} and file_path.name.endswith(("_qm.qrc.txt", "_qmRoma.qrc.txt", "_qmts.qrc.txt")) or file_path.suffix.lower() == ".lrc":
-                track = self.player.current_track()
-                if track is None:
-                    self.statusBar().showMessage("请先播放一首歌曲再拖入歌词", 3000)
-                    event.acceptProposedAction()
-                    return
-                self._attach_lyrics_to_current_track(file_path)
+            if url.isLocalFile():
+                local_paths.append(Path(url.toLocalFile()))
+
+        if not local_paths:
+            event.ignore()
+            return
+
+        lyrics_exts = {".lrc", ".qrc"}
+        lyrics_name_suffixes = ("_qm.qrc.txt", "_qmRoma.qrc.txt", "_qmts.qrc.txt")
+        audio_exts = {".mp3", ".flac", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".wma"}
+
+        def _is_lyrics_file(p: Path) -> bool:
+            if p.suffix.lower() == ".lrc":
+                return True
+            if p.suffix.lower() == ".qrc":
+                return True
+            if p.suffix.lower() == ".txt" and p.name.endswith(lyrics_name_suffixes):
+                return True
+            return False
+
+        def _is_audio_file(p: Path) -> bool:
+            return p.suffix.lower() in audio_exts
+
+        all_lyrics = all(_is_lyrics_file(p) for p in local_paths if p.is_file())
+        has_folder = any(p.is_dir() for p in local_paths)
+
+        if all_lyrics and not has_folder:
+            track = self.player.current_track()
+            if track is None:
+                self.statusBar().showMessage("请先播放一首歌曲再拖入歌词", 3000)
                 event.acceptProposedAction()
                 return
-            ok = self.player.play_file(file_path, active_request=True)
-            if ok:
-                self.statusBar().showMessage("已播放拖入文件", 3000)
+            for p in local_paths:
+                self._attach_lyrics_to_current_track(p)
             event.acceptProposedAction()
             return
-        event.ignore()
+
+        if has_folder:
+            for p in local_paths:
+                if p.is_dir():
+                    self._import_folder_as_playlist(p)
+            event.acceptProposedAction()
+            return
+
+        imported = 0
+        skipped = 0
+        for p in local_paths:
+            if not p.is_file():
+                continue
+            if _is_lyrics_file(p):
+                continue
+            if not _is_audio_file(p):
+                skipped += 1
+                continue
+            ok = self.player.play_file(p, active_request=True)
+            if ok:
+                imported += 1
+        if imported > 0:
+            self.statusBar().showMessage(f"已导入 {imported} 首歌曲", 3000)
+        elif skipped > 0:
+            self.statusBar().showMessage(f"跳过 {skipped} 个不支持的文件", 3000)
+        event.acceptProposedAction()
+
+    def _import_folder_as_playlist(self, folder: Path) -> None:
+        audio_exts = {".mp3", ".flac", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".wma"}
+        audio_files: list[Path] = []
+        for f in sorted(folder.rglob("*")):
+            if f.is_file() and f.suffix.lower() in audio_exts:
+                audio_files.append(f)
+        if not audio_files:
+            self.statusBar().showMessage(f"文件夹中未找到音频文件: {folder.name}", 3000)
+            return
+        playlist = self.controller.library_service.create_playlist(folder.name)
+        track_ids: list[str] = []
+        for af in audio_files:
+            try:
+                track = self.controller.library_service.import_file(af, playlist_id=playlist.id)
+                track_ids.append(track.id)
+            except Exception:
+                pass
+        self.player.queue_changed.emit()
+        count = len(track_ids)
+        self.statusBar().showMessage(f"已创建歌单「{folder.name}」，导入 {count} 首歌曲", 3000)
 
     def _attach_lyrics_to_current_track(self, lyrics_path: Path) -> None:
         track = self.player.current_track()
