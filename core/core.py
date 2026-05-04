@@ -243,11 +243,20 @@ class PyAVPlayerCore:
 
     def set_output_device(self, device: str | int | None) -> None:
         with self._lock:
+            current_device = None
+            if isinstance(self._output, SoundDeviceOutputBackend):
+                current_device = self._output._device
+            if current_device == (device if device else None):
+                return
             if isinstance(self._output, SoundDeviceOutputBackend):
                 self._output._device = device if device else None
             was_playing = bool(self._playing) and self._stream_open
             if self._stream_open:
-                self._async_close_stream()
+                try:
+                    self._output.stop()
+                except Exception:
+                    pass
+                self._stream_open = False
             self._output.open(
                 sample_rate=self._sample_rate,
                 channels=self._channels,
@@ -265,7 +274,11 @@ class PyAVPlayerCore:
             if not self._stream_open:
                 return
             was_playing = bool(self._playing)
-            self._async_close_stream()
+            try:
+                self._output.stop()
+            except Exception:
+                pass
+            self._stream_open = False
             self._output.open(
                 sample_rate=self._sample_rate,
                 channels=self._channels,
