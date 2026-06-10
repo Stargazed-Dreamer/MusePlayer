@@ -116,6 +116,68 @@ class MainWindowPlaybackMixin:
             self.statusBar().showMessage("统计数据已保存", 2200)
         except Exception as exc:
             self.statusBar().showMessage(f"保存统计失败：{exc}", 3500)
+
+    def _export_stats(self) -> None:
+        """导出统计数据为 MuseArc 兼容格式。"""
+        from PySide6.QtWidgets import QFileDialog
+        import hashlib
+        import json
+
+        stats_svc = self.controller.playback_stats_service
+        library = self.controller.library_service
+        if stats_svc is None or library is None:
+            self.statusBar().showMessage("服务未就绪，无法导出", 2500)
+            return
+
+        entries = stats_svc._entries
+        if not entries:
+            self.statusBar().showMessage("没有统计数据可导出", 2500)
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出统计数据", "playback_stats.muse_stats.json",
+            "MuseArc 统计 (*.muse_stats.json);;JSON (*.json);;所有文件 (*)"
+        )
+        if not path:
+            return
+
+        try:
+            tracks_list = []
+            for track_id, item in entries.items():
+                track = library.tracks.get(track_id)
+                entry = {
+                    "track_id": f"trk_{track_id}" if not track_id.startswith("trk_") else track_id,
+                    "stats": {
+                        "play_count": max(0, int(item.play_count)),
+                        "manual_play_count": max(0, int(item.active_play_count)),
+                        "play_seconds": max(0, int(item.played_seconds_total)),
+                        "early_skip_count": max(0, int(item.early_skip_count)),
+                    },
+                }
+                if track:
+                    if track.source_sha256:
+                        entry["source_sha256"] = track.source_sha256
+                    if track.path:
+                        entry["storage_relpath"] = str(track.path)
+                tracks_list.append(entry)
+
+            content_hash = hashlib.sha256(
+                json.dumps(tracks_list, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ).hexdigest()[:16]
+
+            payload = {
+                "schema": "musearc_playlist_export_v1",
+                "playlist_hash": f"museplayer_stats_{content_hash}",
+                "playlist_name": "MusePlayer 播放统计",
+                "tracks": tracks_list,
+            }
+
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+
+            self.statusBar().showMessage(f"已导出 {len(tracks_list)} 首歌曲的统计数据", 3000)
+        except Exception as exc:
+            self.statusBar().showMessage(f"导出失败：{exc}", 3500)
     def _new_icon_button(self, object_name: str) -> QToolButton:
         """创建新的图标按钮工具。
         
