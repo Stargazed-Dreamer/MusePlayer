@@ -164,7 +164,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         # 媒体内容状态
         self._has_cover_content = False  # 是否有封面图片
         self._has_lyrics_content = False  # 是否有歌词内容
-        self._last_nonzero_gain = max(1, int(self.player.gain_percent()))  # 最后的非零音量值（用于取消静音）
+        self._last_nonzero_gain = max(1, int(self.player.gain_percent())) if self.player else 100  # 最后的非零音量值（用于取消静音）
         
         # 当前播放信息缓存（用于简洁模式显示）
         self._current_track_title = "未选择歌曲"
@@ -214,8 +214,9 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
 
         # 初始化界面状态（歌曲列表和歌单下拉框延迟到窗口显示后加载）
         self._refresh_mode_order()                # 刷新播放模式顺序
-        self._on_mode_changed(self.player.mode.value)     # 同步播放模式
-        self._on_playback_changed(self.player.is_playing())  # 同步播放状态
+        if self.player:
+            self._on_mode_changed(self.player.mode.value)     # 同步播放模式
+            self._on_playback_changed(self.player.is_playing())  # 同步播放状态
         self._refresh_volume_ui()                 # 刷新音量显示
         self._apply_theme_stylesheet()            # 应用主题样式
         self._refresh_theme_button()              # 刷新主题按钮状态
@@ -433,7 +434,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
 
         self.volume_slider = ClickJumpSlider(Qt.Orientation.Horizontal, volume_wheel=True)
         self.volume_slider.setRange(0, 100)
-        self.volume_slider.setValue(self.player.slider_gain_percent())
+        self.volume_slider.setValue(self.player.slider_gain_percent() if self.player else 100)
         self.volume_slider.setMinimumWidth(150)
 
         self.compact_btn = self._new_icon_button("CompactButton")
@@ -646,13 +647,14 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.track_list.itemDoubleClicked.connect(self._on_track_double_clicked)
         self.track_list.verticalScrollBar().valueChanged.connect(lambda _: self._update_locate_current_button())
 
-        self.player.track_changed.connect(self._refresh_current_track_ui)
-        self.player.progress_changed.connect(self._on_progress_changed)
-        self.player.playback_changed.connect(self._on_playback_changed)
-        self.player.mode_changed.connect(self._on_mode_changed)
-        self.player.random_state_changed.connect(self._on_random_state_changed)
-        self.player.playback_rate_changed.connect(self._on_playback_rate_changed)
-        self.player.queue_changed.connect(self._on_queue_changed)
+        if self.player:
+            self.player.track_changed.connect(self._refresh_current_track_ui)
+            self.player.progress_changed.connect(self._on_progress_changed)
+            self.player.playback_changed.connect(self._on_playback_changed)
+            self.player.mode_changed.connect(self._on_mode_changed)
+            self.player.random_state_changed.connect(self._on_random_state_changed)
+            self.player.playback_rate_changed.connect(self._on_playback_rate_changed)
+            self.player.queue_changed.connect(self._on_queue_changed)
 
         self.controller.library_changed.connect(self._on_library_changed)
         self.controller.settings_changed.connect(self._on_settings_changed)
@@ -669,7 +671,8 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.lyrics_list.verticalScrollBar().valueChanged.connect(self._on_lyrics_scroll_changed)
 
     def _bind_shortcuts(self) -> None:
-        QShortcut(QKeySequence("Space"), self, activated=self.player.toggle_play_pause)
+        if self.player:
+            QShortcut(QKeySequence("Space"), self, activated=self.player.toggle_play_pause)
         QShortcut(QKeySequence("PgUp"), self, activated=self._play_previous_track)
         QShortcut(QKeySequence("PgDown"), self, activated=self._play_next_track)
         QShortcut(QKeySequence("Up"), self, activated=lambda: self._adjust_volume_by_key(True))

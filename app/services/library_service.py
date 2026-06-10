@@ -360,7 +360,9 @@ class LibraryService:
         """
         if playlist_id and playlist_id in self.playlists:
             return self.playlists[playlist_id]
-        return self.playlists[ALL_SONGS_ID]
+        if ALL_SONGS_ID in self.playlists:
+            return self.playlists[ALL_SONGS_ID]
+        return None
 
     def list_playlists(self) -> list[Playlist]:
         """获取所有歌单列表。

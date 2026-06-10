@@ -33,25 +33,15 @@ class AppController(QObject):
     error_occurred = Signal(str)
 
     def __init__(self, project_root: Path, parent: QObject | None = None):
-        """应用控制器构造函数。
-        
-        初始化所有子系统：元数据服务、数据存储、库管理、播放统计、播放器、控制服务等。
-        建立服务间的依赖关系，配置事件连接，启动定时保存机制。
-        
-        Args:
-            project_root: 项目根目录路径
-            parent: Qt父对象
+        """应用控制器构造函数（轻量模式）。
+
+        仅初始化设置和存储层，不加载库和播放器。
+        调用 initialize_services() 完成完整初始化。
         """
-        import time as _time
-        _t0 = _time.perf_counter()
         super().__init__(parent)
-        # 初始化目录结构
         self.project_root = Path(project_root).resolve()
         self.data_dir = self.project_root / "data"
         self.data_dir.mkdir(parents=True, exist_ok=True)
-
-        # 创建并装配各服务层
-        self.metadata_service = MetadataService()
 
         # 数据持久化存储层
         self.library_store = LibraryStore(self.data_dir)
@@ -65,17 +55,36 @@ class AppController(QObject):
         self.logger = get_logger("app")
         self.logger.info("MusePlayer 启动")
         self._runtime_error_file = self.data_dir / "runtime_errors.log"
-        _t1 = _time.perf_counter()
 
-        # 初始化库服务并加载现有数据
+        # 占位属性，initialize_services() 中赋值
+        self.metadata_service = None
+        self.library_service = None
+        self.playback_stats_service = None
+        self.player_service = None
+        self.control_server = None
+        self._session_restored = False
+        self._services_initialized = False
+
+    def initialize_services(self) -> None:
+        """初始化库服务、播放器、控制服务器等重服务。
+
+        在窗口显示后调用，避免阻塞窗口出现。
+        分两步：先初始化播放器（~0.3s，可立即播放），再加载库（~0.9s）。
+        """
+        if self._services_initialized:
+            return
+        self._services_initialized = True
+        import time as _time
+        _t0 = _time.perf_counter()
+
+        self.metadata_service = MetadataService()
+
+        # 第一步：创建库服务（不加载）和播放器
         self.library_service = LibraryService(self.library_store, self.metadata_service)
         self.library_service.set_data_maintenance_logging_enabled(
             bool(getattr(self.settings, "data_maintenance_logging_enabled", True))
         )
-        self.library_service.load(quick=True)
-        _t2 = _time.perf_counter()
 
-        # 创建播放统计服务和播放器服务
         self.playback_stats_service = PlaybackStatsService(self.data_dir)
         self.player_service = PlayerService(
             self.library_service,
@@ -87,13 +96,30 @@ class AppController(QObject):
         self.player_service.set_playlist_loop_sort_getter(lambda: str(getattr(self.settings, "playlist_loop_sort", "default")))
         self.player_service.set_prefer_playlist_order_getter(lambda: bool(getattr(self.settings, "prefer_playlist_order", False)))
         self.player_service.set_random_display_order_getter(lambda: str(getattr(self.settings, "random_display_order", "original")))
-        # 配置播放器功能和连接错误处理信号
         self.player_service.set_single_loop_mode_enabled(self.settings.enable_single_loop_mode)
         self.player_service.set_playlist_loop_mode_enabled(self.settings.enable_playlist_loop_mode)
         self.player_service.set_output_device(getattr(self.settings, "output_device", ""))
         self.player_service.error_occurred.connect(self.error_occurred)
         self.error_occurred.connect(self._record_runtime_error)
-        _t3 = _time.perf_counter()
+        _t1 = _time.perf_counter()
+        print(f"[Services计时] 播放器初始化: {_t1-_t0:.3f}s")
+
+    def load_library(self) -> None:
+        """加载曲库数据（在播放器初始化后调用）。
+
+        此步骤较慢（~0.9s），但播放器已可用。
+        """
+        if self.library_service is None:
+            return
+        import time as _time
+        _t0 = _time.perf_counter()
+
+        self.library_service.load(quick=True)
+        _t1 = _time.perf_counter()
+
+        # 库加载后重新初始化播放器的曲目索引
+        if self.player_service:
+            self.player_service._set_initial_track_for_playlist()
 
         # 初始化运行时控制服务器
         self.control_server = ControlServer(self.dispatch_command)
@@ -112,17 +138,13 @@ class AppController(QObject):
         self._media_devices = QMediaDevices(self)
         self._media_devices.audioOutputsChanged.connect(self._on_audio_outputs_changed)
 
-        # 会话恢复延迟到窗口显示后执行（restore_session），加速窗口出现
-        self._session_restored = False
-
         if self.settings.control_interface_enabled:
             self.start_runtime_server()
         else:
             self.runtime_status_changed.emit(False, self.settings.control_host, self.settings.control_port)
 
-        _t4 = _time.perf_counter()
-        print(f"[Controller计时] 设置/日志: {_t1-_t0:.3f}s | 库加载: {_t2-_t1:.3f}s | "
-              f"播放器: {_t3-_t2:.3f}s | 服务: {_t4-_t3:.3f}s | 总计: {_t4-_t0:.3f}s")
+        _t2 = _time.perf_counter()
+        print(f"[Services计时] 库加载: {_t1-_t0:.3f}s | 服务: {_t2-_t1:.3f}s | 总计: {_t2-_t0:.3f}s")
 
     def restore_session(self) -> None:
         """恢复上次播放会话（在窗口显示后调用以加速启动）。"""

@@ -392,6 +392,12 @@ class SessionState:
     """随机播放的种子"""
     random_index: int = 0
     """随机播放的索引位置"""
+    current_track_path: str = ""
+    """当前曲目的文件路径（用于启动时快速预览，无需加载完整库）"""
+    current_track_title: str = ""
+    """当前曲目标题（用于启动时快速预览）"""
+    current_track_artist: str = ""
+    """当前曲目歌手（用于启动时快速预览）"""
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典格式，用于序列化。
@@ -407,6 +413,9 @@ class SessionState:
             "play_mode": self.play_mode,
             "random_seed": int(self.random_seed),
             "random_index": int(self.random_index),
+            "current_track_path": self.current_track_path,
+            "current_track_title": self.current_track_title,
+            "current_track_artist": self.current_track_artist,
         }
 
     @classmethod
@@ -432,4 +441,7 @@ class SessionState:
             # 确保随机种子和索引不为负数
             random_seed=max(0, int(data.get("random_seed", 1))),
             random_index=max(0, int(data.get("random_index", 0))),
+            current_track_path=str(data.get("current_track_path", "")),
+            current_track_title=str(data.get("current_track_title", "")),
+            current_track_artist=str(data.get("current_track_artist", "")),
         )

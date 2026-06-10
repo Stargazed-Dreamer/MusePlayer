@@ -286,6 +286,8 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         prev_position_for_skip = float(self._safe_position())
         prev_duration_for_skip = float(self._safe_duration())
         playlist = self.library.get_playlist(playlist_id)
+        if playlist is None:
+            return
         self._current_playlist_id = playlist.id
         self.library.set_active_playlist(playlist.id)
 
@@ -830,6 +832,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             SessionState对象，包含完整的会话状态
         """
         position = self._safe_position()
+        track = self.current_track()
 
         return SessionState(
             current_playlist_id=self._current_playlist_id,
@@ -839,6 +842,9 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             play_mode=self._mode.value,
             random_seed=self._random_seed,
             random_index=self._random_index,
+            current_track_path=str(track.path) if track else "",
+            current_track_title=str(track.title) if track else "",
+            current_track_artist=str(track.artist) if track else "",
         )
 
     def restore_session(self, state: SessionState) -> None:
@@ -906,7 +912,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         确保当播放列表变更时，能正确设置当前曲目ID，并维护随机顺序和索引。
         """
         track_ids = self._playlist_track_ids()  # 获取当前播放列表中的所有曲目ID
-        if not track_ids:  # 如果播放列表为空
+        if not track_ids:  # 如果播放列表为空（库未加载或确实为空）
             self._current_track_id = None
             self._loaded_track_id = None
             return
@@ -983,6 +989,8 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
 
     def _playlist_track_ids(self) -> list[str]:
         playlist = self.library.get_playlist(self._current_playlist_id)
+        if playlist is None:
+            return []
         return [track_id for track_id in playlist.track_ids if track_id in self.library.tracks]
 
     def display_ordered_track_ids(self) -> list[str]:

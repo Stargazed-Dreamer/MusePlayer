@@ -213,25 +213,50 @@ def main() -> int:
     app.setStyleSheet(APP_STYLE)
     t2 = time.perf_counter()
 
+    # 先读会话数据（几KB，瞬间完成），用于窗口预览
+    from app.models.session_store import SessionStore
+    _session_preview = SessionStore(project_root / "data").load()
+
+    # 轻量 Controller（仅加载设置，不初始化库和播放器）
     controller = AppController(project_root=project_root)
     t3 = time.perf_counter()
-    _install_persist_fallbacks(app, controller)
-    t4 = time.perf_counter()
 
+    # 第一步：初始化播放器（~0.3s，之后即可播放/暂停）
+    controller.initialize_services()
+    t3b = time.perf_counter()
+
+    # 创建窗口（player 已存在，UI 可正常初始化）
     win = MainWindow(controller)
     if icon_path.exists():
         win.setWindowIcon(QIcon(str(icon_path)))
+
+    # 用会话预览数据立即显示当前歌曲信息
+    if _session_preview.current_track_title:
+        win.title_label.setText(_session_preview.current_track_title)
+        win.artist_label.setText(_session_preview.current_track_artist)
+        win._current_track_title = _session_preview.current_track_title
+        win._current_track_artist = _session_preview.current_track_artist
+        win._update_window_title()
+
     win.show()
-    t5 = time.perf_counter()
+    t4 = time.perf_counter()
 
     from PySide6.QtCore import QTimer, QMetaObject, Qt as _Qt
 
-    # 第一步：立即恢复会话（开始播放当前歌曲）
+    _install_persist_fallbacks(app, controller)
+
+    # 第二步：加载曲库（~0.9s，播放器已可用但需要库数据才能恢复会话）
+    controller.load_library()
+
+    # 第三步：恢复会话（开始播放当前歌曲）
     controller.restore_session()
     win._refresh_current_track_ui(win.player.current_track())
     win._refresh_random_state_hint()
+    win._on_mode_changed(win.player.mode.value)
+    win._on_playback_changed(win.player.is_playing())
+    win._refresh_volume_ui()
 
-    # 第二步：延迟加载歌曲列表（不阻塞播放）
+    # 第四步：延迟加载歌曲列表
     def _deferred_ui_init():
         win._reload_playlist_combo()
         win._reload_track_list()
@@ -253,10 +278,10 @@ def main() -> int:
 
     threading.Thread(target=_run_deferred_cleanup, daemon=True).start()
 
-    total = t5 - t0
-    print(f"[启动计时] QApplication: {t1-t0:.3f}s | 样式/图标: {t2-t1:.3f}s | "
-          f"Controller: {t3-t2:.3f}s | 兜底安装: {t4-t3:.3f}s | "
-          f"MainWindow+show: {t5-t4:.3f}s | 总计: {total:.3f}s")
+    total = t4 - t0
+    print(f"[启动计时] QApplication: {t1-t0:.3f}s | 样式: {t2-t1:.3f}s | "
+          f"Controller(轻量): {t3-t2:.3f}s | 播放器: {t3b-t3:.3f}s | "
+          f"MainWindow+show: {t4-t3b:.3f}s | 窗口出现: {total:.3f}s")
 
     return app.exec()
 
