@@ -676,7 +676,7 @@ class AppController(QObject):
             return {"ok": True, "result": result}
 
         if cmd == "current_playlist":
-            playlist_id = self.player_service.current_playlist_id()
+            playlist_id = self.player_service.current_playlist_id
             if not playlist_id:
                 return {"ok": True, "result": None}
             playlist = self.library_service.playlists.get(playlist_id)
@@ -691,6 +691,25 @@ class AppController(QObject):
             result["tracks"] = tracks_info
             return {"ok": True, "result": result}
 
+        if cmd == "get_playlist":
+            playlist_id = payload.get("playlist_id")
+            if not playlist_id:
+                return {"ok": False, "error": "missing playlist_id"}
+            playlist = self.library_service.playlists.get(str(playlist_id))
+            if playlist is None:
+                return {"ok": True, "result": None}
+            result = playlist.to_dict()
+            tracks_info = []
+            for tid in playlist.track_ids:
+                t = self.library_service.tracks.get(tid)
+                if t is not None:
+                    info = {"id": t.id, "title": t.title, "artist": t.artist, "duration_sec": float(t.duration_sec)}
+                    if t.source_sha256:
+                        info["source_sha256"] = t.source_sha256
+                    tracks_info.append(info)
+            result["tracks"] = tracks_info
+            return {"ok": True, "result": result}
+
         if cmd == "add_track_to_playlist":
             track_id = payload.get("track_id")
             playlist_id = payload.get("playlist_id")
@@ -699,6 +718,15 @@ class AppController(QObject):
             self.library_service.add_track_ids_to_playlist(str(playlist_id), [str(track_id)])
             self.library_changed.emit()
             return {"ok": True}
+
+        if cmd == "remove_track_from_playlist":
+            track_id = payload.get("track_id")
+            playlist_id = payload.get("playlist_id")
+            if not track_id or not playlist_id:
+                return {"ok": False, "error": "missing track_id or playlist_id"}
+            removed_globally = self.library_service.remove_track_from_playlist(str(playlist_id), str(track_id))
+            self.library_changed.emit()
+            return {"ok": True, "result": {"removed_globally": list(removed_globally)}}
 
         return {"ok": False, "error": f"unknown cmd: {cmd}"}
 

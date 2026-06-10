@@ -829,12 +829,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         Returns:
             SessionState对象，包含完整的会话状态
         """
-        position = 0.0
-        if self._loaded_track_id is not None:
-            try:
-                position = self._core.current_time()
-            except Exception:
-                position = 0.0
+        position = self._safe_position()
 
         return SessionState(
             current_playlist_id=self._current_playlist_id,
