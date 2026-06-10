@@ -47,6 +47,8 @@ class LibraryService:
         self.active_playlist_id: str | None = None
         self._cleanup_log_path = self._store.path.parent / "logs" / "data_cleanup.log"
         self._data_maintenance_logging_enabled = True
+        self._path_index: dict[Path, Track] = {}
+        self._sha256_index: dict[str, Track] = {}
 
     def set_data_maintenance_logging_enabled(self, enabled: bool) -> None:
         self._data_maintenance_logging_enabled = bool(enabled)
@@ -85,6 +87,7 @@ class LibraryService:
         changed = self._normalize_playlist_tracks() or changed
         if changed:
             self.save()
+        self._rebuild_indexes()
         logger.info("曲库加载完成: tracks=%s playlists=%s", len(self.tracks), len(self.playlists))
 
     def _record_cleanup(self, *, item: str, reason: str) -> None:
@@ -102,6 +105,19 @@ class LibraryService:
                 f.write(f"{stamp} {text}\n")
         except Exception:
             pass
+
+    def _rebuild_indexes(self) -> None:
+        """重建路径索引和SHA256索引，加速查找。"""
+        self._path_index.clear()
+        self._sha256_index.clear()
+        for track in self.tracks.values():
+            try:
+                self._path_index[Path(track.path).resolve()] = track
+            except Exception:
+                pass
+            sha = str(getattr(track, "source_sha256", "") or "").strip().lower()
+            if sha:
+                self._sha256_index[sha] = track
 
     def _drop_missing_tracks(self) -> bool:
         """清理曲库中指向不存在的文件的跟踪记录。
@@ -720,7 +736,6 @@ class LibraryService:
             flat_files.extend(files)
         total = len(flat_files)
 
-        path_map = {Path(track.path).resolve(): track for track in self.tracks.values()}
         imported_by_id: dict[str, Track] = {}
         all_songs = self.playlists[ALL_SONGS_ID]
         all_ids = set(all_songs.track_ids)
@@ -732,11 +747,11 @@ class LibraryService:
         for playlist, files in plan:
             existing_ids = playlist_ids_map.setdefault(playlist.id, set(playlist.track_ids))
             for file_path in files:
-                existing = path_map.get(file_path)
+                existing = self._path_index.get(file_path)
                 if existing is None:
                     track = self._metadata.extract_track(file_path)
                     self.tracks[track.id] = track
-                    path_map[file_path] = track
+                    self._path_index[file_path] = track
                 else:
                     track = existing
 
@@ -773,7 +788,7 @@ class LibraryService:
         logger.info("导入文件夹: %s, 新增/纳入歌曲=%s, 歌单数=%s", target, len(imported), len(plan))
         return imported
 
-    def import_file(self, file_path: Path, playlist_id: str | None = None) -> Track:
+    def import_file(self, file_path: Path, playlist_id: str | None = None, *, skip_save: bool = False) -> Track:
         """导入单个音频文件到曲库。
         
         将指定的音频文件元数据提取到曲库，并添加到指定的歌单中。
@@ -782,6 +797,7 @@ class LibraryService:
         Args:
             file_path: 音频文件路径
             playlist_id: 目标歌单ID，None则使用当前活动歌单
+            skip_save: 为True时跳过持久化保存（批量导入时由调用方统一保存）
             
         Returns:
             Track对象
@@ -796,12 +812,12 @@ class LibraryService:
         if source.suffix.lower() not in AUDIO_EXTENSIONS:
             raise ValueError(f"不支持的音频格式: {source.suffix}")
 
-        path_map = {Path(track.path).resolve(): track for track in self.tracks.values()}
-        existing = path_map.get(source)
+        existing = self._path_index.get(source)
         track = existing if existing is not None else self._metadata.extract_track(source)
 
         if existing is None:
             self.tracks[track.id] = track
+            self._path_index[source] = track
 
         all_songs = self.playlists[ALL_SONGS_ID]
         if track.id not in all_songs.track_ids:
@@ -813,7 +829,8 @@ class LibraryService:
             target_playlist.track_ids.append(track.id)
             target_playlist.touch()
 
-        self.save()
+        if not skip_save:
+            self.save()
         logger.info("导入文件: %s", source)
         return track
 
@@ -1387,9 +1404,9 @@ class LibraryService:
         normalized_relpath = self._normalize_relpath(source_storage_relpath)
 
         if source_sha256:
-            for track in self.tracks.values():
-                if track.source_sha256 and track.source_sha256.lower() == source_sha256.lower():
-                    return track
+            hit = self._sha256_index.get(source_sha256.lower())
+            if hit is not None:
+                return hit
         if source_track_id:
             for track in self.tracks.values():
                 if track.source_track_id == source_track_id:
@@ -1399,12 +1416,9 @@ class LibraryService:
                 if self._normalize_relpath(track.source_storage_relpath) == normalized_relpath:
                     return track
 
-        for track in self.tracks.values():
-            try:
-                if Path(track.path).resolve() == resolved_source:
-                    return track
-            except Exception:
-                continue
+        hit = self._path_index.get(resolved_source)
+        if hit is not None:
+            return hit
         return None
 
     @staticmethod
@@ -1521,8 +1535,18 @@ class LibraryService:
         return all_track_ids - referenced
 
     def _remove_track_globally(self, track_id: str) -> None:
-        if track_id in self.tracks:
+        track = self.tracks.get(track_id)
+        if track is not None:
             del self.tracks[track_id]
+            try:
+                path_key = Path(track.path).resolve()
+                if self._path_index.get(path_key) is track:
+                    del self._path_index[path_key]
+            except Exception:
+                pass
+            sha = str(getattr(track, "source_sha256", "") or "").strip().lower()
+            if sha and self._sha256_index.get(sha) is track:
+                del self._sha256_index[sha]
         for playlist in self.playlists.values():
             if track_id in playlist.track_ids:
                 playlist.track_ids = [x for x in playlist.track_ids if x != track_id]

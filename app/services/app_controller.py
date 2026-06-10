@@ -360,11 +360,12 @@ class AppController(QObject):
         imported = 0
         for path in files:
             try:
-                self.library_service.import_file(path, playlist_id=playlist_id)
+                self.library_service.import_file(path, playlist_id=playlist_id, skip_save=True)
                 imported += 1
             except Exception:
                 continue
         if imported > 0:
+            self.library_service.save()
             self.library_changed.emit()
         return imported
 

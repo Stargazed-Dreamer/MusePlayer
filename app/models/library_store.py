@@ -100,4 +100,4 @@ class LibraryStore:
             "playlists": {playlist_id: p.to_dict() for playlist_id, p in playlists.items()},
             "active_playlist_id": active_playlist_id,
         }
-        self._path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
