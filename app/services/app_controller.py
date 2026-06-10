@@ -42,6 +42,8 @@ class AppController(QObject):
             project_root: 项目根目录路径
             parent: Qt父对象
         """
+        import time as _time
+        _t0 = _time.perf_counter()
         super().__init__(parent)
         # 初始化目录结构
         self.project_root = Path(project_root).resolve()
@@ -63,13 +65,15 @@ class AppController(QObject):
         self.logger = get_logger("app")
         self.logger.info("MusePlayer 启动")
         self._runtime_error_file = self.data_dir / "runtime_errors.log"
+        _t1 = _time.perf_counter()
 
         # 初始化库服务并加载现有数据
         self.library_service = LibraryService(self.library_store, self.metadata_service)
         self.library_service.set_data_maintenance_logging_enabled(
             bool(getattr(self.settings, "data_maintenance_logging_enabled", True))
         )
-        self.library_service.load()
+        self.library_service.load(quick=True)
+        _t2 = _time.perf_counter()
 
         # 创建播放统计服务和播放器服务
         self.playback_stats_service = PlaybackStatsService(self.data_dir)
@@ -89,6 +93,7 @@ class AppController(QObject):
         self.player_service.set_output_device(getattr(self.settings, "output_device", ""))
         self.player_service.error_occurred.connect(self.error_occurred)
         self.error_occurred.connect(self._record_runtime_error)
+        _t3 = _time.perf_counter()
 
         # 初始化运行时控制服务器
         self.control_server = ControlServer(self.dispatch_command)
@@ -107,16 +112,28 @@ class AppController(QObject):
         self._media_devices = QMediaDevices(self)
         self._media_devices.audioOutputsChanged.connect(self._on_audio_outputs_changed)
 
-        if self.settings.auto_restore_session:
-            with self.player_service.suspend_stats_collection():
-                self.player_service.restore_session(self.session_store.load())
-        else:
-            self.player_service.set_volume(1.0)
+        # 会话恢复延迟到窗口显示后执行（restore_session），加速窗口出现
+        self._session_restored = False
 
         if self.settings.control_interface_enabled:
             self.start_runtime_server()
         else:
             self.runtime_status_changed.emit(False, self.settings.control_host, self.settings.control_port)
+
+        _t4 = _time.perf_counter()
+        print(f"[Controller计时] 设置/日志: {_t1-_t0:.3f}s | 库加载: {_t2-_t1:.3f}s | "
+              f"播放器: {_t3-_t2:.3f}s | 服务: {_t4-_t3:.3f}s | 总计: {_t4-_t0:.3f}s")
+
+    def restore_session(self) -> None:
+        """恢复上次播放会话（在窗口显示后调用以加速启动）。"""
+        if self._session_restored:
+            return
+        self._session_restored = True
+        if self.settings.auto_restore_session:
+            with self.player_service.suspend_stats_collection():
+                self.player_service.restore_session(self.session_store.load())
+        else:
+            self.player_service.set_volume(1.0)
 
     def shutdown(self) -> None:
         """应用程序关闭流程。

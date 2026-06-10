@@ -53,16 +53,17 @@ class LibraryService:
     def set_data_maintenance_logging_enabled(self, enabled: bool) -> None:
         self._data_maintenance_logging_enabled = bool(enabled)
 
-    def load(self) -> None:
+    def load(self, *, quick: bool = False) -> None:
         """加载曲库数据。
         
-        执行完整的曲库初始化流程：
+        执行曲库初始化流程：
         1. 从持久化存储加载基础数据
         2. 确保"全部歌曲"歌单存在
-        3. 清理指向不存在文件的歌曲记录
-        4. 检测并移除重复的曲目
-        5. 设置活动歌单（如果不存在则使用默认）
-        6. 同步歌单与实际曲库数据
+        3. 设置活动歌单（如果不存在则使用默认）
+        4. 同步歌单与实际曲库数据
+        
+        当 quick=True 时跳过耗时的磁盘检查（缺失文件检测、歌词路径清理、
+        重复曲目检测），这些操作可通过 deferred_cleanup() 在后台执行。
         
         这是应用启动时的关键初始化步骤，确保内存数据与磁盘数据的一致性。
         """
@@ -70,10 +71,6 @@ class LibraryService:
         self.tracks = tracks
         self.playlists = playlists
         self._ensure_system_playlists()
-        changed = False
-        changed = self._drop_missing_tracks() or changed
-        changed = self._cleanup_missing_lyrics_paths() or changed
-        changed = self._deduplicate_tracks() or changed
 
         if active in self.playlists:
             self.active_playlist_id = active
@@ -84,11 +81,32 @@ class LibraryService:
                 reason="活动歌单不存在，已回退到系统歌单",
             )
 
-        changed = self._normalize_playlist_tracks() or changed
+        changed = False
+        if not quick:
+            changed = self._normalize_playlist_tracks() or changed
+            changed = self._drop_missing_tracks() or changed
+            changed = self._cleanup_missing_lyrics_paths() or changed
+            changed = self._deduplicate_tracks() or changed
         if changed:
             self.save()
         self._rebuild_indexes()
-        logger.info("曲库加载完成: tracks=%s playlists=%s", len(self.tracks), len(self.playlists))
+        logger.info("曲库加载完成: tracks=%s playlists=%s quick=%s", len(self.tracks), len(self.playlists), quick)
+
+    def deferred_cleanup(self) -> None:
+        """执行延迟的曲库清理操作（缺失文件检测、歌词路径清理、重复曲目检测）。
+        
+        适用于在后台线程中运行，避免阻塞 UI 启动。
+        如果检测到变更会自动保存并重建索引。
+        """
+        changed = False
+        changed = self._drop_missing_tracks() or changed
+        changed = self._cleanup_missing_lyrics_paths() or changed
+        changed = self._deduplicate_tracks() or changed
+        changed = self._normalize_playlist_tracks() or changed
+        if changed:
+            self.save()
+            self._rebuild_indexes()
+        logger.info("延迟清理完成: changed=%s", changed)
 
     def _record_cleanup(self, *, item: str, reason: str) -> None:
         if not self._data_maintenance_logging_enabled:
@@ -523,7 +541,7 @@ class LibraryService:
         # 查找并删除不再被其他歌单引用的孤立曲目
         orphan_track_ids = self._find_orphan_track_ids(exclude_playlist_id=playlist_id)
         for track_id in orphan_track_ids:
-            self.tracks.pop(track_id, None)
+            self._remove_track_globally(track_id)
 
         # 重新同步全部歌曲歌单
         self._normalize_playlist_tracks()
@@ -1003,7 +1021,7 @@ class LibraryService:
             orphan_track_ids = self._find_orphan_track_ids()
             for track_id in removed_track_ids:
                 if track_id in orphan_track_ids:
-                    self.tracks.pop(track_id, None)
+                    self._remove_track_globally(track_id)
 
         # 重新同步歌单数据并保存
         self._normalize_playlist_tracks()

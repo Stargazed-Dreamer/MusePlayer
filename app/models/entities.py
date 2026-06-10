@@ -270,6 +270,8 @@ class Settings:
     """最大窗口宽度，0表示不限制"""
     max_window_height: int = 0
     """最大窗口高度，0表示不限制"""
+    startup_file_check: bool = True
+    """启动时检查歌曲文件是否存在"""
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典格式，用于序列化。

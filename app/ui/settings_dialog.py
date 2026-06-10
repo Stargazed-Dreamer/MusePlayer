@@ -243,11 +243,15 @@ class SettingsDialog(QDialog):
         )
         self.data_maintenance_logging_check.toggled.connect(self._on_data_maintenance_logging_toggled)
 
+        self.startup_file_check = QCheckBox("启动时检查歌曲文件是否存在（关闭可加速启动）")
+        self.startup_file_check.setChecked(bool(getattr(self._settings, "startup_file_check", True)))
+
         form.addRow(self.timed_save_check)
         form.addRow("定时保存间隔", self.timed_save_spin)
         form.addRow(self.logging_check)
         form.addRow(self.crash_logging_check)
         form.addRow(self.data_maintenance_logging_check)
+        form.addRow(self.startup_file_check)
 
         parent_layout.addWidget(group)
 
@@ -310,6 +314,7 @@ class SettingsDialog(QDialog):
             window_height=int(getattr(self._settings, "window_height", 0)),
             max_window_width=int(self._parse_max_window_value(self.max_window_width_edit.text(), 600)[0] or 0),
             max_window_height=int(self._parse_max_window_value(self.max_window_height_edit.text(), 800)[0] or 0),
+            startup_file_check=bool(self.startup_file_check.isChecked()),
         )
 
     def _on_control_interface_toggled(self, enabled: bool) -> None:

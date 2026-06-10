@@ -201,26 +201,30 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self._last_window_width = self.width()
 
         # 构建界面（按依赖顺序）
+        import time as _time
+        _t0 = _time.perf_counter()
         self._build_ui()      # 构建控件树
+        _t1 = _time.perf_counter()
         self._build_menu()    # 构建菜单栏
         self._bind_signals()  # 绑定信号槽
         self._bind_shortcuts() # 绑定快捷键
+        _t2 = _time.perf_counter()
         self._apply_window_size_limits()  # 应用窗口最大尺寸限制
         self._restore_window_geometry()  # 恢复窗口位置和大小
 
-        # 初始化界面状态
-        self._reload_playlist_combo()             # 加载歌单下拉框
-        self._reload_track_list()                 # 加载歌曲列表
-        self._refresh_current_track_ui(self.player.current_track())  # 刷新当前歌曲UI
+        # 初始化界面状态（歌曲列表和歌单下拉框延迟到窗口显示后加载）
         self._refresh_mode_order()                # 刷新播放模式顺序
         self._on_mode_changed(self.player.mode.value)     # 同步播放模式
         self._on_playback_changed(self.player.is_playing())  # 同步播放状态
         self._refresh_volume_ui()                 # 刷新音量显示
         self._apply_theme_stylesheet()            # 应用主题样式
         self._refresh_theme_button()              # 刷新主题按钮状态
-        self._refresh_random_state_hint()         # 刷新随机状态提示
         self._update_window_title()               # 更新窗口标题
         self._refresh_window_flags()              # 刷新窗口标志
+        _t3 = _time.perf_counter()
+
+        print(f"[MainWindow计时] build_ui: {_t1-_t0:.3f}s | menu/signals: {_t2-_t1:.3f}s | "
+              f"其余初始化: {_t3-_t2:.3f}s | 总计: {_t3-_t0:.3f}s")
 
         # 延迟执行的初始化任务
         QTimer.singleShot(0, self._reposition_sidebar_toggle)  # 重定位侧边栏切换按钮

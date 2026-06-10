@@ -17,6 +17,7 @@ import os
 import signal
 import sys
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -197,7 +198,9 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
 
 
 def main() -> int:
+    t0 = time.perf_counter()
     app = QApplication(sys.argv)
+    t1 = time.perf_counter()
     app.setApplicationName("MusePlayer")
     app.setStyle("Fusion")
     if sys.platform.startswith("win"):
@@ -208,14 +211,49 @@ def main() -> int:
         icon = QIcon(str(icon_path))
         app.setWindowIcon(icon)
     app.setStyleSheet(APP_STYLE)
+    t2 = time.perf_counter()
 
     controller = AppController(project_root=project_root)
+    t3 = time.perf_counter()
     _install_persist_fallbacks(app, controller)
+    t4 = time.perf_counter()
 
     win = MainWindow(controller)
     if icon_path.exists():
         win.setWindowIcon(QIcon(str(icon_path)))
     win.show()
+    t5 = time.perf_counter()
+
+    # 延迟加载歌曲列表和会话恢复（窗口已显示，用户可立即看到界面）
+    from PySide6.QtCore import QTimer, QMetaObject, Qt as _Qt
+
+    def _deferred_ui_init():
+        win._reload_playlist_combo()
+        win._reload_track_list()
+        win._refresh_current_track_ui(win.player.current_track())
+        win._refresh_random_state_hint()
+
+    QTimer.singleShot(0, _deferred_ui_init)
+
+    # 后台延迟清理曲库（缺失文件检测等），不阻塞 UI
+    startup_file_check = bool(getattr(controller.settings, "startup_file_check", True))
+
+    def _run_deferred_cleanup():
+        if not startup_file_check:
+            return
+        try:
+            controller.library_service.deferred_cleanup()
+            if controller.library_service.tracks:
+                QMetaObject.invokeMethod(win, "_on_library_changed", _Qt.ConnectionType.QueuedConnection)
+        except Exception:
+            pass
+
+    threading.Thread(target=_run_deferred_cleanup, daemon=True).start()
+
+    total = t5 - t0
+    print(f"[启动计时] QApplication: {t1-t0:.3f}s | 样式/图标: {t2-t1:.3f}s | "
+          f"Controller: {t3-t2:.3f}s | 兜底安装: {t4-t3:.3f}s | "
+          f"MainWindow+show: {t5-t4:.3f}s | 总计: {total:.3f}s")
 
     return app.exec()
 
