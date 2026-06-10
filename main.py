@@ -224,14 +224,17 @@ def main() -> int:
     win.show()
     t5 = time.perf_counter()
 
-    # 延迟加载歌曲列表和会话恢复（窗口已显示，用户可立即看到界面）
     from PySide6.QtCore import QTimer, QMetaObject, Qt as _Qt
 
+    # 第一步：立即恢复会话（开始播放当前歌曲）
+    controller.restore_session()
+    win._refresh_current_track_ui(win.player.current_track())
+    win._refresh_random_state_hint()
+
+    # 第二步：延迟加载歌曲列表（不阻塞播放）
     def _deferred_ui_init():
         win._reload_playlist_combo()
         win._reload_track_list()
-        win._refresh_current_track_ui(win.player.current_track())
-        win._refresh_random_state_hint()
 
     QTimer.singleShot(0, _deferred_ui_init)
 
