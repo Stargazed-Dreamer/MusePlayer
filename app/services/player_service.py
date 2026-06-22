@@ -671,6 +671,13 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             next_track_id=track_id,
         )
 
+        # 检查上一首歌是否完播（95%以上）
+        self._check_and_record_complete_play(
+            track_id=previous_track_id,
+            position=previous_position,
+            duration=previous_duration,
+        )
+
         logger.info("切换歌曲: %s", track_id)
         self.track_changed.emit(self.current_track())
         return True
@@ -1087,6 +1094,12 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         处理当前曲目自然播放结束的逻辑。
         根据播放模式（如单曲循环）决定下一步操作。
         """
+        # 自然结束时，当前曲目一定完播（95%以上），记录完播
+        self._check_and_record_complete_play(
+            track_id=self._loaded_track_id,
+            position=float(self._safe_position()),
+            duration=float(self._safe_duration()),
+        )
         if self._mode == PlayMode.SINGLE_LOOP and self._current_track_id:  # 单曲循环模式
             ok = self._load_current_track(auto_play=True, start_sec=0.0, active_request=False)  # 重新从0开始播放当前曲目
             if ok:

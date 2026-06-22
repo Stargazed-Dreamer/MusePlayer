@@ -1048,6 +1048,7 @@ class LibraryService:
         tracks_out: list[dict] = []
         total_play_count = 0
         total_manual_play_count = 0
+        total_complete_play_count = 0
         total_play_seconds = 0
         total_early_skip_count = 0
         db_root = Path(database_location)
@@ -1057,11 +1058,15 @@ class LibraryService:
             stats = playback_stats_service.export_stats_for_track(tid) or {
                 "play_count": 0,
                 "manual_play_count": 0,
+                "complete_play_count": 0,
                 "play_seconds": 0,
                 "early_skip_count": 0,
+                "peak_session_play_count": 0,
+                "peak_session_play_at": 0.0,
             }
             total_play_count += int(stats.get("play_count", 0) or 0)
             total_manual_play_count += int(stats.get("manual_play_count", 0) or 0)
+            total_complete_play_count += int(stats.get("complete_play_count", 0) or 0)
             total_play_seconds += int(stats.get("play_seconds", 0) or 0)
             total_early_skip_count += int(stats.get("early_skip_count", 0) or 0)
 
@@ -1080,8 +1085,11 @@ class LibraryService:
                     "stats": {
                         "play_count": max(0, int(stats.get("play_count", 0) or 0)),
                         "manual_play_count": max(0, int(stats.get("manual_play_count", 0) or 0)),
+                        "complete_play_count": max(0, int(stats.get("complete_play_count", 0) or 0)),
                         "play_seconds": max(0, int(stats.get("play_seconds", 0) or 0)),
                         "early_skip_count": max(0, int(stats.get("early_skip_count", 0) or 0)),
+                        "peak_session_play_count": max(0, int(stats.get("peak_session_play_count", 0) or 0)),
+                        "peak_session_play_at": max(0.0, float(stats.get("peak_session_play_at", 0.0) or 0.0)),
                     },
                 }
             )
@@ -1102,6 +1110,7 @@ class LibraryService:
             "stats_summary": {
                 "total_play_count": int(total_play_count),
                 "total_manual_play_count": int(total_manual_play_count),
+                "total_complete_play_count": int(total_complete_play_count),
                 "total_play_seconds": int(total_play_seconds),
                 "total_early_skip_count": int(total_early_skip_count),
                 "updated_at": exported_at,

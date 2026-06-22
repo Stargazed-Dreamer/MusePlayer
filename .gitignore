@@ -4,3 +4,14 @@
 test*
 _library_test_*
 *.log
+
+# Agent 配置（含密钥）
+config.toml
+
+# 运行时数据
+data/
+
+# 临时文件
+temp/
+output/
+input/

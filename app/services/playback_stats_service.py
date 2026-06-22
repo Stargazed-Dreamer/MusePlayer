@@ -7,6 +7,8 @@ from __future__ import annotations
 2. `active_play_count`: 用户主动触发（如双击、拖入、主动搜索播放）才 +1。
 3. `early_skip_count`: 在歌曲前 5% 被切走时 +1。
 4. `played_percent_total`: 以秒级增量累计，可超过 100%。
+5. `complete_play_count`: 播放进度达到 95% 以上时 +1（完播次数）。
+6. `peak_session_play_count` / `peak_session_play_at`: 历史最高密集播放次数及时间。
 """
 
 import json
@@ -39,10 +41,16 @@ class PlaybackStatsEntry:
     """主动播放次数（用户主动播放才+1）"""
     early_skip_count: int = 0
     """早期跳过次数（在曲目前5%被切走时+1）"""
+    complete_play_count: int = 0
+    """完播次数（播放进度达到95%以上时+1）"""
     played_seconds_total: float = 0.0
     """累计播放秒数"""
     played_percent_total: float = 0.0
     """累计播放百分比（可超过100%）"""
+    peak_session_play_count: int = 0
+    """历史最高密集播放次数（单次启动期间最高播放次数）"""
+    peak_session_play_at: float = 0.0
+    """历史最高密集播放次数的记录时间戳"""
     updated_at: float = field(default_factory=_now_ts)
     """最后更新时间戳"""
 
@@ -57,8 +65,11 @@ class PlaybackStatsEntry:
             "play_count": int(self.play_count),
             "active_play_count": int(self.active_play_count),
             "early_skip_count": int(self.early_skip_count),
+            "complete_play_count": int(self.complete_play_count),
             "played_seconds_total": float(self.played_seconds_total),
             "played_percent_total": float(self.played_percent_total),
+            "peak_session_play_count": int(self.peak_session_play_count),
+            "peak_session_play_at": float(self.peak_session_play_at),
             "updated_at": float(self.updated_at),
         }
 
@@ -79,8 +90,11 @@ class PlaybackStatsEntry:
             play_count=max(0, int(payload.get("play_count", 0))),
             active_play_count=max(0, int(payload.get("active_play_count", 0))),
             early_skip_count=max(0, int(payload.get("early_skip_count", 0))),
+            complete_play_count=max(0, int(payload.get("complete_play_count", 0))),
             played_seconds_total=max(0.0, float(payload.get("played_seconds_total", 0.0))),
             played_percent_total=max(0.0, float(payload.get("played_percent_total", 0.0))),
+            peak_session_play_count=max(0, int(payload.get("peak_session_play_count", 0))),
+            peak_session_play_at=max(0.0, float(payload.get("peak_session_play_at", 0.0))),
             updated_at=float(payload.get("updated_at", _now_ts())),
         )
 
@@ -103,6 +117,8 @@ class PlaybackStatsService:
         self._path = Path(data_dir).resolve() / "playback_stats.json"
         self._entries: dict[str, PlaybackStatsEntry] = {}
         self._dirty = False
+        # 本次启动期间每首歌的播放次数（用于计算密集播放）
+        self._session_play_counts: dict[str, int] = {}
         self._load()
 
     def _load(self) -> None:
@@ -146,6 +162,7 @@ class PlaybackStatsService:
         """记录播放开始事件。
         
         当曲目开始播放时调用此方法增加相应的计数器。
+        同时更新本次启动期间的会话播放计数，并判断是否更新历史最高密集播放次数。
         
         Args:
             track_id: 曲目ID
@@ -163,6 +180,22 @@ class PlaybackStatsService:
             item.active_play_count += 1
         item.updated_at = _now_ts()
         self._dirty = True
+
+        # 更新本次启动期间的会话播放计数
+        session_count = self._session_play_counts.get(track_id, 0) + 1
+        self._session_play_counts[track_id] = session_count
+
+        # 判断是否更新历史最高密集播放次数
+        # 规则：本次 > 历史 → 覆盖；本次 < 历史 但差值 ≤ 10% → 也覆盖
+        previous_peak = item.peak_session_play_count
+        if previous_peak <= 0 or session_count > previous_peak:
+            item.peak_session_play_count = session_count
+            item.peak_session_play_at = _now_ts()
+        elif previous_peak > 0 and session_count <= previous_peak:
+            # 差值不超过10%时覆盖
+            if previous_peak - session_count <= max(1, previous_peak * 0.10):
+                item.peak_session_play_count = session_count
+                item.peak_session_play_at = _now_ts()
 
     def record_play_progress(self, track_id: str, played_seconds: float, duration_sec: float) -> None:
         """记录播放进度。
@@ -222,6 +255,25 @@ class PlaybackStatsService:
         item.updated_at = _now_ts()
         self._dirty = True
 
+    def record_complete_play(self, track_id: str) -> None:
+        """记录完播事件。
+        
+        当曲目播放进度达到95%以上时调用此方法。
+        
+        Args:
+            track_id: 曲目ID
+        """
+        track_id = str(track_id or "").strip()
+        if not track_id:
+            return
+        item = self._entries.get(track_id)
+        if item is None:
+            item = PlaybackStatsEntry(track_id=track_id)
+            self._entries[track_id] = item
+        item.complete_play_count += 1
+        item.updated_at = _now_ts()
+        self._dirty = True
+
     def reset_early_skip_count(self, track_id: str) -> None:
         track_id = str(track_id or "").strip()
         if not track_id:
@@ -248,9 +300,13 @@ class PlaybackStatsService:
         item = self._entries.get(str(track_id or "").strip())
         if item is None:
             return None
-        return {
+        result = {
             "play_count": max(0, int(item.play_count)),
             "manual_play_count": max(0, int(item.active_play_count)),
+            "complete_play_count": max(0, int(item.complete_play_count)),
             "play_seconds": max(0, int(round(item.played_seconds_total))),
             "early_skip_count": max(0, int(item.early_skip_count)),
+            "peak_session_play_count": max(0, int(item.peak_session_play_count)),
+            "peak_session_play_at": max(0.0, float(item.peak_session_play_at)),
         }
+        return result

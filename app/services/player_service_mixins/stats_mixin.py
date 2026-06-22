@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """PlayerService 统计相关 mixin。
 
-包含统计开关、早期跳过判定、播放增量累计与统计暂停上下文。
+包含统计开关、早期跳过判定、完播判定、播放增量累计与统计暂停上下文。
 """
 
 from contextlib import contextmanager
@@ -88,6 +88,39 @@ class PlayerServiceStatsMixin:
             return
         try:
             self._stats.record_early_skip(track_id)
+        except Exception:
+            pass
+
+    def _check_and_record_complete_play(
+        self,
+        *,
+        track_id: str | None,
+        position: float,
+        duration: float,
+    ) -> None:
+        """检查是否达到完播条件（95%以上），如果是则记录完播。
+        
+        在切歌或自然结束时调用，检测上一首歌是否完播。
+        
+        Args:
+            track_id: 曲目ID
+            position: 当前播放位置（秒）
+            duration: 音轨总时长（秒）
+        """
+        if not self._collect_stats_enabled():
+            return
+        track_id = str(track_id or "").strip()
+        if not track_id:
+            return
+        duration_sec = max(0.0, float(duration))
+        if duration_sec <= 0.0:
+            return
+        played_sec = max(0.0, float(position))
+        # 完播定义：播放进度达到 95% 以上
+        if played_sec < duration_sec * 0.95:
+            return
+        try:
+            self._stats.record_complete_play(track_id)
         except Exception:
             pass
 

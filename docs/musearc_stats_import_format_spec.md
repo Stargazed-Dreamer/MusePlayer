@@ -30,8 +30,11 @@
       "stats": {
         "play_count": 11,
         "manual_play_count": 3,
+        "complete_play_count": 8,
         "play_seconds": 116,
-        "early_skip_count": 0
+        "early_skip_count": 0,
+        "peak_session_play_count": 5,
+        "peak_session_play_at": 1781375020.0
       }
     }
   ]
@@ -89,8 +92,11 @@ MuseArc 按以下顺序尝试将 tracks[i] 匹配到库内歌曲：
 |------|------|------|------|
 | `play_count` | int | **是** | 总播放次数（含随机播放和手动播放） |
 | `manual_play_count` | int | **是** | 用户主动选择播放的次数（非随机播放触发） |
+| `complete_play_count` | int | 否 | 完播次数（播放进度达到95%以上时+1） |
 | `play_seconds` | int | **是** | 累计播放秒数（整数，向下取整） |
 | `early_skip_count` | int | **是** | 早期跳过次数（播放进度不足5%就跳过的次数） |
+| `peak_session_play_count` | int | 否 | 历史最高密集播放次数（单次启动期间最高播放次数） |
+| `peak_session_play_at` | float | 否 | 历史最高密集播放次数的记录时间戳（Unix epoch 秒） |
 
 ### 字段映射参考（MusePlayer → MuseArc）
 
@@ -98,8 +104,11 @@ MuseArc 按以下顺序尝试将 tracks[i] 匹配到库内歌曲：
 |-----------------|-------------|---------|
 | `play_count` | `stats.play_count` | 直接映射 |
 | `active_play_count` | `stats.manual_play_count` | 语义对应：主动播放次数 |
+| `complete_play_count` | `stats.complete_play_count` | 直接映射：完播次数 |
 | `played_seconds_total` | `stats.play_seconds` | 浮点→整数，`int(played_seconds_total)` |
 | `early_skip_count` | `stats.early_skip_count` | 直接映射 |
+| `peak_session_play_count` | `stats.peak_session_play_count` | 直接映射 |
+| `peak_session_play_at` | `stats.peak_session_play_at` | 直接映射 |
 | `played_percent_total` | *(无对应)* | MuseArc 不使用此字段，可忽略 |
 | `updated_at` | *(无对应)* | MuseArc 不使用此字段，可忽略 |
 
@@ -142,8 +151,11 @@ MuseArc 按以下顺序尝试将 tracks[i] 匹配到库内歌曲：
       "stats": {
         "play_count": 11,
         "manual_play_count": 3,
+        "complete_play_count": 8,
         "play_seconds": 116,
-        "early_skip_count": 0
+        "early_skip_count": 0,
+        "peak_session_play_count": 5,
+        "peak_session_play_at": 1781375020.0
       }
     },
     {
@@ -152,8 +164,11 @@ MuseArc 按以下顺序尝试将 tracks[i] 匹配到库内歌曲：
       "stats": {
         "play_count": 4,
         "manual_play_count": 1,
+        "complete_play_count": 2,
         "play_seconds": 60,
-        "early_skip_count": 2
+        "early_skip_count": 2,
+        "peak_session_play_count": 3,
+        "peak_session_play_at": 1781375020.0
       }
     }
   ]
