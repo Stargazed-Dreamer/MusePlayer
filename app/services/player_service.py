@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 """播放服务层。
 
@@ -70,54 +70,82 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         read_strategy_getter: Callable[[], str] | None = None,
         parent: QObject | None = None,
     ):
-        super().__init__(parent)
-        self.library = library_service
-        self._stats = playback_stats_service
-        self._collect_stats_getter = collect_stats_getter or (lambda: True)
-        self._gain_boost_getter = gain_boost_getter or (lambda: self._GLOBAL_GAIN_BOOST)
-        self._read_strategy_getter = read_strategy_getter or (lambda: "window")
-        self._core = PyAVPlayerCore()
+        """
+        初始化媒体播放器控制器的核心状态和依赖。
 
-        self._mode = PlayMode.SINGLE_LOOP
-        self._single_loop_enabled = True
-        self._playlist_loop_enabled = False
-        self._playlist_loop_sort_getter: Callable[[], str] = lambda: "default"
-        self._prefer_playlist_order_getter: Callable[[], bool] = lambda: False
-        self._random_display_order_getter: Callable[[], str] = lambda: "original"
-        self._gain_percent = 80
-        self._playback_rate = 1.0
+        该方法负责设置播放器所需的各种服务、配置回调函数、初始化播放状态、
+        创建播放内核以及启动定时器来维持播放状态更新。
 
-        self._current_playlist_id = self.library.active_playlist_id
-        self._current_track_id: str | None = None
-        self._loaded_track_id: str | None = None
+        参数:
+            library_service (LibraryService): 图书馆服务实例，用于管理媒体库和播放列表。
+            playback_stats_service (PlaybackStatsService | None, optional): 播放统计服务实例。默认为None。
+            collect_stats_getter (Callable[[], bool] | None, optional): 获取是否收集统计数据的回调函数。默认为None。
+            gain_boost_getter (Callable[[], float] | None, optional): 获取增益提升值的回调函数。默认为None。
+            read_strategy_getter (Callable[[], str] | None, optional): 获取文件读取策略的回调函数。默认为None。
+            parent (QObject | None, optional): 父QObject对象，用于Qt对象树管理。默认为None。
 
-        self._sequential_index = 0
-        self._random_seed = 1
-        self._random_index = 0
-        self._random_order: list[str] = []
-        self._RANDOM_SEED_MAX = 2_000_000_000
+        返回值:
+            None: 初始化方法无返回值。
+        """
+        super().__init__(parent)  # 调用父类QObject的初始化方法
+        self.library = library_service  # 保存图书馆服务实例
+        self._stats = playback_stats_service  # 保存播放统计服务实例
+        # 设置回调函数，如果未提供则使用默认值
+        self._collect_stats_getter = collect_stats_getter or (lambda: True)  # 默认收集统计
+        self._gain_boost_getter = gain_boost_getter or (lambda: self._GLOBAL_GAIN_BOOST)  # 使用全局默认增益
+        self._read_strategy_getter = read_strategy_getter or (lambda: "window")  # 默认使用“窗口”读取策略
+        self._core = PyAVPlayerCore()  # 创建底层的PyAV播放器核心实例
 
-        self._expecting_natural_end = False
-        self._last_playing = False
-        self._stats_last_track_id: str | None = None
-        self._stats_last_position = 0.0
-        self._stats_skip_next_delta = False
-        self._stats_suspended_depth = 0
-        self._lazy_window_mode = False
-        self._lazy_window_base_sec = 0.0
-        self._lazy_promoted_to_full = False
-        self._prefetch_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="museplayer-prefetch")
-        self._prefetch_future: Future | None = None
-        self._prefetch_track_id: str | None = None
-        self._prefetch_start_sec = 0.0
-        self._prefetch_transition_sec = 0.0
+        # 初始化播放模式相关状态
+        self._mode = PlayMode.SINGLE_LOOP  # 初始播放模式为单曲循环
+        self._single_loop_enabled = True  # 启用单曲循环
+        self._playlist_loop_enabled = False  # 禁用播放列表循环
+        self._playlist_loop_sort_getter: Callable[[], str] = lambda: "default"  # 获取播放列表循环排序方式的回调
+        self._prefer_playlist_order_getter: Callable[[], bool] = lambda: False  # 获取是否优先使用播放列表顺序的回调
+        self._random_display_order_getter: Callable[[], str] = lambda: "original"  # 获取随机显示顺序的回调
+        self._gain_percent = 80  # 初始增益百分比
+        self._playback_rate = 1.0  # 初始播放速率
 
+        # 初始化当前播放的播放列表和曲目ID
+        self._current_playlist_id = self.library.active_playlist_id  # 从图书馆服务获取当前活动播放列表ID
+        self._current_track_id: str | None = None  # 当前正在播放或请求播放的曲目ID
+        self._loaded_track_id: str | None = None  # 已加载到播放器核心的曲目ID
+
+        # 初始化顺序播放索引
+        self._sequential_index = 0  # 顺序播放模式下的当前索引
+        # 初始化随机播放相关状态
+        self._random_seed = 1  # 随机种子
+        self._random_index = 0  # 随机播放模式下的当前索引
+        self._random_order: list[str] = []  # 随机播放顺序列表
+        self._RANDOM_SEED_MAX = 2_000_000_000  # 随机种子的最大值
+
+        # 初始化播放控制和统计相关的标志位
+        self._expecting_natural_end = False  # 是否正在等待曲目自然结束
+        self._last_playing = False  # 上一个tick时的播放状态
+        self._stats_last_track_id: str | None = None  # 上次统计记录的曲目ID
+        self._stats_last_position = 0.0  # 上次统计记录的位置
+        self._stats_skip_next_delta = False  # 是否跳过下一次的位置增量统计
+        self._stats_suspended_depth = 0  # 统计暂停的嵌套深度
+        # 初始化延迟窗口模式相关状态
+        self._lazy_window_mode = False  # 是否处于延迟窗口模式
+        self._lazy_window_base_sec = 0.0  # 延迟窗口模式的基准时间（秒）
+        self._lazy_promoted_to_full = False  # 是否已从延迟窗口提升为完整加载
+        # 初始化预加载执行器
+        self._prefetch_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="museplayer-prefetch")  # 单线程的预加载线程池
+        self._prefetch_future: Future | None = None  # 当前预加载任务的Future对象
+        self._prefetch_track_id: str | None = None  # 正在预加载的曲目ID
+        self._prefetch_start_sec = 0.0  # 预加载开始的时间点（秒）
+        self._prefetch_transition_sec = 0.0  # 预加载过渡时间点（秒）
+
+        # 创建并配置定时器，用于定期更新播放状态
         self._timer = QTimer(self)
-        self._timer.setInterval(20)
-        self._timer.timeout.connect(self._on_tick)
-        self._timer.start()
+        self._timer.setInterval(20)  # 设置定时器间隔为20毫秒（约50FPS）
+        self._timer.timeout.connect(self._on_tick)  # 连接超时信号到更新槽函数
+        self._timer.start()  # 启动定时器
 
+        # 设置播放器核心的错误回调
         self._core.set_error_callback(self._on_core_runtime_error)
+        # 为当前播放列表设置初始曲目
         self._set_initial_track_for_playlist()
 
     @property
@@ -161,24 +189,41 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             return False
 
     def set_output_device(self, device_name: str) -> bool:
+        """设置输出设备。
+
+        参数:
+            device_name (str): 要设置的输出设备名称。如果为空或None，则使用系统默认设备。
+
+        返回:
+            bool: 如果设置成功返回True，否则返回False。
+        """
         try:
-            self._core.set_output_device(device_name if device_name else None)
-            logger.info("输出设备已切换: %s", device_name or "跟随系统")
+            self._core.set_output_device(device_name if device_name else None)  # 设置输出设备，如果设备名为空则使用None表示跟随系统
+            logger.info("输出设备已切换: %s", device_name or "跟随系统")  # 记录日志，显示设备名或"跟随系统"
             return True
         except Exception as exc:
-            msg = f"切换输出设备失败: {exc}"
-            logger.exception(msg)
-            self.error_occurred.emit(msg)
+            msg = f"切换输出设备失败: {exc}"  # 构造错误消息字符串
+            logger.exception(msg)  # 记录异常信息到日志
+            self.error_occurred.emit(msg)  # 发出错误信号
             return False
 
     def available_modes(self) -> list[str]:
-        modes: list[str] = []
-        if self._single_loop_enabled:
-            modes.append(PlayMode.SINGLE_LOOP.value)
-        if self._playlist_loop_enabled:
-            modes.append(PlayMode.PLAYLIST_LOOP.value)
-        modes.append(PlayMode.RANDOM.value)
-        return modes
+        """
+        返回当前实例中启用的可用播放模式列表。
+
+        参数：
+            self: 类实例。
+
+        返回值：
+            list[str]: 可用播放模式的字符串列表。
+        """
+        modes: list[str] = []  # 初始化一个空列表来存储可用模式
+        if self._single_loop_enabled:  # 检查是否启用了单曲循环模式
+            modes.append(PlayMode.SINGLE_LOOP.value)  # 如果启用，将单曲循环模式添加到列表
+        if self._playlist_loop_enabled:  # 检查是否启用了列表循环模式
+            modes.append(PlayMode.PLAYLIST_LOOP.value)  # 如果启用，将列表循环模式添加到列表
+        modes.append(PlayMode.RANDOM.value)  # 总是添加随机模式
+        return modes  # 返回可用模式列表
 
     def _fallback_mode_for_disabled_option(self) -> PlayMode:
         if self._single_loop_enabled:
@@ -188,18 +233,35 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         return PlayMode.RANDOM
 
     def set_single_loop_mode_enabled(self, enabled: bool) -> None:
-        self._single_loop_enabled = bool(enabled)
-        if not self._single_loop_enabled and self._mode == PlayMode.SINGLE_LOOP:
-            self.set_mode(self._fallback_mode_for_disabled_option())
+        """
+        设置单循环模式是否启用。
+
+        参数:
+            enabled (bool): 是否启用单循环模式。
+
+        返回值:
+            None
+        """
+        self._single_loop_enabled = bool(enabled)  # 将参数转换为布尔值并设置单循环启用状态
+        if not self._single_loop_enabled and self._mode == PlayMode.SINGLE_LOOP:  # 如果单循环模式被禁用且当前模式是单循环模式
+            self.set_mode(self._fallback_mode_for_disabled_option())  # 设置为后备模式
         else:
-            self.mode_changed.emit(self._mode.value)
+            self.mode_changed.emit(self._mode.value)  # 发射模式改变信号，传递当前模式的值
 
     def set_playlist_loop_mode_enabled(self, enabled: bool) -> None:
-        self._playlist_loop_enabled = bool(enabled)
-        if not self._playlist_loop_enabled and self._mode == PlayMode.PLAYLIST_LOOP:
-            self.set_mode(self._fallback_mode_for_disabled_option())
-        else:
-            self.mode_changed.emit(self._mode.value)
+        """设置播放列表循环模式的启用状态。
+    
+        参数:
+            enabled (bool): 是否启用播放列表循环模式。
+    
+        返回:
+            None: 此方法不返回任何值。
+        """
+        self._playlist_loop_enabled = bool(enabled)  # 将输入参数转换为布尔值并存储循环模式启用状态
+        if not self._playlist_loop_enabled and self._mode == PlayMode.PLAYLIST_LOOP:  # 如果循环模式被禁用且当前播放模式是循环播放列表
+            self.set_mode(self._fallback_mode_for_disabled_option())  # 则将播放模式切换为禁用时的回退模式
+        else:  # 否则
+            self.mode_changed.emit(self._mode.value)  # 发出模式改变信号，通知其他组件
 
     def set_playlist_loop_sort_getter(self, getter: Callable[[], str]) -> None:
         self._playlist_loop_sort_getter = getter
@@ -216,30 +278,63 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             self._random_seed = 1
 
     def set_mode(self, mode: str | PlayMode) -> None:
+        """设置播放模式。
+
+        本方法用于切换音乐播放器的当前模式。
+        支持通过字符串或直接传入PlayMode枚举值来指定目标模式。
+
+        Args:
+            mode (str | PlayMode): 指定的播放模式。
+                - 当传入str时，会进行标准化（去除首尾空格并转为小写）并匹配为PlayMode枚举。
+                  已知的字符串别名包括：'single_loop', 'repeat_one', 'single', 'one', 'loop', 
+                  'playlist_loop', 'list_loop', 'sequential', 'random', 'shuffle'。
+                  若字符串无法匹配任何已知模式，则默认回退到PlayMode.SINGLE_LOOP。
+                - 当直接传入PlayMode枚举值时，将直接使用该值。
+
+        Returns:
+            None: 此方法无返回值。
+        """
+        # 如果传入的是字符串，需要解析并转换为对应的PlayMode枚举值
         if isinstance(mode, str):
+            # 对字符串进行清理：去除首尾空白并转为小写，以便标准化匹配
             cleaned = mode.strip().lower()
+            # 根据清理后的字符串匹配预定义的模式
             if cleaned in {"single_loop", "repeat_one", "single", "one", "loop"}:
+                # 解析为单曲循环模式
                 parsed = PlayMode.SINGLE_LOOP
             elif cleaned in {"playlist_loop", "list_loop", "sequential"}:
+                # 解析为列表循环模式
                 parsed = PlayMode.PLAYLIST_LOOP
             elif cleaned in {"random", "shuffle"}:
+                # 解析为随机播放模式
                 parsed = PlayMode.RANDOM
             else:
+                # 当传入的字符串无法识别时，默认回退到单曲循环模式
                 parsed = PlayMode.SINGLE_LOOP
         else:
+            # 如果传入的已经是PlayMode枚举，则直接使用
             parsed = mode
 
+        # 检查目标模式是否被系统启用，若未启用则使用回退模式
+        # 如果目标是单曲循环但该功能未启用，则切换到回退模式
         if parsed == PlayMode.SINGLE_LOOP and not self._single_loop_enabled:
             parsed = self._fallback_mode_for_disabled_option()
+        # 如果目标是列表循环但该功能未启用，则切换到回退模式
         if parsed == PlayMode.PLAYLIST_LOOP and not self._playlist_loop_enabled:
             parsed = self._fallback_mode_for_disabled_option()
 
+        # 将最终解析后的模式设置为当前模式
         self._mode = parsed
+        # 记录模式切换的日志信息
         logger.info("播放模式切换: %s", self._mode.value)
+        # 发射模式改变信号，通知其他组件
         self.mode_changed.emit(self._mode.value)
 
+        # 如果最终模式是随机播放，则需要重新构建播放顺序并同步索引
         if self._mode == PlayMode.RANDOM:
+            # 强制重建随机播放队列
             self._rebuild_random_order(force=True)
+            # 将随机播放索引与当前播放曲目对齐
             self._align_random_index_with_current_track()
 
     def reseed_random_after_current_track_removed(self) -> str | None:
@@ -350,43 +445,83 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         self.queue_changed.emit()
 
     def play(self) -> None:
+        """开始播放当前曲目或从暂停状态恢复播放。
+
+        功能说明：
+        - 如果当前没有设置曲目ID，则先为播放列表设置初始曲目
+        - 如果已加载的曲目与当前曲目不同，则加载新曲目
+        - 如果曲目相同，则根据播放模式（正常模式/懒加载窗口模式）恢复播放
+        - 播放过程中会处理可能的异常情况
+
+        参数：
+        无参数
+
+        返回值：
+        无返回值（None）
+        """
         if self._current_track_id is None:
+            # 如果当前没有播放曲目，尝试为播放列表设置初始曲目
             self._set_initial_track_for_playlist()
+            # 如果设置后仍然没有曲目ID，则直接返回
             if self._current_track_id is None:
                 return
 
+        # 检查当前加载的曲目是否与要播放的曲目相同
         if self._loaded_track_id != self._current_track_id:
+            # 如果不同，加载当前曲目（自动播放，从0秒开始，非活跃请求）
             ok = self._load_current_track(auto_play=True, start_sec=0.0, active_request=False)
+            # 如果加载失败，直接返回
             if not ok:
                 return
         else:
+            # 如果已加载的曲目与当前曲目相同，则尝试从当前位置继续播放
             try:
+                # 检查是否处于懒加载窗口模式且尚未提升为完整播放
                 if self._lazy_window_mode and not self._lazy_promoted_to_full:
+                    # 获取本地播放的起始位置（当前播放时间，最小为0）
                     local_start = max(0.0, float(self._core.current_time()))
+                    # 获取本地播放的总时长（最小为0）
                     local_duration = max(0.0, float(self._core.duration()))
+                    # 获取绝对播放位置（安全位置，最小为0）
                     absolute_start = max(0.0, float(self._safe_position()))
+                    # 判断是否已到达懒加载窗口的末尾（窗口时长大于0且当前位置接近窗口末尾）
                     at_window_end = local_duration > 0.0 and local_start >= max(0.0, local_duration - 0.05)
+                
                     if at_window_end:
+                        # 如果到达窗口末尾，重新加载懒加载窗口（保持播放状态）
                         self._reload_lazy_window(absolute_start, keep_playing=True)
                     else:
+                        # 否则，从本地开始位置继续播放
                         self._core.play(local_start)
+                        # 设置标志表示预期自然结束
                         self._expecting_natural_end = True
                 else:
+                    # 在正常模式下，从当前位置继续播放
                     start = self._core.current_time()
                     self._core.play(start)
+                    # 设置标志表示预期自然结束
                     self._expecting_natural_end = True
             except Exception as exc:
+                # 捕获播放过程中可能出现的异常
+                # 如果是特定解码缓冲丢失错误
                 if "No decoded audio loaded" in str(exc):
+                    # 获取上次记录的播放位置作为恢复位置
                     resume_at = max(0.0, float(self._stats_last_position))
+                    # 尝试重新加载当前曲目（从恢复位置开始自动播放）
                     ok = self._load_current_track(auto_play=True, start_sec=resume_at, active_request=False)
                     if ok:
+                        # 记录警告日志
                         logger.warning("播放前发现解码缓冲丢失，已自动重载: %s", self._current_track_id)
+                        # 强制更新播放状态
                         self._emit_playback_state(force=True)
                         return
+                # 对于其他异常，发出错误信号并返回
                 self.error_occurred.emit(str(exc))
                 return
 
+        # 记录播放信息日志
         logger.info("播放: %s", self._current_track_id)
+        # 更新播放状态
         self._emit_playback_state()
 
     def pause(self) -> None:
@@ -480,14 +615,23 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         return max(0, min(100, int(self._gain_percent)))
 
     def set_gain_percent(self, percent: int, *, allow_boost: bool) -> int:
-        max_value = 500 if allow_boost else 100
-        value = max(0, min(max_value, int(percent)))
+        """设置增益百分比。
+
+        参数:
+            percent (int): 增益百分比，整数。
+            allow_boost (bool): 是否允许提升，布尔值。
+
+        返回:
+            int: 设置后的增益百分比。
+        """
+        max_value = 500 if allow_boost else 100  # 根据是否允许提升，设置最大值
+        value = max(0, min(max_value, int(percent)))  # 将百分比转换为整数，并限制在0到最大值之间
         self._gain_percent = value
         try:
-            self._apply_core_volume()
+            self._apply_core_volume()  # 尝试应用核心音量
         except Exception:
-            pass
-        return self._gain_percent
+            pass  # 忽略任何异常
+        return self._gain_percent  # 返回设置后的增益百分比
 
     def adjust_gain_by_key(self, increase: bool) -> int:
         cur = int(self._gain_percent)
@@ -504,22 +648,46 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         return self.set_gain_percent(target, allow_boost=True)
 
     def set_playback_rate(self, rate: float) -> None:
+        """
+        设置播放速率。
+
+        该方法用于调整媒体的播放速度。
+        输入值会被限制在0.25倍到4.0倍之间。
+        如果底层媒体核心设置失败，则静默忽略异常。
+        无论成功与否，都会发射播放速率变化的信号。
+
+        参数:
+            rate (float): 目标播放速率。
+
+        返回:
+            None: 此方法不返回任何值。
+        """
+        # 将输入的播放速率限制在0.25到4.0的范围内，并确保其为浮点数类型。
         value = max(0.25, min(4.0, float(rate)))
+        # 存储经过范围限制的播放速率值。
         self._playback_rate = value
         try:
+            # 尝试在底层媒体播放核心中设置播放速率。
             self._core.set_playback_rate(value)
         except Exception:
+            # 如果设置过程中发生任何异常（例如底层播放器不支持），则静默忽略，不中断程序执行。
             pass
+        # 向外部发送播放速率已更改的通知信号，传递当前的播放速率值。
         self.playback_rate_changed.emit(self._playback_rate)
 
     def playback_rate(self) -> float:
         return float(self._playback_rate)
 
     def refresh_output_gain(self) -> None:
+        """刷新输出增益。通过调用内部方法 _apply_core_volume() 来应用核心音量设置。如果调用失败，静默忽略异常。
+
+        参数：无（除了隐含的 self）。
+        返回值：None。
+        """
         try:
-            self._apply_core_volume()
+            self._apply_core_volume()  # 尝试应用核心音量
         except Exception:
-            pass
+            pass  # 如果发生异常，静默忽略以防止程序崩溃
 
     def is_playing(self) -> bool:
         """检查当前是否正在播放。
@@ -683,47 +851,86 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         return True
 
     def play_file(self, file_path: Path, *, active_request: bool = True) -> bool:
+        """播放指定路径的文件。
+
+        此方法尝试将给定文件导入到当前播放列表，然后播放该文件。
+        如果导入过程中发生错误，会发射错误信号并返回 False。
+        成功导入后，会发射队列变更信号并播放该音轨。
+
+        Args:
+            file_path (Path): 要播放的音频文件的路径。
+            active_request (bool, optional): 是否作为主动请求播放。默认为 True。
+
+        Returns:
+            bool: 如果文件导入并开始播放成功，返回 True；如果导入失败，返回 False。
+        """
         try:
+            # 尝试将文件导入到当前播放列表库中，并获取对应的音轨对象
             track = self.library.import_file(file_path=file_path, playlist_id=self._current_playlist_id)
         except Exception as exc:
+            # 如果导入过程中发生任何异常，发射错误信号并返回失败
             self.error_occurred.emit(str(exc))
             return False
 
+        # 导入成功，发射信号通知队列状态已更新
         self.queue_changed.emit()
+        # 调用播放音轨方法，并传递相关参数
         return self.play_track(
             track.id,
-            auto_play=True,
-            start_sec=0.0,
-            manual_select=True,
-            active_request=active_request,
+            auto_play=True,         # 导入后自动开始播放
+            start_sec=0.0,          # 从音轨起始位置开始播放
+            manual_select=True,     # 标记为手动选择播放（可能用于区分自动播放）
+            active_request=active_request,  # 传递是否为活跃播放请求的标志
         )
 
     def next_track(self, *, user_triggered: bool = True) -> bool:
+        """
+        切换到播放列表中的下一个音轨。
+
+        参数：
+            user_triggered (bool, 可选): 是否由用户触发，默认为 True。当由系统自动切换时，可以设置为 False。
+
+        返回值：
+            bool: 如果成功切换到下一个音轨，返回 True；否则返回 False。
+        """
+        # 获取播放列表中所有音轨的ID列表
         track_ids = self._playlist_track_ids()
+        # 如果播放列表为空，无法切换音轨，返回 False
         if not track_ids:
             return False
 
+        # 检查播放模式是否为随机模式
         if self._mode == PlayMode.RANDOM:
+            # 重建随机播放顺序，仅在必要时强制重建
             self._rebuild_random_order(force=False)
+            # 如果随机顺序为空，无法播放，返回 False
             if not self._random_order:
                 return False
 
+            # 设置最大尝试次数，防止无限循环
             attempts = len(self._random_order)
             while attempts > 0:
+                # 尝试找到当前音轨在随机顺序中的索引
                 if self._current_track_id in self._random_order:
                     self._random_index = self._random_order.index(self._current_track_id)
                 else:
+                    # 如果当前音轨不在随机顺序中，调整索引到有效范围
                     self._random_index = DeterministicShuffle.clamp_index(self._random_order, self._random_index)
 
+                # 检查是否已到随机顺序的末尾，如果是，增加随机种子并重建顺序
                 if self._random_index + 1 >= len(self._random_order):
                     self._increment_random_seed()
                     self._rebuild_random_order(force=True)
                     self._random_index = 0
                 else:
+                    # 否则，移动到下一个索引
                     self._random_index += 1
 
+                # 发出随机状态变化信号
                 self.random_state_changed.emit(self._random_seed, self._random_index)
+                # 获取目标音轨ID
                 target_id = self._random_order[self._random_index]
+                # 尝试播放目标音轨
                 if self.play_track(
                     target_id,
                     auto_play=True,
@@ -731,31 +938,44 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
                     from_random_navigation=True,
                     active_request=False,
                 ):
+                    # 播放成功，返回 True
                     return True
+                # 播放失败，减少尝试次数
                 attempts -= 1
 
+            # 所有尝试均失败，发出错误信号
             self.error_occurred.emit("歌单内歌曲均无法播放")
             return False
 
+        # 如果播放模式为播放列表循环
         if self._mode == PlayMode.PLAYLIST_LOOP:
+            # 获取排序模式和是否优先使用播放列表顺序
             sort_mode = self._playlist_loop_sort_getter()
             prefer_order = self._prefer_playlist_order_getter()
+            # 如果优先使用播放列表顺序，直接使用原始列表
             if prefer_order:
                 sorted_ids = track_ids
             else:
+                # 否则，根据排序模式排序音轨ID
                 sorted_ids = self._sorted_playlist_track_ids(sort_mode)
         else:
+            # 其他模式，使用原始播放列表
             sorted_ids = track_ids
 
+        # 尝试找到当前音轨在排序列表中的索引
         if self._current_track_id in sorted_ids:
             idx = sorted_ids.index(self._current_track_id)
         else:
+            # 如果当前音轨不在列表中，从起始位置开始
             idx = -1
 
+        # 设置最大尝试次数
         attempts = len(sorted_ids)
         while attempts > 0:
+            # 循环到下一个音轨索引，使用模运算实现循环
             idx = (idx + 1) % len(sorted_ids)
             target_id = sorted_ids[idx]
+            # 尝试播放目标音轨
             if self.play_track(
                 target_id,
                 auto_play=True,
@@ -763,9 +983,12 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
                 manual_select=False,
                 active_request=False,
             ):
+                # 播放成功，返回 True
                 return True
+            # 播放失败，减少尝试次数
             attempts -= 1
 
+        # 所有尝试均失败，发出错误信号
         self.error_occurred.emit("歌单内歌曲均无法播放")
         return False
 
@@ -995,10 +1218,14 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         return True
 
     def _playlist_track_ids(self) -> list[str]:
-        playlist = self.library.get_playlist(self._current_playlist_id)
-        if playlist is None:
-            return []
-        return [track_id for track_id in playlist.track_ids if track_id in self.library.tracks]
+        """获取当前播放列表的 track IDs，只返回在库中存在的 track IDs。
+        参数：无（self 是实例参数）。
+        返回值：list[str] - 包含字符串类型的 track IDs 列表。
+        """
+        playlist = self.library.get_playlist(self._current_playlist_id)  # 获取指定ID的播放列表
+        if playlist is None:  # 如果播放列表不存在
+            return []  # 返回空列表
+        return [track_id for track_id in playlist.track_ids if track_id in self.library.tracks]  # 过滤出存在于库中的 track IDs
 
     def display_ordered_track_ids(self) -> list[str]:
         track_ids = self._playlist_track_ids()
@@ -1009,15 +1236,28 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         return track_ids
 
     def _sorted_playlist_track_ids(self, sort_mode: str = "default") -> list[str]:
-        track_ids = self._playlist_track_ids()
-        if sort_mode == "default":
-            return track_ids
-        tracks = self.library.tracks
-        if sort_mode == "title":
-            return sorted(track_ids, key=lambda tid: (tracks[tid].title or "").lower())
-        if sort_mode == "artist":
-            return sorted(track_ids, key=lambda tid: (tracks[tid].artist or "").lower())
-        return track_ids
+        """
+        根据指定的排序模式返回播放列表中曲目ID的排序列表。
+
+        参数:
+            sort_mode (str): 排序模式，默认为"default"。
+                - "default": 返回原始顺序。
+                - "title": 按曲目标题排序。
+                - "artist": 按艺术家排序。
+                - 其他值: 与"default"相同，返回原始顺序。
+
+        返回:
+            list[str]: 排序后的曲目ID列表。
+        """
+        track_ids = self._playlist_track_ids()  # 获取当前播放列表的曲目ID列表
+        if sort_mode == "default":  # 检查是否为默认排序模式
+            return track_ids  # 直接返回原始曲目ID列表
+        tracks = self.library.tracks  # 从库中获取所有曲目的字典，键为曲目ID
+        if sort_mode == "title":  # 如果排序模式为按标题排序
+            return sorted(track_ids, key=lambda tid: (tracks[tid].title or "").lower())  # 按曲目标题的字母顺序排序，忽略大小写
+        if sort_mode == "artist":  # 如果排序模式为按艺术家排序
+            return sorted(track_ids, key=lambda tid: (tracks[tid].artist or "").lower())  # 按艺术家名称的字母顺序排序，忽略大小写
+        return track_ids  # 对于其他排序模式，返回原始曲目ID列表
 
     def _rebuild_random_order(self, *, force: bool) -> None:
         """

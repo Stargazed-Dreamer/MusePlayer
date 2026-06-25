@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 """主窗口实现（富模式 + 简洁模式）。
 
@@ -554,77 +554,121 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         QTimer.singleShot(0, self._position_search_clear_button)
 
     def _build_menu(self) -> None:
-        self.menuBar().setNativeMenuBar(False)
-        self.menuBar().setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.menuBar().setMouseTracking(True)
+        """
+        构建应用程序的菜单栏，包括文件菜单、歌单、设置菜单，以及提示标签。
 
-        menu_file = self.menuBar().addMenu("文件")
-        action_import_folder = menu_file.addAction("导入文件夹")
-        action_import_playlist = menu_file.addAction("导入歌单文件")
-        action_open_file = menu_file.addAction("播放文件")
-        self.action_save_stats = menu_file.addAction("保存统计数据")
-        self.action_save_stats.setShortcut(QKeySequence("Ctrl+S"))
-        self.action_save_stats.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
-        action_export_stats = menu_file.addAction("导出统计数据")
-        menu_file.addSeparator()
-        action_exit = menu_file.addAction("退出")
+        参数：
+            self (类实例): 当前对象实例。
 
-        action_playlist = self.menuBar().addAction("歌单")
+        返回值：
+            无。
+        """
+        self.menuBar().setNativeMenuBar(False)  # 设置菜单栏不是原生菜单栏
+        self.menuBar().setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)  # 启用样式背景
+        self.menuBar().setMouseTracking(True)  # 启用鼠标跟踪
 
-        action_settings = self.menuBar().addAction("设置")
+        menu_file = self.menuBar().addMenu("文件")  # 添加“文件”菜单
+        action_import_folder = menu_file.addAction("导入文件夹")  # 添加“导入文件夹”动作
+        action_import_playlist = menu_file.addAction("导入歌单文件")  # 添加“导入歌单文件”动作
+        action_open_file = menu_file.addAction("播放文件")  # 添加“播放文件”动作
+        self.action_save_stats = menu_file.addAction("保存统计数据")  # 添加“保存统计数据”动作，并保存为实例变量
+        self.action_save_stats.setShortcut(QKeySequence("Ctrl+S"))  # 设置快捷键为Ctrl+S
+        self.action_save_stats.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)  # 设置快捷键上下文为应用程序范围
+        action_export_stats = menu_file.addAction("导出统计数据")  # 添加“导出统计数据”动作
+        menu_file.addSeparator()  # 添加分隔线
+        action_exit = menu_file.addAction("退出")  # 添加“退出”动作
 
-        self.random_state_label = QLabel("")
-        self.random_state_label.setObjectName("RandomStateHintLabel")
-        self.random_state_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.random_state_label.setMinimumWidth(120)
-        self.version_label = QLabel(f"v{APP_VERSION}")
-        self.version_label.setObjectName("VersionHintLabel")
-        self.version_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.version_label.setMinimumWidth(58)
-        self.version_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        action_playlist = self.menuBar().addAction("歌单")  # 添加“歌单”动作到菜单栏
 
-        self.menu_hint_widget = QWidget(self.menuBar())
-        hint_layout = QHBoxLayout(self.menu_hint_widget)
-        hint_layout.setContentsMargins(0, 0, 0, 0)
-        hint_layout.setSpacing(8)
-        hint_layout.addWidget(self.version_label, 0)
-        hint_layout.addWidget(self.random_state_label, 0)
+        action_settings = self.menuBar().addAction("设置")  # 添加“设置”动作到菜单栏
 
-        self.menuBar().setCornerWidget(self.menu_hint_widget, Qt.Corner.TopRightCorner)
-        self.random_state_label.hide()
+        self.random_state_label = QLabel("")  # 创建随机状态标签，初始为空
+        self.random_state_label.setObjectName("RandomStateHintLabel")  # 设置对象名称
+        self.random_state_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)  # 设置对齐方式为右对齐和垂直居中
+        self.random_state_label.setMinimumWidth(120)  # 设置最小宽度
+        self.version_label = QLabel(f"v{APP_VERSION}")  # 创建版本标签，显示应用版本
+        self.version_label.setObjectName("VersionHintLabel")  # 设置对象名称
+        self.version_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)  # 设置对齐方式
+        self.version_label.setMinimumWidth(58)  # 设置最小宽度
+        self.version_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)  # 设置大小策略为固定宽度和首选高度
 
-        for menu in (menu_file,):
-            menu.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-            menu.setMouseTracking(True)
+        self.menu_hint_widget = QWidget(self.menuBar())  # 创建提示部件，作为菜单栏的子部件
+        hint_layout = QHBoxLayout(self.menu_hint_widget)  # 创建水平布局
+        hint_layout.setContentsMargins(0, 0, 0, 0)  # 设置边距为0
+        hint_layout.setSpacing(8)  # 设置间距为8像素
+        hint_layout.addWidget(self.version_label, 0)  # 添加版本标签到布局，拉伸因子为0
+        hint_layout.addWidget(self.random_state_label, 0)  # 添加随机状态标签到布局，拉伸因子为0
 
-        action_import_folder.triggered.connect(self._menu_import_folder)
-        action_import_playlist.triggered.connect(self._menu_import_playlist_file)
-        action_open_file.triggered.connect(self._menu_open_file)
-        self.action_save_stats.triggered.connect(self._save_stats_now)
-        action_export_stats.triggered.connect(self._export_stats)
-        action_exit.triggered.connect(self.close)
-        action_playlist.triggered.connect(self._open_playlist_dialog)
-        action_settings.triggered.connect(self._open_settings_dialog)
-        self._stack_title_and_menu()
+        self.menuBar().setCornerWidget(self.menu_hint_widget, Qt.Corner.TopRightCorner)  # 将提示部件设置到菜单栏右上角
+        self.random_state_label.hide()  # 隐藏随机状态标签
+
+        for menu in (menu_file,):  # 遍历菜单列表（当前只包含文件菜单）
+            menu.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)  # 启用样式背景
+            menu.setMouseTracking(True)  # 启用鼠标跟踪
+
+        action_import_folder.triggered.connect(self._menu_import_folder)  # 连接导入文件夹动作到槽函数
+        action_import_playlist.triggered.connect(self._menu_import_playlist_file)  # 连接导入歌单文件动作到槽函数
+        action_open_file.triggered.connect(self._menu_open_file)  # 连接播放文件动作到槽函数
+        self.action_save_stats.triggered.connect(self._save_stats_now)  # 连接保存统计数据动作到槽函数
+        action_export_stats.triggered.connect(self._export_stats)  # 连接导出统计数据动作到槽函数
+        action_exit.triggered.connect(self.close)  # 连接退出动作到关闭方法
+        action_playlist.triggered.connect(self._open_playlist_dialog)  # 连接歌单动作到打开歌单对话框方法
+        action_settings.triggered.connect(self._open_settings_dialog)  # 连接设置动作到打开设置对话框方法
+        self._stack_title_and_menu()  # 调用堆叠标题和菜单的方法
 
     def _stack_title_and_menu(self) -> None:
+        """
+        创建并设置顶部堆叠窗口，包含标题栏和菜单栏。
+
+        此方法检查是否使用自定义标题栏，如果使用，则创建一个新的窗口小部件，
+        将标题栏和菜单栏堆叠在一起，并设置为菜单小部件。
+
+        参数：
+            无额外参数。
+
+        返回值：
+            无。
+        """
+        # 检查是否使用自定义标题栏
         if not self._use_custom_titlebar:
+            # 如果不使用，隐藏标题栏并提前返回
             self.rich_title_bar.hide()
             return
+        # 检查顶部堆叠窗口是否已存在，如果存在则直接返回
         if self._top_stack_widget is not None:
             return
+        # 创建一个新的QWidget作为顶部堆叠窗口
         stack = QWidget(self)
+        # 设置对象名称，便于调试和样式设置
         stack.setObjectName("TopStackWidget")
+        # 创建垂直布局管理器
         stack_layout = QVBoxLayout(stack)
+        # 设置布局的边距为0，使内容紧贴边缘
         stack_layout.setContentsMargins(0, 0, 0, 0)
+        # 设置布局内小部件之间的间距为0
         stack_layout.setSpacing(0)
+        # 将标题栏的父级设置为堆叠窗口
         self.rich_title_bar.setParent(stack)
+        # 将标题栏添加到布局中，伸缩因子为0
         stack_layout.addWidget(self.rich_title_bar, 0)
+        # 将菜单栏添加到布局中，伸缩因子为0
         stack_layout.addWidget(self.menuBar(), 0)
+        # 将堆叠窗口设置为菜单小部件，替换默认菜单栏
         self.setMenuWidget(stack)
+        # 保存堆叠窗口的引用，以便后续使用或检查
         self._top_stack_widget = stack
 
     def _bind_signals(self) -> None:
+        """绑定所有UI组件的信号到相应的处理函数。
+
+        这个方法将各个按钮、滑块等UI元素的信号连接到对应的槽函数，以实现用户交互的事件处理。
+
+        参数：
+        无（self参数为实例对象本身）。
+
+        返回值：
+        无（None）。
+        """
         self.theme_btn.clicked.connect(self._toggle_theme)
         self.locate_file_btn.clicked.connect(self._open_current_in_explorer)
         self.favorite_btn.clicked.connect(self._toggle_current_favorite)
@@ -643,13 +687,13 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.pin_btn.clicked.connect(self._toggle_always_on_top)
 
         self.playlist_combo.currentIndexChanged.connect(self._on_playlist_combo_changed)
-        self.search_edit.textChanged.connect(lambda _: self._reload_track_list())
+        self.search_edit.textChanged.connect(lambda _: self._reload_track_list())  # 使用lambda忽略参数，重新加载轨道列表
         self.search_edit.textChanged.connect(self._on_search_text_changed)
         self.search_clear_btn.clicked.connect(self._clear_search_text)
         self.track_list.itemDoubleClicked.connect(self._on_track_double_clicked)
-        self.track_list.verticalScrollBar().valueChanged.connect(lambda _: self._update_locate_current_button())
+        self.track_list.verticalScrollBar().valueChanged.connect(lambda _: self._update_locate_current_button())  # 使用lambda忽略参数，更新定位当前按钮状态
 
-        if self.player:
+        if self.player:  # 检查播放器实例是否存在，如果存在则连接播放器相关信号
             self.player.track_changed.connect(self._refresh_current_track_ui)
             self.player.progress_changed.connect(self._on_progress_changed)
             self.player.playback_changed.connect(self._on_playback_changed)
@@ -660,7 +704,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
 
         self.controller.library_changed.connect(self._on_library_changed)
         self.controller.settings_changed.connect(self._on_settings_changed)
-        self.controller.message.connect(lambda text: self.statusBar().showMessage(str(text), 2500))
+        self.controller.message.connect(lambda text: self.statusBar().showMessage(str(text), 2500))  # 使用lambda将消息转换为字符串并显示2500毫秒
         self.controller.error_occurred.connect(self._on_error)
         self.controller.runtime_status_changed.connect(self._on_runtime_status_changed)
 
@@ -685,18 +729,38 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         esc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
 
     def _on_search_text_changed(self, _text: str) -> None:
-        self._position_search_clear_button()
-        self.search_clear_btn.setVisible(bool(self.search_edit.text().strip()))
+        """
+        功能：当搜索文本改变时调用的事件处理器，用于更新清除按钮的状态和位置。
+        参数：
+            _text (str): 传递的搜索文本参数，但在此方法中未直接使用，具体文本从self.search_edit获取。
+        返回值：无
+        """
+        self._position_search_clear_button()  # 调用方法重新定位清除按钮到搜索框内合适位置
+        self.search_clear_btn.setVisible(bool(self.search_edit.text().strip()))  # 判断搜索框文本是否非空，是则显示清除按钮，否则隐藏
 
     def _position_search_clear_button(self) -> None:
+        """设置搜索框清除按钮的位置和大小。
+
+        功能：计算并设置搜索框清除按钮在搜索框内的精确位置和合适大小，确保按钮居中显示且不超出搜索框边界。
+        参数：无
+        返回值：无返回值
+        """
+        # 检查是否已初始化所需的UI组件，若未初始化则直接返回
         if not hasattr(self, "search_edit") or not hasattr(self, "search_clear_btn"):
             return
+        # 获取搜索框的边框宽度
         frame = self.search_edit.style().pixelMetric(self.search_edit.style().PixelMetric.PM_DefaultFrameWidth)
+        # 计算按钮高度，取16和搜索框高度减4的最大值，确保按钮有合适的最小高度
         button_h = max(16, self.search_edit.height() - 4)
+        # 调整清除按钮的大小为16（宽）× button_h（高）
         self.search_clear_btn.resize(16, button_h)
+        # 计算按钮的x坐标，确保不超出搜索框左侧的边框
         x = max(frame, self.search_edit.width() - self.search_clear_btn.width() - frame - 1)
+        # 计算按钮的y坐标，使其在搜索框中垂直居中
         y = max(1, (self.search_edit.height() - self.search_clear_btn.height()) // 2)
+        # 将清除按钮移动到计算出的位置 (x, y)
         self.search_clear_btn.move(x, y)
+        # 将清除按钮置于顶层，确保其显示在搜索框文本之上
         self.search_clear_btn.raise_()
 
     def _clear_search_text(self) -> None:
@@ -708,9 +772,12 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.search_edit.del_()
 
     def _clear_search_by_esc(self) -> None:
-        if not self.isActiveWindow():
+        """通过ESC键清除搜索。该方法检查当前窗口是否活动且搜索框有文本，如果条件满足则清除搜索文本。
+        参数：self - 类实例。返回值：None。
+        """
+        if not self.isActiveWindow():  # 检查当前窗口是否活动，如果不活动则返回
             return
-        if not self.search_edit.text():
+        if not self.search_edit.text():  # 检查搜索编辑框是否有文本，如果没有则返回
             return
-        self._clear_search_text()
+        self._clear_search_text()  # 调用方法清除搜索文本
 

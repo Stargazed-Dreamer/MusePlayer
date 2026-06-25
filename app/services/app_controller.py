@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 """应用控制器。
 
@@ -192,12 +192,24 @@ class AppController(QObject):
         self.save_session()
 
     def _apply_save_timer_settings(self) -> None:
+        """应用保存定时器设置。
+    
+        根据self.settings中的配置，启动或停止会话保存定时器。
+        功能：如果定时保存启用，则启动定时器；否则停止定时器。
+        参数：无（直接使用self.settings）
+        返回值：无
+        """
+        # 从设置中获取定时保存是否启用，并转换为布尔值
         enabled = bool(self.settings.timed_save_enabled)
+        # 获取定时保存的分钟数，限制在1-1440分钟范围内（24小时）
         minutes = max(1, min(1440, int(self.settings.timed_save_minutes)))
         if enabled:
+            # 如果启用，设置定时器间隔为分钟数转换成的毫秒数
             self._session_save_timer.setInterval(minutes * 60 * 1000)
+            # 启动定时器
             self._session_save_timer.start()
         else:
+            # 如果未启用，停止定时器
             self._session_save_timer.stop()
 
     def start_runtime_server(self) -> bool:
@@ -342,13 +354,18 @@ class AppController(QObject):
         return result
 
     def get_current_lyrics_filename(self) -> str:
-        track = self.player_service.current_track()
+        """获取当前歌词的文件名。
+        参数：无（self 为实例自身）。
+        返回值：字符串，表示歌词文件名；若无则返回空字符串。
+        """
+        track = self.player_service.current_track()  # 获取当前播放的轨道
         if track is None:
-            return ""
+            return ""  # 如果没有轨道，返回空字符串
+        # 获取轨道的歌词路径属性，转换为字符串，若为空则使用空字符串，并去除首尾空白
         ext_lyrics = str(getattr(track, "source_lyrics_path", "") or "").strip()
         if ext_lyrics:
-            return Path(ext_lyrics).name
-        return ""
+            return Path(ext_lyrics).name  # 返回路径中的文件名部分
+        return ""  # 如果歌词路径为空，返回空字符串
 
     def get_current_cover(self) -> bytes | None:
         """获取当前播放曲目的封面图像。
@@ -391,56 +408,140 @@ class AppController(QObject):
         return len(imported)
 
     def import_muse_playlist(self, file_path: Path) -> str:
+        """导入并处理Muse格式的播放列表文件，将其存入资料库并返回该播放列表的标识符。
+
+        Args:
+            self: 实例对象自身。
+            file_path (Path): 待导入的Muse播放列表文件路径。
+
+        Returns:
+            str: 成功导入的播放列表在资料库中的唯一ID。
+        """
+        # 调用资料库服务的核心方法，解析文件并导入播放列表数据
         playlist = self.library_service.import_muse_playlist(file_path)
+        # 发射资料库已变更信号，通知UI或其他监听组件刷新数据
         self.library_changed.emit()
+        # 返回新导入播放列表的ID
         return playlist.id
 
     def import_files(self, files: list[Path], playlist_id: str | None = None) -> int:
-        imported = 0
+        """
+        将指定文件列表导入媒体库。
+
+        功能：
+            遍历给定的文件路径列表，将每个文件尝试导入到媒体库中。
+            可选择将导入的文件关联到一个已有的播放列表。
+            导入过程中，单个文件的失败不会中断整个流程。
+            如果有任何文件成功导入，将自动保存媒体库的更改并发出`library_changed`信号。
+
+        参数：
+            files (list[Path]): 包含待导入文件路径的列表。
+            playlist_id (str | None): 可选参数。如果提供，则所有成功导入的文件将被添加到此ID对应的播放列表中。默认为None。
+
+        返回值：
+            int: 成功导入的文件数量。
+        """
+        imported = 0  # 初始化成功导入的文件计数器
         for path in files:
             try:
+                # 尝试调用核心服务方法导入单个文件，并临时跳过保存操作
                 self.library_service.import_file(path, playlist_id=playlist_id, skip_save=True)
-                imported += 1
+                imported += 1  # 导入成功，计数器加1
             except Exception:
+                # 捕获并忽略任何异常，跳过当前文件，继续处理下一个
                 continue
-        if imported > 0:
-            self.library_service.save()
-            self.library_changed.emit()
-        return imported
+        if imported > 0:  # 如果至少有一个文件被成功导入
+            self.library_service.save()  # 一次性保存所有成功的导入结果到持久化存储
+            self.library_changed.emit()  # 发出信号，通知UI或其他组件媒体库已更新
+        return imported  # 返回成功导入的文件总数
 
     def import_muse_playlist_data(self, payload: dict | str, source_hint: str = "runtime_payload") -> str:
+        """
+        导入Muse播放列表数据。
+    
+        功能：将Muse播放列表数据导入到音乐库中，并返回导入后的播放列表ID。
+    
+        参数：
+            payload (dict | str): 播放列表数据，可以是字典对象或JSON格式的字符串。
+            source_hint (str): 数据来源提示，默认为"runtime_payload"，用于标识数据来源。
+    
+        返回值：
+            str: 导入成功的播放列表ID。
+        """
         data: dict
+        # 判断输入数据类型并进行相应转换
         if isinstance(payload, str):
+            # 如果输入是JSON字符串，解析为字典
             data = json.loads(payload)
         elif isinstance(payload, dict):
+            # 如果输入已经是字典，直接使用
             data = payload
         else:
+            # 输入类型不支持时抛出异常
             raise ValueError("playlist payload must be dict or json string")
+    
+        # 调用库服务导入播放列表数据，传入数据和来源提示
         playlist = self.library_service.import_muse_playlist_payload(data, source_hint=source_hint)
+    
+        # 发出库变更信号，通知UI或其他组件库已更新
         self.library_changed.emit()
+    
+        # 返回导入后的播放列表ID
         return playlist.id
 
     def create_playlist(self, name: str) -> str:
-        playlist = self.library_service.create_playlist(name)
-        self.library_changed.emit()
-        return playlist.id
+        """
+        创建一个新的播放列表。
+
+        参数:
+            name (str): 播放列表的名称。
+
+        返回:
+            str: 新创建播放列表的ID。
+        """
+        playlist = self.library_service.create_playlist(name)  # 调用库服务创建播放列表
+        self.library_changed.emit()  # 发出库已更改的信号
+        return playlist.id  # 返回新播放列表的ID
 
     def toggle_track_favorite(self, track_id: str) -> bool:
-        state = self.library_service.toggle_favorite(track_id)
-        if state:
-            self.playback_stats_service.reset_early_skip_count(track_id)
-        self.library_changed.emit()
-        return state
+        """切换曲目的收藏状态。
+
+        功能：切换指定曲目的收藏状态，并在收藏时重置早期跳过计数。
+            该方法通过库服务切换收藏状态，如果状态变为收藏，则重置播放统计中的早期跳过计数，
+            最后发出库变化信号。
+
+        参数：
+            track_id (str): 需要切换收藏状态的曲目ID。
+
+        返回值：
+            bool: 切换后的收藏状态，True表示已收藏，False表示未收藏。
+        """
+        state = self.library_service.toggle_favorite(track_id)  # 调用库服务切换收藏状态，获取新状态
+        if state:  # 如果状态为True，表示曲目已被收藏
+            self.playback_stats_service.reset_early_skip_count(track_id)  # 重置该曲目的早期跳过计数
+        self.library_changed.emit()  # 发出库变化信号，通知其他组件更新
+        return state  # 返回切换后的收藏状态
 
     def is_track_favorite(self, track_id: str | None) -> bool:
         return self.library_service.is_favorite(track_id)
 
     def export_playlist(self, playlist_id: str, out_dir: Path) -> Path:
+        """导出指定ID的播放列表到指定目录。
+
+        Args:
+            playlist_id (str): 需要导出的播放列表的唯一标识符。
+            out_dir (Path): 播放列表文件的输出目录路径。
+
+        Returns:
+            Path: 导出的播放列表文件的完整路径。
+        """
+        # 调用库服务的导出功能，传入播放列表ID、输出目录和播放统计服务以附加播放数据
         file_path = self.library_service.export_playlist_file(
             playlist_id,
             out_dir,
             self.playback_stats_service,
         )
+        # 返回生成的文件路径
         return file_path
 
     def rename_playlist(self, playlist_id: str, name: str) -> None:
@@ -448,16 +549,46 @@ class AppController(QObject):
         self.library_changed.emit()
 
     def copy_playlist(self, source_playlist_id: str, new_name: str | None = None) -> str | None:
+        """
+        复制一个现有的播放列表。
+
+        参数:
+            source_playlist_id (str): 要复制的源播放列表的ID。
+            new_name (str | None, optional): 新播放列表的名称。如果为 None，则会自动生成一个名称。默认为 None。
+
+        返回值:
+            str | None: 新创建的播放列表的ID。如果复制操作失败（例如，源播放列表不存在），则返回 None。
+        """
+        # 调用库服务的方法来实际执行播放列表的复制操作
         playlist = self.library_service.copy_playlist(source_playlist_id, new_name=new_name)
+        # 检查复制操作是否成功，如果返回的播放列表对象为 None，说明复制失败
         if playlist is None:
             return None
+        # 复制成功后，发出库已更改的信号，以通知UI或其他监听组件进行更新
         self.library_changed.emit()
+        # 返回新创建播放列表的ID
         return playlist.id
 
     def merge_playlist(self, source_playlist_id: str, target_playlist_id: str) -> int:
+        """
+        合并播放列表的方法。
+
+        该方法将源播放列表中的内容合并到目标播放列表中。
+
+        参数：
+        - source_playlist_id: str, 源播放列表的ID。
+        - target_playlist_id: str, 目标播放列表的ID。
+
+        返回值：
+        - int, 返回合并的项目数量或其他合并结果指标。
+        """
+        # 调用库服务执行播放列表合并操作，并将结果存储在变量中
         merged = self.library_service.merge_playlist(source_playlist_id, target_playlist_id)
+        # 如果合并操作成功（即合并项目数大于0）
         if merged > 0:
+            # 发出库变化信号，通知其他部分库已更新
             self.library_changed.emit()
+        # 返回合并结果
         return merged
 
     def delete_playlist(self, playlist_id: str) -> None:
@@ -783,19 +914,27 @@ class AppController(QObject):
             self.message.emit("音频输出设备已切换")
 
     def _record_runtime_error(self, message: str) -> None:
-        text = str(message).strip()
-        if not text:
+        """记录运行时错误消息到日志和文件中。
+
+        参数:
+            message (str): 错误消息字符串。
+
+        返回:
+            None
+        """
+        text = str(message).strip()  # 将消息转换为字符串并去除首尾空白
+        if not text:  # 如果消息为空字符串，则直接返回，不记录
             return
 
-        try:
+        try:  # 尝试使用logger记录错误，如果记录失败则忽略异常
             self.logger.error(text)
         except Exception:
             pass
 
-        try:
-            self._runtime_error_file.parent.mkdir(parents=True, exist_ok=True)
-            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            with self._runtime_error_file.open("a", encoding="utf-8") as f:
-                f.write(f"{stamp} {text}\n")
+        try:  # 尝试将错误消息写入文件，包括创建目录、生成时间戳和写入内容，如果任何步骤失败则忽略异常
+            self._runtime_error_file.parent.mkdir(parents=True, exist_ok=True)  # 创建日志文件的父目录，如果已存在则跳过
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # 生成当前时间的格式化字符串
+            with self._runtime_error_file.open("a", encoding="utf-8") as f:  # 以追加模式打开文件，使用UTF-8编码
+                f.write(f"{stamp} {text}\n")  # 写入时间戳和错误消息，后跟换行符
         except Exception:
             pass

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 """歌单管理对话框。
 
@@ -330,19 +330,37 @@ class PlaylistDialog(QDialog):
         self.reload()
 
     def _import_files(self) -> None:
+        """从本地导入音频文件到播放列表。
+
+        功能：
+            打开文件对话框让用户选择音频文件，并将它们导入到当前选中的播放列表中。
+
+        参数：
+            无。
+
+        返回值：
+            无。
+        """
+        # 获取当前选中的播放列表ID，如果没有则使用默认的活跃播放列表
         playlist_id = self._selected_playlist_id() or self.controller.library_service.active_playlist_id
+        # 如果选中的是“所有歌曲”这个特殊ID，则将播放列表设为None，表示不限制播放列表
         if playlist_id == ALL_SONGS_ID:
             playlist_id = None
+        # 弹出文件选择对话框，允许用户选择多种格式的音频文件
         file_paths, _ = QFileDialog.getOpenFileNames(
             self,
             "选择歌曲文件",
             "",
             "音频文件 (*.mp3 *.flac *.wav *.m4a *.aac *.ogg *.opus *.wma)",
         )
+        # 如果用户没有选择任何文件，则直接返回，不执行导入
         if not file_paths:
             return
+        # 调用控制器的import_files方法执行导入，将文件路径字符串转为Path对象
         count = self.controller.import_files([Path(p) for p in file_paths], playlist_id=playlist_id)
+        # 导入完成后弹出信息提示框，告知用户导入的歌曲数量
         QMessageBox.information(self, "导入完成", f"已导入 {count} 首歌曲")
+        # 刷新当前视图以反映导入后的变化
         self.reload()
 
     def _import_playlist_file(self) -> None:
@@ -368,15 +386,33 @@ class PlaylistDialog(QDialog):
         self.reload()
 
     def _export_playlist_file(self) -> None:
+        """将当前选中的歌单导出为一个文件。
+
+        此方法会获取用户当前选中的歌单ID，让用户选择一个目录，并将歌单数据导出为文件。
+        如果未选中歌单或未选择目录，操作将中止。导出过程中的任何异常都会被捕获并提示用户。
+
+        Args:
+            self: 实例自身。
+
+        Returns:
+            None: 此方法不返回任何值。
+        """
+        # 获取当前选中的歌单ID
         playlist_id = self._selected_playlist_id()
+        # 如果没有选中任何歌单，则直接返回，不执行后续操作
         if not playlist_id:
             return
+        # 弹出一个文件夹选择对话框，让用户选择导出目标目录
         out_dir = QFileDialog.getExistingDirectory(self, "选择导出目录")
+        # 如果用户取消了目录选择，则直接返回
         if not out_dir:
             return
         try:
+            # 调用控制器执行实际的歌单导出逻辑，并获取生成的文件路径
             file_path = self.controller.export_playlist(playlist_id, Path(out_dir))
         except Exception as exc:
+            # 如果在导出过程中发生任何异常（如文件写入权限问题），则弹出错误消息框
             QMessageBox.critical(self, "导出失败", str(exc))
             return
+        # 导出成功，弹出信息消息框，显示导出文件的完整路径
         QMessageBox.information(self, "导出完成", f"歌单已导出：\n{file_path}")

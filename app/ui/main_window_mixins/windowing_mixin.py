@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 """MainWindow 窗口行为与交互相关 mixin。
 
@@ -307,18 +307,42 @@ class MainWindowWindowingMixin:
             self.setGeometry(geo)
         self._ensure_window_inside_screen()
     def _refresh_rich_title_icons(self) -> None:
-        if not hasattr(self, "rich_min_btn"):
-            return
-        color = self._control_icon_color()
-        self.rich_min_btn.setIcon(_make_rich_title_icon("min", color=color))
-        self.rich_max_btn.setIcon(_make_rich_title_icon("restore" if self._is_rich_restore_state() else "max", color=color))
-        self.rich_close_btn.setIcon(_make_rich_title_icon("close", color=color))
+        """刷新富文本标题栏上的图标。
+
+        此方法用于更新标题栏上的最小化、最大化/恢复和关闭按钮的图标颜色和状态。
+
+        参数：无（除了 self）。
+
+        返回值：无。
+        """
+        if not hasattr(self, "rich_min_btn"):  # 检查 rich_min_btn 属性是否存在
+            return  # 如果不存在则直接返回
+        color = self._control_icon_color()  # 获取控制图标颜色
+        self.rich_min_btn.setIcon(_make_rich_title_icon("min", color=color))  # 设置最小化按钮图标
+        self.rich_max_btn.setIcon(_make_rich_title_icon("restore" if self._is_rich_restore_state() else "max", color=color))  # 设置最大化/恢复按钮图标，根据当前状态选择图标
+        self.rich_close_btn.setIcon(_make_rich_title_icon("close", color=color))  # 设置关闭按钮图标
     def _refresh_window_flags(self) -> None:
+        """刷新窗口的特定标志状态。
+
+        此方法根据当前配置（如紧凑模式、置顶模式）更新窗口的显示标志，
+        并确保在窗口原先可见的状态下，正确应用这些标志变更。
+
+        参数:
+            self: 实例对象本身。
+
+        返回值:
+            None
+        """
+        # 记录窗口当前是否可见，以便在修改标志后进行恢复
         was_visible = self.isVisible()
+        # 根据 _compact_mode 设置或移除无边框窗口标志
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, self._compact_mode)
+        # 根据 _always_on_top 设置或移除窗口置顶标志
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, self._always_on_top)
+        # 如果窗口之前是可见的，重新显示以应用标志更改
         if was_visible:
             self.show()
+            # 如果启用了置顶标志，则将窗口提升到最前
             if self._always_on_top:
                 self.raise_()
     def _apply_window_size_limits(self) -> None:
@@ -351,35 +375,80 @@ class MainWindowWindowingMixin:
         self.pin_btn.setToolTip("取消置顶" if self._always_on_top else "置顶窗口")
         self.compact_close_btn.setIcon(_make_rich_title_icon("close", color=color))
     def _layout_compact_top_bar(self) -> None:
+        """计算并设置紧凑顶部栏（compact_top_bar）的内部布局，使其控件居中。
+
+        此方法负责重新调整紧凑顶部栏内标题标签（compact_top_title_label）的位置和大小，
+        以确保其在给定的栏宽内水平居中，并位于垂直中心。
+
+        Args:
+            self: 实例对象本身，用于访问内部控件（如 compact_top_bar、compact_top_title_label、锁按钮、图钉按钮、关闭按钮、透明度滑块等）。
+
+        Returns:
+            None: 此方法不返回任何值，仅执行布局调整操作。
+        """
+        # 检查对象是否具有 compact_top_bar 属性，如果没有则直接返回
         if not hasattr(self, "compact_top_bar"):
             return
+        # 如果紧凑顶部栏当前不可见，则直接返回，无需进行布局计算
         if not self.compact_top_bar.isVisible():
             return
+        # 确保紧凑顶部栏的宽度不小于220像素
         width = max(220, self.compact_top_bar.width())
+        # 确保紧凑顶部栏的高度不小于其最小高度
         height = max(self.compact_top_bar.minimumHeight(), self.compact_top_bar.height())
+        # 计算右侧控件（锁按钮、图钉按钮、关闭按钮）的总宽度，并加上12像素的间距
         right_controls_width = (
             self.lock_btn.width() + self.pin_btn.width() + self.compact_close_btn.width() + 12
         )
+        # 计算左侧控件（透明度滑块）的宽度，并加上12像素的间距
         left_controls_width = self.opacity_slider.width() + 12
+        # 计算标题标签允许的最大宽度：宽度减去左右两侧控件占用空间和边距（16像素），并确保至少为80像素
         max_title_width = max(80, width - left_controls_width - right_controls_width - 16)
+        # 获取标题标签的理想高度（sizeHint）
         title_h = self.compact_top_title_label.sizeHint().height()
+        # 设置标题标签的大小为计算出的最大宽度和理想高度
         self.compact_top_title_label.resize(max_title_width, title_h)
+        # 将标题标签移动到水平居中和垂直居中的位置
         self.compact_top_title_label.move((width - max_title_width) // 2, (height - title_h) // 2)
+        # 将标题标签提升到窗口栈的顶部，确保其绘制在其他控件之上（例如覆盖背景）
         self.compact_top_title_label.raise_()
     def _reposition_volume_value_label(self) -> None:
+        """重新定位音量值标签的位置，使其相对于音量面板居中显示，并确保标签在可见区域内。
+    
+        功能：
+            调整音量值标签的显示位置，使其位于音量面板的正下方居中位置。
+            同时确保标签不会超出容器边界，并置于最上层。
+    
+        参数：
+            无（self参数为实例自身）
+    
+        返回值：
+            无
+        """
+        # 检查必要的控件是否已初始化
         if not hasattr(self, "mute_btn") or not hasattr(self, "volume_value_label"):
             return
+        # 如果音量面板不可见，则隐藏音量值标签并返回
         if not self.volume_panel.isVisible():
             self.volume_value_label.hide()
             return
+        # 显示音量值标签
         self.volume_value_label.show()
+        # 获取音量面板在卡片控件坐标系中的中心点位置
         panel_center = self.volume_panel.mapTo(self.card_controls, self.volume_panel.rect().center())
+        # 获取音量面板在卡片控件坐标系中的底部左上角y坐标
         panel_bottom = self.volume_panel.mapTo(self.card_controls, self.volume_panel.rect().bottomLeft()).y()
+        # 计算标签的x坐标：面板中心x减去标签宽度的一半，实现水平居中
         x = panel_center.x() - (self.volume_value_label.width() // 2)
+        # 计算标签的y坐标：面板底部加1像素，放在面板正下方
         y = panel_bottom + 1
+        # 确保标签x坐标在容器边界内：不小于0且不超过容器宽度减去标签宽度
         x = max(0, min(x, self.card_controls.width() - self.volume_value_label.width()))
+        # 确保标签y坐标在容器边界内：不小于0且不超过容器高度减去标签高度
         y = max(0, min(y, self.card_controls.height() - self.volume_value_label.height()))
+        # 移动标签到计算出的位置
         self.volume_value_label.move(x, y)
+        # 将标签置于最上层，防止被其他控件遮挡
         self.volume_value_label.raise_()
     def _ensure_window_inside_screen(self) -> None:
         """确保窗口始终位于屏幕可见区域内。
@@ -437,14 +506,24 @@ class MainWindowWindowingMixin:
             self.move(x, y)
         self._ensure_window_inside_screen()
     def _persist_window_geometry(self) -> None:
+        """
+        将当前窗口的几何信息（位置和大小）持久化保存。
+    
+        功能：根据设置决定是否保存窗口的位置和尺寸，以便下次启动时恢复窗口状态。
+        参数：无。
+        返回值：无。
+        """
+        # 从控制器获取设置对象
         settings = self.controller.settings
+        # 检查设置中是否启用了记忆窗口几何信息功能，若未启用则直接返回，不保存
         if not bool(getattr(settings, "remember_window_geometry", True)):
             return
+        # 调用控制器的持久化方法，将窗口的整型坐标和尺寸保存
         self.controller.persist_window_geometry(
-            x=int(self.x()),
-            y=int(self.y()),
-            width=int(self.width()),
-            height=int(self.height()),
+            x=int(self.x()),  # 窗口的水平位置
+            y=int(self.y()),  # 窗口的垂直位置
+            width=int(self.width()),  # 窗口的宽度
+            height=int(self.height()),  # 窗口的高度
         )
     def _ensure_taskbar_progress_initialized(self) -> None:
         """确保Windows任务栏进度显示功能已初始化。
@@ -459,10 +538,19 @@ class MainWindowWindowingMixin:
             return
         self._taskbar_progress.attach(hwnd)
     def _update_taskbar_progress(self, position: float, duration: float) -> None:
+        """更新任务栏进度。在Windows平台上，初始化任务栏进度并设置进度。
+
+        参数:
+            position (float): 当前播放位置。
+            duration (float): 总播放时长。
+
+        返回:
+            None
+        """
         if not sys.platform.startswith("win"):
-            return
-        self._ensure_taskbar_progress_initialized()
-        self._taskbar_progress.set_progress(position, duration)
+            return  # 如果不是Windows平台，直接返回
+        self._ensure_taskbar_progress_initialized()  # 确保任务栏进度已初始化
+        self._taskbar_progress.set_progress(position, duration)  # 设置任务栏进度
     def _toggle_sidebar(self) -> None:
         """切换侧边栏的展开/收起状态。
         
@@ -494,16 +582,37 @@ class MainWindowWindowingMixin:
         self._reposition_sidebar_toggle()
         self.statusBar().showMessage("已收起快捷侧边栏" if self._sidebar_collapsed else "已展开快捷侧边栏", 1800)
     def _on_splitter_moved(self, _pos: int, _index: int) -> None:
-        sizes = self.main_splitter.sizes()
-        if len(sizes) == 2:
-            if sizes[1] <= 1:
+        """当分割器被移动时触发的方法。
+
+        功能：检查主分割器的大小，以确定侧边栏是否被折叠，并更新侧边栏的最后宽度和UI元素。
+
+        参数：
+        - _pos (int): 分割器的新位置（未使用）。
+        - _index (int): 分割器的索引（未使用）。
+
+        返回值：None
+        """
+        sizes = self.main_splitter.sizes()  # 获取主分割器的当前大小列表
+        if len(sizes) == 2:  # 检查分割器是否正好有两个面板
+            if sizes[1] <= 1:  # 如果第二个面板的大小小于等于1像素，则认为侧边栏被折叠
                 self._sidebar_collapsed = True
-            else:
+            else:  # 否则，侧边栏未被折叠
                 self._sidebar_collapsed = False
-                self._sidebar_last_width = max(self._sidebar_min_width, sizes[1])
-        self._update_sidebar_toggle_icon()
-        self._reposition_sidebar_toggle()
+                self._sidebar_last_width = max(self._sidebar_min_width, sizes[1])  # 更新侧边栏最后宽度为最小宽度和当前宽度的较大值
+        self._update_sidebar_toggle_icon()  # 更新侧边栏切换按钮的图标
+        self._reposition_sidebar_toggle()  # 重新定位侧边栏切换按钮
     def _update_sidebar_toggle_icon(self) -> None:
+        """更新侧边栏切换按钮的图标。
+    
+        根据侧边栏的折叠状态和控制图标颜色，生成并设置新的切换图标。
+    
+        参数:
+            无额外参数（通过self访问实例属性）。
+    
+        返回值:
+            None（直接修改按钮图标）。
+        """
+        # 调用_make_sidebar_toggle_icon函数生成新图标，并设置给切换按钮
         self.sidebar_toggle_btn.setIcon(
             _make_sidebar_toggle_icon(collapsed=self._sidebar_collapsed, color=self._control_icon_color())
         )
@@ -1011,23 +1120,41 @@ class MainWindowWindowingMixin:
         self.statusBar().showMessage(f"已创建歌单「{folder.name}」，导入 {count} 首歌曲", 3000)
 
     def _attach_lyrics_to_current_track(self, lyrics_path: Path) -> None:
+        """
+        将歌词文件附加到当前播放的曲目。
+
+        参数:
+            lyrics_path (Path): 歌词文件的路径。
+
+        返回:
+            None
+        """
+        # 获取当前播放的曲目
         track = self.player.current_track()
+        # 如果没有当前曲目，则直接返回
         if track is None:
             return
+        # 获取主歌词路径，处理为字符串并去除空白
         main_lyrics = str(track.source_lyrics_path or "").strip()
+        # 如果主歌词路径为空，则设置为新路径并显示关联消息
         if not main_lyrics:
             track.source_lyrics_path = str(lyrics_path)
             self.statusBar().showMessage(f"歌词已关联: {lyrics_path.name}", 3000)
         else:
+            # 获取额外歌词路径属性，如果不存在则默认空字符串，并处理为列表
             existing = str(getattr(track, "extra_lyrics_paths", "") or "").strip()
             existing_list = [p for p in existing.split("|") if p.strip()] if existing else []
+            # 将新歌词路径转换为字符串
             new_path = str(lyrics_path)
+            # 如果新路径不在现有列表中且不等于主歌词，则添加到列表
             if new_path not in existing_list and new_path != main_lyrics:
                 existing_list.append(new_path)
                 track.extra_lyrics_paths = "|".join(existing_list)
                 self.statusBar().showMessage(f"额外歌词已添加: {lyrics_path.name}", 3000)
             else:
+                # 否则，显示歌词已关联消息
                 self.statusBar().showMessage("该歌词已关联", 3000)
+        # 保存库服务并重新加载当前歌词
         self.controller.library_service.save()
         self._reload_current_lyrics()
     def _is_interactive_widget_at(self, pos: QPoint) -> bool:

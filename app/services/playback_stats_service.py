@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 """播放统计服务。
 
@@ -275,16 +275,23 @@ class PlaybackStatsService:
         self._dirty = True
 
     def reset_early_skip_count(self, track_id: str) -> None:
-        track_id = str(track_id or "").strip()
-        if not track_id:
-            return
-        item = self._entries.get(track_id)
-        if item is None:
-            return
-        if item.early_skip_count != 0:
-            item.early_skip_count = 0
-            item.updated_at = _now_ts()
-            self._dirty = True
+        """重置指定轨道ID的早期跳过计数。
+
+        功能：将对应条目的early_skip_count重置为0，并更新时间戳。
+        参数：
+            track_id (str): 轨道ID。
+        返回值：None。
+        """
+        track_id = str(track_id or "").strip()  # 将track_id转换为字符串，去除空白，处理None或空值
+        if not track_id:  # 如果track_id为空字符串
+            return  # 直接返回
+        item = self._entries.get(track_id)  # 从条目字典中获取指定track_id的条目
+        if item is None:  # 如果条目不存在
+            return  # 直接返回
+        if item.early_skip_count != 0:  # 检查早期跳过计数是否非零
+            item.early_skip_count = 0  # 重置早期跳过计数为0
+            item.updated_at = _now_ts()  # 更新条目的更新时间戳
+            self._dirty = True  # 标记数据为已修改
 
     def export_stats_for_track(self, track_id: str) -> dict[str, int] | None:
         """导出指定曲目的统计数据。

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 """应用启动入口。
 
@@ -32,28 +32,53 @@ _CRASHLOG_FILENAME = "crashlog.log"
 
 
 def _archive_previous_crashlog(crash_dir: Path) -> None:
+    """
+    将前一次的崩溃日志文件进行归档，以防止被覆盖。
+    
+    本函数会检查指定目录中是否存在名为 _CRASHLOG_FILENAME 的崩溃日志文件。
+    如果存在，则尝试将其重命名为带有时间戳的新文件名（例如 'crash_20231027_143025.log'）。
+    如果目标归档文件名已存在，则会通过添加递增数字后缀来避免冲突。
+    如果原日志文件大小为0，则直接删除。
+    在整个过程中，任何因文件操作导致的异常都会被捕获并忽略。
+
+    参数:
+        crash_dir (Path): 包含崩溃日志文件的目录路径。
+
+    返回:
+        None: 此函数不返回任何值。
+    """
+    # 构造之前崩溃日志文件的完整路径
     prev = crash_dir / _CRASHLOG_FILENAME
+    # 如果之前的崩溃日志文件不存在，则直接返回
     if not prev.exists():
         return
+    # 尝试获取文件大小，如果发生OSError（如文件权限问题），则直接返回
     try:
         size = prev.stat().st_size
     except OSError:
         return
+    # 如果文件大小为0，说明是空日志文件，直接删除它
     if size == 0:
         try:
             prev.unlink()
         except OSError:
             pass
         return
+    # 使用文件的最后修改时间生成一个时间戳字符串，用于新文件名
     stamp = datetime.fromtimestamp(prev.stat().st_mtime).strftime("%Y%m%d_%H%M%S")
+    # 构造归档日志文件的初始路径
     archived = crash_dir / f"crash_{stamp}.log"
+    # 如果该初始归档文件名已存在，则通过循环添加数字后缀来找到一个不冲突的文件名
     if archived.exists():
         i = 1
         while True:
+            # 构造带数字后缀的新文件名
             archived = crash_dir / f"crash_{stamp}_{i}.log"
+            # 检查新文件名是否已被占用，如果没有则跳出循环
             if not archived.exists():
                 break
             i += 1
+    # 将之前的崩溃日志文件重命名为归档文件
     try:
         prev.rename(archived)
     except OSError:
@@ -198,20 +223,31 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
 
 
 def main() -> int:
-    t0 = time.perf_counter()
-    app = QApplication(sys.argv)
-    t1 = time.perf_counter()
-    app.setApplicationName("MusePlayer")
-    app.setStyle("Fusion")
-    if sys.platform.startswith("win"):
+    """应用程序主入口函数。
+    
+    负责启动MusePlayer音乐播放器，包括：
+    1. 初始化QApplication并配置基本属性（样式、字体、图标等）
+    2. 按优先级分步初始化服务（播放器→曲库→会话恢复）
+    3. 延迟加载UI组件和后台清理任务，优化启动速度
+    4. 启动Qt事件循环
+    
+    返回值:
+        int: 应用程序退出码，0表示正常退出
+    """
+    t0 = time.perf_counter()  # 记录启动开始时间
+    app = QApplication(sys.argv)  # 创建Qt应用实例
+    t1 = time.perf_counter()  # 记录QApplication创建耗时
+    app.setApplicationName("MusePlayer")  # 设置应用程序名称
+    app.setStyle("Fusion")  # 设置UI风格为跨平台一致的Fusion样式
+    if sys.platform.startswith("win"):  # Windows系统下设置中文字体
         app.setFont(QFont("Microsoft YaHei", 9))
-    project_root = Path(__file__).resolve().parent
-    icon_path = project_root / "icon.ico"
-    if icon_path.exists():
+    project_root = Path(__file__).resolve().parent  # 获取项目根目录路径
+    icon_path = project_root / "icon.ico"  # 应用图标文件路径
+    if icon_path.exists():  # 如果图标文件存在则设置应用图标
         icon = QIcon(str(icon_path))
         app.setWindowIcon(icon)
-    app.setStyleSheet(APP_STYLE)
-    t2 = time.perf_counter()
+    app.setStyleSheet(APP_STYLE)  # 应用全局样式表
+    t2 = time.perf_counter()  # 记录样式配置耗时
 
     # 先读会话数据（几KB，瞬间完成），用于窗口预览
     from app.models.session_store import SessionStore
@@ -219,71 +255,75 @@ def main() -> int:
 
     # 轻量 Controller（仅加载设置，不初始化库和播放器）
     controller = AppController(project_root=project_root)
-    t3 = time.perf_counter()
+    t3 = time.perf_counter()  # 记录Controller创建耗时
 
     # 第一步：初始化播放器（~0.3s，之后即可播放/暂停）
     controller.initialize_services()
-    t3b = time.perf_counter()
+    t3b = time.perf_counter()  # 记录播放器初始化耗时
 
     # 创建窗口（player 已存在，UI 可正常初始化）
     win = MainWindow(controller)
-    if icon_path.exists():
+    if icon_path.exists():  # 为窗口单独设置图标（确保窗口标题栏显示）
         win.setWindowIcon(QIcon(str(icon_path)))
 
-    # 用会话预览数据立即显示当前歌曲信息
+    # 用会话预览数据立即显示当前歌曲信息（避免窗口出现时显示空白）
     if _session_preview.current_track_title:
         win.title_label.setText(_session_preview.current_track_title)
         win.artist_label.setText(_session_preview.current_track_artist)
         win._current_track_title = _session_preview.current_track_title
         win._current_track_artist = _session_preview.current_track_artist
-        win._update_window_title()
+        win._update_window_title()  # 更新窗口标题栏显示
 
-    win.show()
-    t4 = time.perf_counter()
+    win.show()  # 显示主窗口
+    t4 = time.perf_counter()  # 记录窗口显示耗时
 
     from PySide6.QtCore import QTimer, QMetaObject, Qt as _Qt
 
-    _install_persist_fallbacks(app, controller)
+    _install_persist_fallbacks(app, controller)  # 安装持久化回退机制
 
     # 第二步：加载曲库（~0.9s，播放器已可用但需要库数据才能恢复会话）
     controller.load_library()
 
     # 第三步：恢复会话（开始播放当前歌曲）
     controller.restore_session()
-    win._refresh_current_track_ui(win.player.current_track())
-    win._refresh_random_state_hint()
-    win._on_mode_changed(win.player.mode.value)
-    win._on_playback_changed(win.player.is_playing())
-    win._refresh_volume_ui()
+    win._refresh_current_track_ui(win.player.current_track())  # 刷新当前曲目UI
+    win._refresh_random_state_hint()  # 刷新随机播放状态提示
+    win._on_mode_changed(win.player.mode.value)  # 同步播放模式显示
+    win._on_playback_changed(win.player.is_playing())  # 同步播放状态按钮
+    win._refresh_volume_ui()  # 刷新音量显示
 
-    # 第四步：延迟加载歌曲列表
+    # 第四步：延迟加载歌曲列表（通过QTimer将任务推迟到事件循环空闲时执行）
     def _deferred_ui_init():
-        win._reload_playlist_combo()
-        win._reload_track_list()
+        win._reload_playlist_combo()  # 刷新播放列表下拉框
+        win._reload_track_list()  # 刷新曲目列表
 
-    QTimer.singleShot(0, _deferred_ui_init)
+    QTimer.singleShot(0, _deferred_ui_init)  # 延迟到下一个事件循环周期执行
 
     # 后台延迟清理曲库（缺失文件检测等），不阻塞 UI
+    # 读取设置：是否启用启动时文件检查（默认启用）
     startup_file_check = bool(getattr(controller.settings, "startup_file_check", True))
 
     def _run_deferred_cleanup():
-        if not startup_file_check:
+        """后台线程执行的延迟清理任务。"""
+        if not startup_file_check:  # 如果用户禁用了启动检查则跳过
             return
         try:
-            controller.library_service.deferred_cleanup()
-            if controller.library_service.tracks:
+            controller.library_service.deferred_cleanup()  # 执行曲库清理（检测缺失文件等）
+            if controller.library_service.tracks:  # 如果清理后仍有曲目，通知UI刷新
                 QMetaObject.invokeMethod(win, "_on_library_changed", _Qt.ConnectionType.QueuedConnection)
         except Exception:
-            pass
+            pass  # 清理失败不影响主程序运行
 
+    # 以守护线程方式启动后台清理，避免阻止进程退出
     threading.Thread(target=_run_deferred_cleanup, daemon=True).start()
 
+    # 输出各阶段启动耗时，便于性能分析和优化
     total = t4 - t0
     print(f"[启动计时] QApplication: {t1-t0:.3f}s | 样式: {t2-t1:.3f}s | "
           f"Controller(轻量): {t3-t2:.3f}s | 播放器: {t3b-t3:.3f}s | "
           f"MainWindow+show: {t4-t3b:.3f}s | 窗口出现: {total:.3f}s")
 
-    return app.exec()
+    return app.exec()  # 进入Qt事件循环，返回应用程序退出码
 
 
 if __name__ == "__main__":
