@@ -205,6 +205,11 @@ class SettingsDialog(QDialog):
             bool(getattr(self._settings, "remember_window_geometry", True))
         )
 
+        self.copy_song_info_check = QCheckBox("允许复制当前歌曲信息（Ctrl+C / 点击信息项）")
+        self.copy_song_info_check.setChecked(
+            bool(getattr(self._settings, "copy_song_info_enabled", True))
+        )
+
         # 创建最大窗口宽度和高度的输入框
         self.max_window_width_edit = QLineEdit()
         self.max_window_height_edit = QLineEdit()
@@ -225,6 +230,7 @@ class SettingsDialog(QDialog):
         # 将控件添加到表单布局中
         form.addRow(self.dark_theme_check)
         form.addRow(self.remember_window_geometry_check)
+        form.addRow(self.copy_song_info_check)
         form.addRow("最大窗口宽度", self.max_window_width_edit)
         form.addRow("最大窗口高度", self.max_window_height_edit)
         form.addRow("", self.max_window_warning_label)
@@ -395,6 +401,7 @@ class SettingsDialog(QDialog):
             max_window_width=int(self._parse_max_window_value(self.max_window_width_edit.text(), 600)[0] or 0),
             max_window_height=int(self._parse_max_window_value(self.max_window_height_edit.text(), 800)[0] or 0),
             startup_file_check=bool(self.startup_file_check.isChecked()),
+            copy_song_info_enabled=bool(self.copy_song_info_check.isChecked()),
         )
 
     def _on_control_interface_toggled(self, enabled: bool) -> None:

@@ -346,6 +346,8 @@ class MainWindowPlaybackMixin:
             self.path_label.setText("")
             self._current_track_title = "未选择歌曲"
             self._current_track_artist = "未知歌手"
+            self._current_track_album = "未知专辑"
+            self._current_track_path = ""
             self.compact_top_title_label.setText(self._current_track_title)
             self.progress_center_label.setText("♪" if self._compact_mode else "")
             self._update_window_title()
@@ -358,10 +360,12 @@ class MainWindowPlaybackMixin:
 
         self._current_track_title = track.title or "未知标题"
         self._current_track_artist = (track.artist or "未知歌手").strip() or "未知歌手"
+        self._current_track_album = (track.album or "未知专辑").strip() or "未知专辑"
+        self._current_track_path = track.path
         self.title_label.setText(self._current_track_title)
         self.artist_label.setText(f"歌手: {self._current_track_artist}")
-        self.album_label.setText(f"专辑: {track.album or '未知专辑'}")
-        self.path_label.setText(track.path)
+        self.album_label.setText(f"专辑: {self._current_track_album}")
+        self.path_label.setText(self._current_track_path)
         self.compact_top_title_label.setText(self._current_track_title)
         if not self._compact_mode:
             self.progress_center_label.setText("")
@@ -1413,6 +1417,12 @@ class MainWindowPlaybackMixin:
         self._reload_track_list()  # 重新加载曲目列表
         self._refresh_favorite_button(self.player.current_track_id)  # 根据当前曲目ID刷新收藏按钮状态
         self.statusBar().showMessage("曲库已更新", 2200)  # 在状态栏显示“曲库已更新”消息，持续2200毫秒
+    def _on_favorites_changed(self) -> None:
+        self._reload_playlist_combo()
+        if self.player.current_playlist_id == FAVORITES_ID:
+            self._reload_track_list()
+        self._refresh_favorite_button(self.player.current_track_id)
+
     def _on_settings_changed(self, settings) -> None:
         """
         当设置发生变化时被调用的处理方法。
@@ -1580,9 +1590,43 @@ class MainWindowPlaybackMixin:
         self.statusBar().showMessage("打开歌单管理", 2000)
         dlg = PlaylistDialog(self.controller, self)
         dlg.exec()
-        self._reload_playlist_combo()
-        self._reload_track_list()
         self.statusBar().showMessage("歌单管理已更新", 2500)
+
+    def _copy_current_song_info(self) -> None:
+        if not bool(getattr(self.controller.settings, "copy_song_info_enabled", True)):
+            self.statusBar().showMessage("歌曲信息复制功能已关闭", 2500)
+            return
+        if self.player.current_track() is None:
+            self.statusBar().showMessage("当前没有可复制的歌曲信息", 2500)
+            return
+        text = "\n".join(
+            (
+                f"歌名: {self._current_track_title}",
+                f"歌手: {self._current_track_artist} | 专辑: {self._current_track_album}",
+                f"路径: {self._current_track_path}",
+            )
+        )
+        QApplication.clipboard().setText(text)
+        self.statusBar().showMessage("已复制歌曲信息", 2500)
+
+    def _copy_song_info_item(self, item_name: str) -> None:
+        if not bool(getattr(self.controller.settings, "copy_song_info_enabled", True)):
+            return
+        if self.player.current_track() is None:
+            self.statusBar().showMessage("当前没有可复制的歌曲信息", 2500)
+            return
+        values = {
+            "title": ("歌名", self._current_track_title),
+            "artist": ("歌手", self._current_track_artist),
+            "album": ("专辑", self._current_track_album),
+            "path": ("路径", self._current_track_path),
+        }
+        label, value = values.get(item_name, ("歌曲信息", ""))
+        if not value:
+            return
+        QApplication.clipboard().setText(value)
+        self.statusBar().showMessage(f"已复制歌曲信息（{label}）", 2500)
+
     def _open_settings_dialog(self) -> None:
         """打开设置对话框，允许用户修改设置。如果用户接受更改，则更新设置并显示保存消息；否则，直接返回。
         参数：
@@ -1597,6 +1641,8 @@ class MainWindowPlaybackMixin:
 
         new_settings = dlg.output_settings()  # 从对话框获取新的设置
         self.controller.update_settings(new_settings)  # 更新控制器中的设置
+        if hasattr(self, "action_copy_song_info"):
+            self.action_copy_song_info.setEnabled(bool(new_settings.copy_song_info_enabled))
         if new_settings.logging_enabled and self.controller.log_file_path is not None:  # 检查日志是否启用且日志文件路径存在
             tip = f"设置已保存，日志路径: {self.controller.log_file_path}"  # 构造包含日志路径的提示消息
         else:

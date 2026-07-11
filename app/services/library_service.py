@@ -82,6 +82,9 @@ class LibraryService:
         这是应用启动时的关键初始化步骤，确保内存数据与磁盘数据的一致性。
         """
         tracks, playlists, active = self._store.load()
+        self.load_preloaded(tracks, playlists, active, quick=quick)
+
+    def load_preloaded(self, tracks: dict[str, Track], playlists: dict[str, Playlist], active: str | None, indexes: tuple[dict[Path, Track], dict[str, Track]] | None = None, *, quick: bool = False) -> None:
         self.tracks = tracks
         self.playlists = playlists
         self._ensure_system_playlists()
@@ -103,8 +106,12 @@ class LibraryService:
             changed = self._deduplicate_tracks() or changed
         if changed:
             self.save()
-        self._rebuild_indexes()
+        if indexes is None:
+            self._rebuild_indexes()
+        else:
+            self._path_index, self._sha256_index = indexes
         logger.info("曲库加载完成: tracks=%s playlists=%s quick=%s", len(self.tracks), len(self.playlists), quick)
+
 
     def deferred_cleanup(self) -> None:
         """执行延迟的曲库清理操作（缺失文件检测、歌词路径清理、重复曲目检测）。
@@ -168,18 +175,23 @@ class LibraryService:
             # 文件操作失败时静默忽略异常，确保程序健壮性
             pass
 
-    def _rebuild_indexes(self) -> None:
-        """重建路径索引和SHA256索引，加速查找。"""
-        self._path_index.clear()
-        self._sha256_index.clear()
-        for track in self.tracks.values():
+    @staticmethod
+    def build_indexes_for_tracks(tracks: dict[str, Track]) -> tuple[dict[Path, Track], dict[str, Track]]:
+        path_index: dict[Path, Track] = {}
+        sha256_index: dict[str, Track] = {}
+        for track in tracks.values():
             try:
-                self._path_index[Path(track.path).resolve()] = track
+                path_index[Path(track.path).resolve()] = track
             except Exception:
                 pass
             sha = str(getattr(track, "source_sha256", "") or "").strip().lower()
             if sha:
-                self._sha256_index[sha] = track
+                sha256_index[sha] = track
+        return path_index, sha256_index
+
+    def _rebuild_indexes(self) -> None:
+        """重建路径索引和SHA256索引，加速查找。"""
+        self._path_index, self._sha256_index = self.build_indexes_for_tracks(self.tracks)
 
     def _drop_missing_tracks(self) -> bool:
         """清理曲库中指向不存在的文件的跟踪记录。

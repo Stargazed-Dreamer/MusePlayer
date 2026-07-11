@@ -78,6 +78,40 @@ class LibraryStore:
         active_playlist_id = str(active_raw).strip() if isinstance(active_raw, str) else None
         return tracks, playlists, active_playlist_id
 
+    def load_track_and_playlist(
+        self,
+        track_id: str,
+        playlist_id: str | None,
+    ) -> tuple[Track | None, Playlist | None]:
+        if not self._path.exists():
+            return None, None
+        try:
+            payload = json.loads(self._path.read_text(encoding="utf-8"))
+        except Exception:
+            return None, None
+
+        track = None
+        tracks_payload = payload.get("tracks", {})
+        if isinstance(tracks_payload, dict):
+            item = tracks_payload.get(track_id)
+            if isinstance(item, dict):
+                try:
+                    track = Track.from_dict(item)
+                except Exception:
+                    track = None
+
+        playlist = None
+        playlists_payload = payload.get("playlists", {})
+        target_playlist_id = str(playlist_id or payload.get("active_playlist_id") or "").strip()
+        if isinstance(playlists_payload, dict):
+            item = playlists_payload.get(target_playlist_id)
+            if isinstance(item, dict):
+                try:
+                    playlist = Playlist.from_dict(item)
+                except Exception:
+                    playlist = None
+        return track, playlist
+
     def save(
         self,
         tracks: dict[str, Track],

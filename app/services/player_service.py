@@ -1175,7 +1175,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         target_start = max(0.0, float(start_sec))
         strategy = self._read_strategy()
         try:
-            if auto_play and strategy == "window":  # 自动播放且策略为窗口模式
+            if strategy == "window":  # 窗口策略下始终只加载当前位置附近的数据
                 self._core.load(source, start_sec=target_start, window_sec=self._LAZY_WINDOW_SEC)
                 loaded_sec = max(0.0, float(self._core.duration()))
                 if loaded_sec <= 0.02:  # 加载的窗口太短（可能文件很短或异常）
@@ -1202,7 +1202,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
                     local_duration = max(0.0, float(self._core.duration()))
                     self._schedule_lazy_prefetch(track.id, target_start + local_duration)  # 调度预读下一个窗口
             else:  # 只加载不播放
-                self._core.seek(target_start)
+                self._core.seek(0.0 if self._lazy_window_mode else target_start)
                 self._expecting_natural_end = False
         except Exception as exc:  # 加载失败处理
             self.error_occurred.emit(f"加载失败: {source} -> {exc}")
@@ -1324,6 +1324,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             elif self._expecting_natural_end and (duration <= 0 or position >= max(0.0, duration - 0.10)):
                 self._expecting_natural_end = False
                 self._handle_natural_finished()  # 处理自然结束（切歌或单曲循环）
+                playing = self.is_playing()
 
         # 发射播放状态变更信号（如果状态改变或强制）
         self._emit_playback_state(current=playing)

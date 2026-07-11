@@ -21,6 +21,7 @@ import time
 import traceback
 from pathlib import Path
 
+from PySide6.QtCore import QEvent, QObject
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -222,6 +223,37 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
             pass
 
 
+class _StartupEventProbe(QObject):
+    def __init__(self, target, started_at: float):
+        super().__init__(target)
+        self._target = target
+        self._started_at = started_at
+        self._show_logged = False
+        self._paint_logged = False
+
+    def eventFilter(self, watched, event):
+        if watched is self._target:
+            elapsed = time.perf_counter() - self._started_at
+            if event.type() == QEvent.Type.Show and not self._show_logged:
+                self._show_logged = True
+                print(f"[StartupProbe] show_event={elapsed:.3f}s", flush=True)
+            elif event.type() == QEvent.Type.Paint and not self._paint_logged:
+                self._paint_logged = True
+                print(f"[StartupProbe] first_paint={elapsed:.3f}s", flush=True)
+        return super().eventFilter(watched, event)
+
+
+def _timed_startup_call(name: str, callback):
+    def _wrapped(*args, **kwargs):
+        started_at = time.perf_counter()
+        try:
+            return callback(*args, **kwargs)
+        finally:
+            print(f"[StartupProbe] {name}={time.perf_counter() - started_at:.3f}s", flush=True)
+
+    return _wrapped
+
+
 def main() -> int:
     """应用程序主入口函数。
     
@@ -235,6 +267,13 @@ def main() -> int:
         int: 应用程序退出码，0表示正常退出
     """
     t0 = time.perf_counter()  # 记录启动开始时间
+    startup_probe_enabled = os.getenv("MUSE_STARTUP_PROBE", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
+    def _probe_log(message: str) -> None:
+        if startup_probe_enabled:
+            print(f"[StartupProbe] {message}", flush=True)
     app = QApplication(sys.argv)  # 创建Qt应用实例
     t1 = time.perf_counter()  # 记录QApplication创建耗时
     app.setApplicationName("MusePlayer")  # 设置应用程序名称
@@ -263,6 +302,19 @@ def main() -> int:
 
     # 创建窗口（player 已存在，UI 可正常初始化）
     win = MainWindow(controller)
+    startup_probe = None
+    startup_original_methods = {}
+    if startup_probe_enabled:
+        startup_probe = _StartupEventProbe(win, t0)
+        win.installEventFilter(startup_probe)
+        for method_name in (
+            "_refresh_current_track_ui",
+            "_reload_playlist_combo",
+            "_reload_track_list",
+        ):
+            original = getattr(win, method_name)
+            startup_original_methods[method_name] = original
+            setattr(win, method_name, _timed_startup_call(method_name.lstrip("_"), original))
     if icon_path.exists():  # 为窗口单独设置图标（确保窗口标题栏显示）
         win.setWindowIcon(QIcon(str(icon_path)))
 
@@ -279,43 +331,102 @@ def main() -> int:
 
     from PySide6.QtCore import QTimer, QMetaObject, Qt as _Qt
 
-    _install_persist_fallbacks(app, controller)  # 安装持久化回退机制
-
-    # 第二步：加载曲库（~0.9s，播放器已可用但需要库数据才能恢复会话）
-    controller.load_library()
-
-    # 第三步：恢复会话（开始播放当前歌曲）
-    controller.restore_session()
-    win._refresh_current_track_ui(win.player.current_track())  # 刷新当前曲目UI
-    win._refresh_random_state_hint()  # 刷新随机播放状态提示
-    win._on_mode_changed(win.player.mode.value)  # 同步播放模式显示
-    win._on_playback_changed(win.player.is_playing())  # 同步播放状态按钮
-    win._refresh_volume_ui()  # 刷新音量显示
-
-    # 第四步：延迟加载歌曲列表（通过QTimer将任务推迟到事件循环空闲时执行）
-    def _deferred_ui_init():
-        win._reload_playlist_combo()  # 刷新播放列表下拉框
-        win._reload_track_list()  # 刷新曲目列表
-
-    QTimer.singleShot(0, _deferred_ui_init)  # 延迟到下一个事件循环周期执行
-
-    # 后台延迟清理曲库（缺失文件检测等），不阻塞 UI
-    # 读取设置：是否启用启动时文件检查（默认启用）
+    _install_persist_fallbacks(app, controller)
     startup_file_check = bool(getattr(controller.settings, "startup_file_check", True))
 
+    def _disable_startup_probe():
+        nonlocal startup_probe
+        for method_name, original in startup_original_methods.items():
+            setattr(win, method_name, original)
+        startup_original_methods.clear()
+        if startup_probe is not None:
+            win.removeEventFilter(startup_probe)
+            startup_probe.deleteLater()
+            startup_probe = None
+
     def _run_deferred_cleanup():
-        """后台线程执行的延迟清理任务。"""
-        if not startup_file_check:  # 如果用户禁用了启动检查则跳过
+        if not startup_file_check:
             return
         try:
-            controller.library_service.deferred_cleanup()  # 执行曲库清理（检测缺失文件等）
-            if controller.library_service.tracks:  # 如果清理后仍有曲目，通知UI刷新
+            controller.library_service.deferred_cleanup()
+            if controller.library_service.tracks:
                 QMetaObject.invokeMethod(win, "_on_library_changed", _Qt.ConnectionType.QueuedConnection)
         except Exception:
-            pass  # 清理失败不影响主程序运行
+            pass
 
-    # 以守护线程方式启动后台清理，避免阻止进程退出
-    threading.Thread(target=_run_deferred_cleanup, daemon=True).start()
+    def _deferred_ui_init():
+        win._reload_playlist_combo()
+        win._reload_track_list()
+        win.statusBar().clear_hint("startup")
+        win.statusBar().showMessage("Ready", 1500)
+        _disable_startup_probe()
+        threading.Thread(target=_run_deferred_cleanup, daemon=True).start()
+
+    def _restore_startup_session():
+        win.statusBar().set_hint("startup", "Restoring session...")
+        phase_started = time.perf_counter()
+        controller.restore_session()
+        _probe_log(f"restore_session_total={time.perf_counter() - phase_started:.3f}s")
+        win._refresh_current_track_ui(win.player.current_track())
+        win._refresh_random_state_hint()
+        win._on_mode_changed(win.player.mode.value)
+        win._on_playback_changed(win.player.is_playing())
+        win._refresh_volume_ui()
+        QTimer.singleShot(0, _deferred_ui_init)
+
+    def _load_startup_library():
+        win.statusBar().set_hint("startup", "Preparing current track...")
+        preview_started = time.perf_counter()
+        preview_ready = controller.restore_session_preview(_session_preview)
+        preview_state = win.player.state_snapshot()
+        _probe_log(
+            f"current_track_preview={time.perf_counter() - preview_started:.3f}s | "
+            f"ready={preview_ready} | duration={preview_state.get('duration_sec', 0.0):.3f}s | "
+            f"playlist={preview_state.get('playlist_id')}"
+        )
+        win.statusBar().set_hint("startup", "Loading library...")
+        state = {"done": False, "payload": None, "error": None}
+        started_at = time.perf_counter()
+        poll_timer = QTimer(win)
+        poll_timer.setInterval(15)
+
+        def _read_library_data():
+            try:
+                state["payload"] = controller.prepare_library_load()
+            except Exception as exc:
+                state["error"] = exc
+            finally:
+                state["done"] = True
+
+        def _finish_library_load():
+            if not state["done"]:
+                return
+            poll_timer.stop()
+            if state["error"] is not None:
+                message = f"Library load failed: {state['error']}"
+                _probe_log(message)
+                _disable_startup_probe()
+                controller.error_occurred.emit(message)
+                win.statusBar().set_hint("startup", message)
+                return
+
+            read_done_at = time.perf_counter()
+            controller.finish_library_load(state["payload"])
+            finished_at = time.perf_counter()
+            _probe_log(
+                f"library_read_worker={read_done_at - started_at:.3f}s | "
+                f"library_install_main={finished_at - read_done_at:.3f}s | "
+                f"load_library_total={finished_at - started_at:.3f}s | "
+                f"tracks={len(controller.library_service.tracks)} | "
+                f"playlists={len(controller.library_service.playlists)}"
+            )
+            QTimer.singleShot(0, _restore_startup_session)
+
+        poll_timer.timeout.connect(_finish_library_load)
+        poll_timer.start()
+        threading.Thread(target=_read_library_data, daemon=True).start()
+
+    QTimer.singleShot(50, _load_startup_library)
 
     # 输出各阶段启动耗时，便于性能分析和优化
     total = t4 - t0

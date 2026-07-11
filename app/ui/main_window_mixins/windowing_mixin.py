@@ -1214,6 +1214,10 @@ class MainWindowWindowingMixin:
         self._update_track_item_heights()
         self._position_locate_current_button()
         self._update_locate_current_button()
+        for label_name in ("title_label", "artist_label", "album_label", "path_label"):
+            label = getattr(self, label_name, None)
+            if label is not None and hasattr(label, "_refresh_display_text"):
+                label._refresh_display_text()
         self._last_window_width = self.width()
     def showEvent(self, event) -> None:
         """处理窗口显示事件。

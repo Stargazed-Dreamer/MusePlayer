@@ -41,6 +41,7 @@ from app.version import APP_VERSION
 from app.ui.main_window_mixins import MainWindowPlaybackMixin, MainWindowWindowingMixin
 
 from app.ui.main_window_helpers import (
+    AdaptiveInfoLabel,
     ClickJumpSlider,
     LyricsItemDelegate,
     LyricsListWidget,
@@ -169,6 +170,8 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         # 当前播放信息缓存（用于简洁模式显示）
         self._current_track_title = "未选择歌曲"
         self._current_track_artist = "未知歌手"
+        self._current_track_album = "未知专辑"
+        self._current_track_path = ""
         self._next_track_preview_announced = False  # 是否已预告下一首歌曲
         
         # 主题和外观
@@ -295,18 +298,14 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         now_layout.setContentsMargins(14, 12, 14, 10)
         now_layout.setSpacing(6)
 
-        self.title_label = QLabel("未选择歌曲")
+        self.title_label = AdaptiveInfoLabel("未选择歌曲")
         self.title_label.setObjectName("TitleLabel")
-        self.title_label.setWordWrap(True)
-        self.title_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.artist_label = QLabel("歌手")
+        self.artist_label = AdaptiveInfoLabel("歌手")
         self.artist_label.setObjectName("MetaLabel")
-        self.album_label = QLabel("专辑")
+        self.album_label = AdaptiveInfoLabel("专辑")
         self.album_label.setObjectName("MetaLabel")
-        self.path_label = QLabel("")
+        self.path_label = AdaptiveInfoLabel("")
         self.path_label.setObjectName("CaptionLabel")
-        self.path_label.setWordWrap(True)
-        self.path_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._meta_top_spacer = QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         self._meta_bottom_spacer = QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
@@ -571,6 +570,10 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         action_import_folder = menu_file.addAction("导入文件夹")  # 添加“导入文件夹”动作
         action_import_playlist = menu_file.addAction("导入歌单文件")  # 添加“导入歌单文件”动作
         action_open_file = menu_file.addAction("播放文件")  # 添加“播放文件”动作
+        self.action_copy_song_info = menu_file.addAction("复制歌曲信息")
+        self.action_copy_song_info.setShortcut(QKeySequence("Ctrl+C"))
+        self.action_copy_song_info.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.action_copy_song_info.setEnabled(bool(self.controller.settings.copy_song_info_enabled))
         self.action_save_stats = menu_file.addAction("保存统计数据")  # 添加“保存统计数据”动作，并保存为实例变量
         self.action_save_stats.setShortcut(QKeySequence("Ctrl+S"))  # 设置快捷键为Ctrl+S
         self.action_save_stats.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)  # 设置快捷键上下文为应用程序范围
@@ -609,6 +612,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         action_import_folder.triggered.connect(self._menu_import_folder)  # 连接导入文件夹动作到槽函数
         action_import_playlist.triggered.connect(self._menu_import_playlist_file)  # 连接导入歌单文件动作到槽函数
         action_open_file.triggered.connect(self._menu_open_file)  # 连接播放文件动作到槽函数
+        self.action_copy_song_info.triggered.connect(self._copy_current_song_info)
         self.action_save_stats.triggered.connect(self._save_stats_now)  # 连接保存统计数据动作到槽函数
         action_export_stats.triggered.connect(self._export_stats)  # 连接导出统计数据动作到槽函数
         action_exit.triggered.connect(self.close)  # 连接退出动作到关闭方法
@@ -672,6 +676,10 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.theme_btn.clicked.connect(self._toggle_theme)
         self.locate_file_btn.clicked.connect(self._open_current_in_explorer)
         self.favorite_btn.clicked.connect(self._toggle_current_favorite)
+        self.title_label.clicked.connect(lambda: self._copy_song_info_item("title"))
+        self.artist_label.clicked.connect(lambda: self._copy_song_info_item("artist"))
+        self.album_label.clicked.connect(lambda: self._copy_song_info_item("album"))
+        self.path_label.clicked.connect(lambda: self._copy_song_info_item("path"))
         self.add_to_playlist_btn.clicked.connect(self._add_current_to_playlist)
         self.prev_btn.clicked.connect(self._play_previous_track)
         self.play_btn.clicked.connect(self.player.toggle_play_pause)
@@ -703,6 +711,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
             self.player.queue_changed.connect(self._on_queue_changed)
 
         self.controller.library_changed.connect(self._on_library_changed)
+        self.controller.favorites_changed.connect(self._on_favorites_changed)
         self.controller.settings_changed.connect(self._on_settings_changed)
         self.controller.message.connect(lambda text: self.statusBar().showMessage(str(text), 2500))  # 使用lambda将消息转换为字符串并显示2500毫秒
         self.controller.error_occurred.connect(self._on_error)

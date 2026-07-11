@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QListWidget,
     QSlider,
+    QSizePolicy,
     QStatusBar,
     QStyle,
     QStyledItemDelegate,
@@ -63,6 +64,77 @@ except Exception:
 
 _LRC_RE = re.compile(r"\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]")
 _KANA_RE = re.compile(r"^\[kana:(.*)\]$", re.MULTILINE)
+
+
+class AdaptiveInfoLabel(QLabel):
+    clicked = Signal()
+    _MIDDLE_MARK = " …… "
+
+    def __init__(self, text: str = "", parent: QWidget | None = None):
+        super().__init__(parent)
+        self._source_text = ""
+        self.setWordWrap(True)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setText(text)
+
+    def sourceText(self) -> str:
+        return self._source_text
+
+    def setText(self, text: str) -> None:
+        self._source_text = str(text)
+        self._refresh_display_text()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._refresh_display_text()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+    def _refresh_display_text(self) -> None:
+        text = self._source_text
+        width = max(1, self.contentsRect().width())
+        metrics = self.fontMetrics()
+        bounds = metrics.boundingRect(
+            QRect(0, 0, width, 10000),
+            int(Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere),
+            text,
+        )
+        line_height = max(1, metrics.lineSpacing())
+        if bounds.height() <= line_height * 3:
+            display_text = text
+            word_wrap = True
+        else:
+            display_text = self._middle_elided_text(text, width)
+            word_wrap = False
+        if super().text() != display_text:
+            super().setText(display_text)
+        if self.wordWrap() != word_wrap:
+            self.setWordWrap(word_wrap)
+        self.setToolTip(text if display_text != text else "")
+        self.updateGeometry()
+
+    def _middle_elided_text(self, text: str, width: int) -> str:
+        metrics = self.fontMetrics()
+        marker = self._MIDDLE_MARK
+        if metrics.horizontalAdvance(text) <= width:
+            return text
+        if metrics.horizontalAdvance(marker) >= width:
+            return metrics.elidedText(text, Qt.TextElideMode.ElideRight, width)
+        left_count = (len(text) + 1) // 2
+        right_count = len(text) - left_count
+        while left_count > 0 or right_count > 0:
+            candidate = text[:left_count] + marker + (text[-right_count:] if right_count else "")
+            if metrics.horizontalAdvance(candidate) <= width:
+                return candidate
+            if left_count >= right_count and left_count > 0:
+                left_count -= 1
+            elif right_count > 0:
+                right_count -= 1
+        return marker.strip()
 
 
 @dataclass(slots=True)
@@ -1195,7 +1267,8 @@ def _parse_lrc_entries(raw: str) -> list[tuple[float, str]]:
 
 _QRC_LINE_RE = re.compile(r"\[(\d+),(\d+)\]([^\[]*)")
 _QRC_WORD_RE = re.compile(r"\((\d+),(\d+)\)")
-_QRC_WORD_PART_RE = re.compile(r"([^(]+)\((\d+),(\d+)\)")
+_QRC_KANA_GROUP_RE = re.compile(r"(\d)(?:(?:\(\d+,\d+\))?[\u3040-\u309f\u30a0-\u30ff]*)*")
+_QRC_FURIGANA_BASE_RE = re.compile(r"[\u4e00-\u9fff\uff10-\uff19\uff21-\uff5a\u3005]")
 
 
 def _parse_qrc_words(text_raw: str) -> list[LyricWord]:
@@ -1213,10 +1286,14 @@ def _parse_qrc_words(text_raw: str) -> list[LyricWord]:
     """
     words: list[LyricWord] = []  # 初始化一个空列表，用于存储解析出的歌词词组
     # 使用预定义的正则表达式对象在原始文本中迭代查找所有匹配项
-    for m in _QRC_WORD_PART_RE.finditer(text_raw):
+    text_start = 0
+    for m in _QRC_WORD_RE.finditer(text_raw):
         # 将每个匹配到的子组（词组文本、开始时间、持续时间）转换为 LyricWord 对象
         # 并添加到列表中。注意：时间值从字符串转换为整数。
-        words.append(LyricWord(text=m.group(1), start_ms=int(m.group(2)), duration_ms=int(m.group(3))))
+        text = text_raw[text_start:m.start()]
+        if text:
+            words.append(LyricWord(text=text, start_ms=int(m.group(1)), duration_ms=int(m.group(2))))
+        text_start = m.end()
     return words  # 返回解析完成的歌词词组列表
 
 
@@ -1418,9 +1495,17 @@ def _parse_kana_to_furigana_list(kana_content: str) -> list[str | None]:
         list[str | None]: 振假名列表，其中None表示该位置没有振假名。
     """
     # 使用正则表达式清理输入字符串，移除_QRC_WORD_RE匹配的部分
-    cleaned = _QRC_WORD_RE.sub("", kana_content)
+    groups = list(_QRC_KANA_GROUP_RE.finditer(kana_content))
     # 初始化结果列表
     result: list[str | None] = []
+    if groups:
+        for match in groups:
+            count = int(match.group(1))
+            reading = _QRC_WORD_RE.sub("", match.group(0)[1:]) or None
+            result.append(reading)
+            result.extend([None] * (count - 1))
+        return result
+    cleaned = _QRC_WORD_RE.sub("", kana_content)
     i = 0
     # 遍历清理后的字符串
     while i < len(cleaned):
@@ -1546,24 +1631,25 @@ def _assign_furigana_to_entries(entries: list[LyricEntry], kana_content: str) ->
             continue
         
         # 计算当前条目中非空格字符的数量
-        char_count = sum(1 for ch in entry.original if ch not in (" ", "　"))
+        base_indexes = [
+            index
+            for index, char in enumerate(entry.original)
+            if _QRC_FURIGANA_BASE_RE.fullmatch(char)
+        ]
+        char_count = len(base_indexes)
         
         # 检查剩余注音数量是否足够分配给当前条目
         if kana_idx + char_count > len(furigana_list):
             break
         
         # 当前字符在原始文本中的索引
-        char_idx = 0
         
         # 初始化当前条目的注音列表
         entry.furigana = []
         
         # 遍历当前条目的每个字符
-        for ch in entry.original:
+        for char_idx in base_indexes:
             # 跳过空格字符（全角和半角空格）
-            if ch in (" ", "　"):
-                char_idx += 1
-                continue
             
             # 检查注音索引是否超出范围
             if kana_idx >= len(furigana_list):
@@ -1578,7 +1664,6 @@ def _assign_furigana_to_entries(entries: list[LyricEntry], kana_content: str) ->
             
             # 更新注音索引和字符索引
             kana_idx += 1
-            char_idx += 1
 
 
 def build_structured_lyrics(

@@ -16,9 +16,9 @@ from typing import Callable
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtMultimedia import QMediaDevices
 
-from app.models import LibraryStore, SessionState, SessionStore, Settings, SettingsStore
+from app.models import LibraryStore, Playlist, SessionState, SessionStore, Settings, SettingsStore, Track
 from app.runtime import ControlServer
-from app.services.library_service import LibraryService
+from app.services.library_service import ALL_SONGS_ID, LibraryService
 from app.services.metadata_service import MetadataService
 from app.services.playback_stats_service import PlaybackStatsService
 from app.services.player_service import PlayMode, PlayerService
@@ -27,6 +27,7 @@ from app.utils import configure_logging, get_logger
 
 class AppController(QObject):
     library_changed = Signal()
+    favorites_changed = Signal()
     settings_changed = Signal(object)
     runtime_status_changed = Signal(bool, str, int)
     message = Signal(str)
@@ -64,6 +65,7 @@ class AppController(QObject):
         self.control_server = None
         self._session_restored = False
         self._services_initialized = False
+        self._library_loaded = False
 
     def initialize_services(self) -> None:
         """初始化库服务、播放器、控制服务器等重服务。
@@ -104,29 +106,79 @@ class AppController(QObject):
         _t1 = _time.perf_counter()
         print(f"[Services计时] 播放器初始化: {_t1-_t0:.3f}s")
 
-    def load_library(self) -> None:
-        """加载曲库数据（在播放器初始化后调用）。
+    def restore_session_preview(self, state: SessionState) -> bool:
+        if self.library_service is None or self.player_service is None:
+            return False
+        track_id = str(state.current_track_id or "").strip()
+        track_path = str(state.current_track_path or "").strip()
+        if not track_id or not track_path or not Path(track_path).is_file():
+            return False
 
-        此步骤较慢（~0.9s），但播放器已可用。
-        """
+        playlist_id = str(state.current_playlist_id or ALL_SONGS_ID).strip() or ALL_SONGS_ID
+        stored_track, stored_playlist = self.library_store.load_track_and_playlist(track_id, playlist_id)
+        track = stored_track or Track(
+            id=track_id,
+            path=track_path,
+            title=str(state.current_track_title or Path(track_path).stem),
+            artist=str(state.current_track_artist or "未知歌手"),
+        )
+
+        playlists = {
+            ALL_SONGS_ID: Playlist(id=ALL_SONGS_ID, name="全部歌曲", track_ids=[track_id]),
+        }
+        if stored_playlist is not None:
+            if track_id not in stored_playlist.track_ids:
+                stored_playlist.track_ids.insert(0, track_id)
+            playlists[playlist_id] = stored_playlist
+        elif playlist_id != ALL_SONGS_ID:
+            playlists[playlist_id] = Playlist(id=playlist_id, name="恢复中的歌单", track_ids=[track_id])
+
+        self.library_service.load_preloaded(
+            {track_id: track},
+            playlists,
+            playlist_id,
+            quick=True,
+        )
+        with self.player_service.suspend_stats_collection():
+            self.player_service.set_mode(state.play_mode)
+            self.player_service.set_volume(state.volume)
+            self.library_service.active_playlist_id = playlist_id
+            self.player_service._current_playlist_id = playlist_id
+            return self.player_service.play_track(
+                track_id,
+                auto_play=False,
+                start_sec=max(0.0, state.position_sec),
+                manual_select=False,
+            )
+
+    def prepare_library_load(self):
+        tracks, playlists, active = self.library_store.load()
+        indexes = self.library_service.build_indexes_for_tracks(tracks)
+        return tracks, playlists, active, indexes
+
+    def load_library(self) -> None:
+        if self.library_service is None:
+            return
+        self.finish_library_load(self.prepare_library_load())
+
+    def finish_library_load(self, payload) -> None:
         if self.library_service is None:
             return
         import time as _time
         _t0 = _time.perf_counter()
 
-        self.library_service.load(quick=True)
+        tracks, playlists, active, indexes = payload
+        self.library_service.load_preloaded(tracks, playlists, active, indexes, quick=True)
         _t1 = _time.perf_counter()
+        self._library_loaded = True
 
-        # 库加载后重新初始化播放器的曲目索引
         if self.player_service:
             self.player_service._set_initial_track_for_playlist()
 
-        # 初始化运行时控制服务器
         self.control_server = ControlServer(self.dispatch_command)
         self.control_server.error_occurred.connect(self.error_occurred)
         self.control_server.listening_changed.connect(self.runtime_status_changed)
 
-        # 配置会话自动保存定时器（默认30秒间隔）
         self._session_save_timer = QTimer(self)
         self._session_save_timer.timeout.connect(self.save_session)
         self._apply_save_timer_settings()
@@ -168,9 +220,11 @@ class AppController(QObject):
         with self.player_service.suspend_stats_collection():
             self.save_session()
             self.playback_stats_service.save_if_dirty()
-            self.library_service.save()
+            if self._library_loaded:
+                self.library_service.save()
             self.settings_store.save(self.settings)
-            self.control_server.stop()
+            if self.control_server is not None:
+                self.control_server.stop()
             self.player_service.close()
 
     def save_session(self) -> None:
@@ -519,7 +573,7 @@ class AppController(QObject):
         state = self.library_service.toggle_favorite(track_id)  # 调用库服务切换收藏状态，获取新状态
         if state:  # 如果状态为True，表示曲目已被收藏
             self.playback_stats_service.reset_early_skip_count(track_id)  # 重置该曲目的早期跳过计数
-        self.library_changed.emit()  # 发出库变化信号，通知其他组件更新
+        self.favorites_changed.emit()
         return state  # 返回切换后的收藏状态
 
     def is_track_favorite(self, track_id: str | None) -> bool:

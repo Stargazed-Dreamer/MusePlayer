@@ -272,6 +272,8 @@ class Settings:
     """最大窗口高度，0表示不限制"""
     startup_file_check: bool = True
     """启动时检查歌曲文件是否存在"""
+    copy_song_info_enabled: bool = True
+    """是否允许复制当前歌曲信息"""
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典格式，用于序列化。
@@ -310,6 +312,8 @@ class Settings:
             "window_height": int(self.window_height),
             "max_window_width": int(self.max_window_width),
             "max_window_height": int(self.max_window_height),
+            "startup_file_check": bool(self.startup_file_check),
+            "copy_song_info_enabled": bool(self.copy_song_info_enabled),
         }
 
     @classmethod
@@ -368,6 +372,8 @@ class Settings:
             window_height=max(0, int(data.get("window_height", 0))),
             max_window_width=max_window_width,
             max_window_height=max_window_height,
+            startup_file_check=bool(data.get("startup_file_check", True)),
+            copy_song_info_enabled=bool(data.get("copy_song_info_enabled", True)),
         )
 
 
