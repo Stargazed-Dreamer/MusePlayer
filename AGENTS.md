@@ -98,6 +98,9 @@ MusePlayer/
 │   │   ├── main_window_mixins/ # 播放交互 + 窗口行为混入
 │   │   ├── playlist_dialog.py # 歌单管理对话框
 │   │   ├── settings_dialog.py # 设置对话框
+│   │   ├── shortcut_settings_dialog.py # 快捷键设置对话框
+│   │   ├── shortcut_settings.py # 快捷键操作与默认值
+│   │   ├── global_hotkeys.py # Windows 全局快捷键注册
 │   │   └── theme.py          # QSS 主题（日间/夜间）
 │   ├── utils/                # 工具（日志配置）
 │   └── version.py            # 版本号

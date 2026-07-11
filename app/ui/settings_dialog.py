@@ -402,6 +402,9 @@ class SettingsDialog(QDialog):
             max_window_height=int(self._parse_max_window_value(self.max_window_height_edit.text(), 800)[0] or 0),
             startup_file_check=bool(self.startup_file_check.isChecked()),
             copy_song_info_enabled=bool(self.copy_song_info_check.isChecked()),
+            global_shortcuts_enabled=bool(getattr(self._settings, "global_shortcuts_enabled", True)),
+            interface_shortcuts=dict(getattr(self._settings, "interface_shortcuts", {})),
+            global_shortcuts=dict(getattr(self._settings, "global_shortcuts", {})),
         )
 
     def _on_control_interface_toggled(self, enabled: bool) -> None:

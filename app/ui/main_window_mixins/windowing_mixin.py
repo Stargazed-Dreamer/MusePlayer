@@ -1372,6 +1372,8 @@ class MainWindowWindowingMixin:
             event: 窗口关闭事件
         """
         try:
+            if hasattr(self, "_global_hotkey_manager"):
+                self._global_hotkey_manager.unregister_all()
             self._persist_window_geometry()
             self._taskbar_progress.clear()
             self._taskbar_progress.close()

@@ -39,6 +39,12 @@ from app.services.player_service import PlayMode
 from app.version import APP_VERSION
 
 from app.ui.main_window_mixins import MainWindowPlaybackMixin, MainWindowWindowingMixin
+from app.ui.global_hotkeys import GlobalHotkeyManager
+from app.ui.shortcut_settings import (
+    default_global_shortcuts,
+    default_interface_shortcuts,
+    merge_shortcuts,
+)
 
 from app.ui.main_window_helpers import (
     AdaptiveInfoLabel,
@@ -179,6 +185,8 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         
         # Windows任务栏集成
         self._taskbar_progress = _WindowsTaskbarProgress()
+        self._interface_shortcut_objects: list[QShortcut] = []
+        self._global_hotkey_manager = GlobalHotkeyManager(self)
         
         # 丰富模式拖拽状态
         self._rich_drag_offset: QPoint | None = None  # 丰富模式拖拽偏移
@@ -571,12 +579,8 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         action_import_playlist = menu_file.addAction("导入歌单文件")  # 添加“导入歌单文件”动作
         action_open_file = menu_file.addAction("播放文件")  # 添加“播放文件”动作
         self.action_copy_song_info = menu_file.addAction("复制歌曲信息")
-        self.action_copy_song_info.setShortcut(QKeySequence("Ctrl+C"))
-        self.action_copy_song_info.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.action_copy_song_info.setEnabled(bool(self.controller.settings.copy_song_info_enabled))
         self.action_save_stats = menu_file.addAction("保存统计数据")  # 添加“保存统计数据”动作，并保存为实例变量
-        self.action_save_stats.setShortcut(QKeySequence("Ctrl+S"))  # 设置快捷键为Ctrl+S
-        self.action_save_stats.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)  # 设置快捷键上下文为应用程序范围
         action_export_stats = menu_file.addAction("导出统计数据")  # 添加“导出统计数据”动作
         menu_file.addSeparator()  # 添加分隔线
         action_exit = menu_file.addAction("退出")  # 添加“退出”动作
@@ -584,6 +588,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         action_playlist = self.menuBar().addAction("歌单")  # 添加“歌单”动作到菜单栏
 
         action_settings = self.menuBar().addAction("设置")  # 添加“设置”动作到菜单栏
+        action_shortcuts = self.menuBar().addAction("按键设置")
 
         self.random_state_label = QLabel("")  # 创建随机状态标签，初始为空
         self.random_state_label.setObjectName("RandomStateHintLabel")  # 设置对象名称
@@ -618,6 +623,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         action_exit.triggered.connect(self.close)  # 连接退出动作到关闭方法
         action_playlist.triggered.connect(self._open_playlist_dialog)  # 连接歌单动作到打开歌单对话框方法
         action_settings.triggered.connect(self._open_settings_dialog)  # 连接设置动作到打开设置对话框方法
+        action_shortcuts.triggered.connect(self._open_shortcut_settings_dialog)
         self._stack_title_and_menu()  # 调用堆叠标题和菜单的方法
 
     def _stack_title_and_menu(self) -> None:
@@ -726,16 +732,57 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.lyrics_list.verticalScrollBar().valueChanged.connect(self._on_lyrics_scroll_changed)
 
     def _bind_shortcuts(self) -> None:
-        if self.player:
-            QShortcut(QKeySequence("Space"), self, activated=self.player.toggle_play_pause)
-        QShortcut(QKeySequence("PgUp"), self, activated=self._play_previous_track)
-        QShortcut(QKeySequence("PgDown"), self, activated=self._play_next_track)
-        QShortcut(QKeySequence("Up"), self, activated=lambda: self._adjust_volume_by_key(True))
-        QShortcut(QKeySequence("Down"), self, activated=lambda: self._adjust_volume_by_key(False))
-        QShortcut(QKeySequence("Left"), self, activated=lambda: self._seek_by_seconds(-5.0))
-        QShortcut(QKeySequence("Right"), self, activated=lambda: self._seek_by_seconds(+5.0))
+        callbacks = self._shortcut_callbacks()
+        for shortcut in self._interface_shortcut_objects:
+            shortcut.setEnabled(False)
+            shortcut.deleteLater()
+        self._interface_shortcut_objects.clear()
+        values = merge_shortcuts(
+            self.controller.settings.interface_shortcuts,
+            default_interface_shortcuts(),
+        )
+        for action_id, sequence_text in values.items():
+            callback = callbacks.get(action_id)
+            if not sequence_text or callback is None:
+                continue
+            shortcut = QShortcut(QKeySequence(sequence_text), self, activated=callback)
+            shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            self._interface_shortcut_objects.append(shortcut)
         esc = QShortcut(QKeySequence("Esc"), self, activated=self._clear_search_by_esc)
         esc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._interface_shortcut_objects.append(esc)
+        self._refresh_global_hotkeys()
+
+    def _shortcut_callbacks(self) -> dict[str, object]:
+        return {
+            "play_pause": self.player.toggle_play_pause,
+            "previous_track": self._play_previous_track,
+            "next_track": self._play_next_track,
+            "volume_up": lambda: self._adjust_volume_by_key(True),
+            "volume_down": lambda: self._adjust_volume_by_key(False),
+            "seek_backward": lambda: self._seek_by_seconds(-5.0),
+            "seek_forward": lambda: self._seek_by_seconds(+5.0),
+            "toggle_favorite": self._toggle_current_favorite,
+            "copy_song_info": self.action_copy_song_info.trigger,
+            "save_stats": self.action_save_stats.trigger,
+        }
+
+    def _refresh_global_hotkeys(self) -> None:
+        self._global_hotkey_manager.unregister_all()
+        if not self.controller.settings.global_shortcuts_enabled:
+            return
+        values = merge_shortcuts(
+            self.controller.settings.global_shortcuts,
+            default_global_shortcuts(),
+        )
+        errors = self._global_hotkey_manager.register(values, self._shortcut_callbacks())
+        if errors:
+            self.statusBar().showMessage("；".join(errors), 6000)
+
+    def nativeEvent(self, event_type, message):
+        if self._global_hotkey_manager.handle_native_event(event_type, message):
+            return True, 0
+        return super().nativeEvent(event_type, message)
 
     def _on_search_text_changed(self, _text: str) -> None:
         """

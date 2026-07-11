@@ -37,6 +37,7 @@ from app.services.library_service import ALL_SONGS_ID, FAVORITES_ID
 from app.services.player_service import PlayMode
 from app.ui.playlist_dialog import PlaylistDialog
 from app.ui.settings_dialog import SettingsDialog
+from app.ui.shortcut_settings_dialog import ShortcutSettingsDialog
 from app.ui.theme import APP_STYLE_DARK, APP_STYLE_LIGHT
 from app.ui.main_window_helpers import (
     MultiHintStatusBar,
@@ -1443,6 +1444,8 @@ class MainWindowPlaybackMixin:
         返回值：
         None: 此方法不返回任何值。
         """
+        if hasattr(self, "_bind_shortcuts"):
+            self._bind_shortcuts()
         # 设置单曲循环模式，将settings中的属性转换为布尔值，并启用或禁用
         self.player.set_single_loop_mode_enabled(bool(getattr(settings, "enable_single_loop_mode", True)))
         # 设置播放列表循环模式，将settings中的属性转换为布尔值，并启用或禁用
@@ -1648,3 +1651,10 @@ class MainWindowPlaybackMixin:
         else:
             tip = "设置已保存"  # 否则，使用简单提示消息
         self.statusBar().showMessage(tip, 6000)  # 在状态栏显示提示消息，持续6000毫秒
+
+    def _open_shortcut_settings_dialog(self) -> None:
+        dialog = ShortcutSettingsDialog(self.controller.settings, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        self.controller.update_settings(dialog.apply_to_settings())
+        self.statusBar().showMessage("按键设置已保存", 3000)

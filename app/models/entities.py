@@ -274,6 +274,12 @@ class Settings:
     """启动时检查歌曲文件是否存在"""
     copy_song_info_enabled: bool = True
     """是否允许复制当前歌曲信息"""
+    global_shortcuts_enabled: bool = True
+    """是否启用全局快捷键"""
+    interface_shortcuts: dict[str, str] = field(default_factory=dict)
+    """播放器界面内快捷键"""
+    global_shortcuts: dict[str, str] = field(default_factory=dict)
+    """系统全局快捷键"""
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典格式，用于序列化。
@@ -314,6 +320,9 @@ class Settings:
             "max_window_height": int(self.max_window_height),
             "startup_file_check": bool(self.startup_file_check),
             "copy_song_info_enabled": bool(self.copy_song_info_enabled),
+            "global_shortcuts_enabled": bool(self.global_shortcuts_enabled),
+            "interface_shortcuts": dict(self.interface_shortcuts),
+            "global_shortcuts": dict(self.global_shortcuts),
         }
 
     @classmethod
@@ -374,6 +383,9 @@ class Settings:
             max_window_height=max_window_height,
             startup_file_check=bool(data.get("startup_file_check", True)),
             copy_song_info_enabled=bool(data.get("copy_song_info_enabled", True)),
+            global_shortcuts_enabled=bool(data.get("global_shortcuts_enabled", True)),
+            interface_shortcuts=dict(data.get("interface_shortcuts", {})) if isinstance(data.get("interface_shortcuts", {}), dict) else {},
+            global_shortcuts=dict(data.get("global_shortcuts", {})) if isinstance(data.get("global_shortcuts", {}), dict) else {},
         )
 
 
