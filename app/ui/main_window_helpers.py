@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 """MainWindow 的可复用辅助组件与绘制工具。
 

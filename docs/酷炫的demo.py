@@ -1,4 +1,4 @@
-﻿
+
 """
 Windows 任务栏进度条 Demo
 依赖: PySide6, comtypes

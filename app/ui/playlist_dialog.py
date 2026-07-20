@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 """歌单管理对话框。
 
@@ -7,12 +7,14 @@
 - 歌单复制和合并操作
 - 导入音频文件夹和歌单文件
 - 设置当前播放歌单
+- 导出列表中任意选中的歌单（包括“全部歌曲”、“我喜欢”或用户自建歌单）
 
 界面特点：
-- 左侧列表显示所有歌单（包括"全部歌曲"）
+- 左侧列表显示所有歌单（包括“全部歌曲”）
 - 右侧操作按钮提供各类管理功能
 - 支持文件夹批量导入和单个文件导入
 - 提供歌单数据导入导出功能
+- 打开对话框时默认选中当前活跃歌单，便于直接操作或导出
 
 与AppController的交互：
 - 所有歌单操作都委托给AppController处理
@@ -41,18 +43,20 @@ from app.services.library_service import ALL_SONGS_ID, FAVORITES_ID
 
 class PlaylistDialog(QDialog):
     """歌单管理对话框。
-    
+
     核心功能：
     - 显示所有歌单列表，标识当前活跃歌单
     - 创建新文件夹名称的空歌单
-    - 重命名现有歌单（不可重命名"全部歌曲"）
+    - 重命名现有歌单（不可重命名“全部歌曲”）
     - 删除用户创建的歌单
     - 复制歌单结构和内容
     - 合并多个歌单内容
     - 导入本地文件夹中的音频文件
     - 导入外部歌单文件（.muse_playlist.json格式）
     - 快速设置当前播放歌单
-    
+    - 导出列表中任意选中的歌单（不依赖主窗口当前播放歌单或搜索状态）
+    - 打开对话框时默认选中当前活跃歌单
+
     架构设计：
     - 纯UI层，所有业务逻辑委托给AppController
     - 支持与主窗口的模态/非模态交互
@@ -80,15 +84,16 @@ class PlaylistDialog(QDialog):
         创建的界面包含以下组件：
         - 顶部：功能描述标签，说明对话框用途
         - 中间：歌单列表，显示所有可用歌单及其曲目数量
-        - 下部第一行：歌单管理按钮（新建、重命名、删除、复制、合并）
-        - 下部第二行：导入和设置按钮（设为当前、导入文件夹、导入歌单文件、关闭）
-        
+        - 下部第一行：歌单管理按钮（新建、导入歌单文件、重命名、删除）
+        - 下部第二行：歌单操作按钮（设为当前、复制当前歌单、将当前添加到歌单）
+        - 下部第三行：导入与导出按钮（向当前导入文件夹、向当前导入歌曲文件、导出选中歌单、关闭）
+
         所有按钮都连接到相应的事件处理方法。
         """
         root = QVBoxLayout(self)
 
         # 功能描述标签
-        desc = QLabel("管理歌单、导入音频与歌单文件，并支持导出当前歌单。")
+        desc = QLabel("管理歌单、导入音频与歌单文件，并支持导出列表中选中的歌单。")
         desc.setObjectName("CaptionLabel")
         root.addWidget(desc)
 
@@ -114,21 +119,22 @@ class PlaylistDialog(QDialog):
         self.btn_set_active = QPushButton("设为当前")
         self.btn_copy = QPushButton("复制当前歌单")
         self.btn_merge = QPushButton("将当前添加到歌单")
-        self.btn_export = QPushButton("导出当前歌单")
         row2.addWidget(self.btn_set_active)
         row2.addWidget(self.btn_copy)
         row2.addWidget(self.btn_merge)
-        row2.addWidget(self.btn_export)
+        row2.addStretch(1)
         root.addLayout(row2)
 
         # 第三行操作按钮
         row3 = QHBoxLayout()
         self.btn_import_folder = QPushButton("向当前导入文件夹")
         self.btn_import_files = QPushButton("向当前导入歌曲文件")
+        self.btn_export = QPushButton("导出选中歌单")
         self.btn_close = QPushButton("关闭")
         self.btn_close.setObjectName("GhostButton")
         row3.addWidget(self.btn_import_folder)
         row3.addWidget(self.btn_import_files)
+        row3.addWidget(self.btn_export)
         row3.addStretch(1)  # 弹性空间，将关闭按钮推到右侧
         row3.addWidget(self.btn_close)
         root.addLayout(row3)
@@ -147,17 +153,19 @@ class PlaylistDialog(QDialog):
 
     def reload(self) -> None:
         """刷新歌单列表显示。
-        
+
         重新加载所有歌单并更新列表显示，包括：
         - 清空当前列表
         - 获取最新的歌单数据
         - 显示歌单名称和曲目数量
         - 标识当前活跃的歌单
         - 为每个列表项设置歌单ID数据
+        - 默认选中当前活跃的歌单，便于用户直接对其进行操作或导出
         """
         self.list_widget.clear()
         active_id = self.controller.library_service.active_playlist_id
-        for playlist in self.controller.library_service.list_playlists():
+        active_row = -1
+        for idx, playlist in enumerate(self.controller.library_service.list_playlists()):
             if playlist.id == ALL_SONGS_ID:
                 display_name = "全部歌曲"
             elif playlist.id == FAVORITES_ID:
@@ -167,9 +175,13 @@ class PlaylistDialog(QDialog):
             label = f"{display_name} ({len(playlist.track_ids)})"
             if playlist.id == active_id:
                 label = f"{label}  [当前]"
+                active_row = idx
             item = QListWidgetItem(label)
             item.setData(0x0100, playlist.id)
             self.list_widget.addItem(item)
+        # 默认选中当前活跃的歌单，避免用户打开对话框后点击按钮无反馈
+        if active_row >= 0:
+            self.list_widget.setCurrentRow(active_row)
 
     def _selected_playlist_id(self) -> str | None:
         """获取当前选中的歌单ID。
@@ -386,10 +398,10 @@ class PlaylistDialog(QDialog):
         self.reload()
 
     def _export_playlist_file(self) -> None:
-        """将当前选中的歌单导出为一个文件。
+        """将列表中选中的歌单导出为一个文件。
 
-        此方法会获取用户当前选中的歌单ID，让用户选择一个目录，并将歌单数据导出为文件。
-        如果未选中歌单或未选择目录，操作将中止。导出过程中的任何异常都会被捕获并提示用户。
+        基于列表当前选中项导出对应歌单（包括“全部歌曲”、“我喜欢”或任意用户歌单），
+        不依赖主窗口的“当前播放歌单”或搜索状态。若未选中任何歌单，会弹出提示引导用户先选择。
 
         Args:
             self: 实例自身。
@@ -397,10 +409,11 @@ class PlaylistDialog(QDialog):
         Returns:
             None: 此方法不返回任何值。
         """
-        # 获取当前选中的歌单ID
+        # 获取列表中当前选中的歌单ID
         playlist_id = self._selected_playlist_id()
-        # 如果没有选中任何歌单，则直接返回，不执行后续操作
+        # 如果没有选中任何歌单，提示用户先选择，避免按钮点击无反馈
         if not playlist_id:
+            QMessageBox.information(self, "提示", "请先在列表中选择要导出的歌单。")
             return
         # 弹出一个文件夹选择对话框，让用户选择导出目标目录
         out_dir = QFileDialog.getExistingDirectory(self, "选择导出目录")

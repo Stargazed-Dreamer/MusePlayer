@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 """主窗口实现（富模式 + 简洁模式）。
 

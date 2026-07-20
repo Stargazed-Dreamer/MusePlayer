@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 """MainWindow 播放/歌单/歌词/菜单相关 mixin。
 

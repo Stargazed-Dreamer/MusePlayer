@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 """MainWindow 窗口行为与交互相关 mixin。
 
