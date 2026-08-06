@@ -1,17 +1,36 @@
+# Python 字节码与缓存
 **/__pycache__/
+*.py[cod]
+
+# 虚拟环境与构建产物
 .venv
 .build
+
+# 工具缓存
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.cache/
+
+# 测试素材目录（音频文件、歌词等，不纳入版本控制）
 test*
 _library_test_*
+
+# 日志文件
 *.log
 
 # Agent 配置（含密钥）
 config.toml
 
-# 运行时数据
+# 运行时数据（JSON 持久化，运行时生成）
 data/
 
-# 临时文件
+# 临时文件与目录
 temp/
 output/
 input/
+
+# 根目录散落的调试/临时文件（不应入库）
+crash.txt
+todo.txt
+*.muse_stats.json

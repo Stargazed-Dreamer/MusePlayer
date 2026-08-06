@@ -1,5 +1,9 @@
 # MusePlayer 架构设计（PySide6 版）
 
+> **注意**：本文档为早期架构设计，内容较基础。
+> 更完整、更详尽的架构文档请见 [architecture_design_cn.md](./architecture_design_cn.md)（含 Mermaid 流程图、导入流程、播放流程、统计设计、UI 交互等 11 个章节）。
+> 本文件保留用于历史参考，新增内容请直接更新 `architecture_design_cn.md`。
+
 ## 1. 目标与约束
 - 复用现有 `core.PyAVPlayerCore` 作为底层播放内核，不改其线程模型。
 - UI 使用 PySide6，视觉风格偏 Web 化（圆角卡片、层次阴影、变量化配色）。

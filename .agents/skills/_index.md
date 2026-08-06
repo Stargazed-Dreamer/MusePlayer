@@ -18,6 +18,9 @@ description: >
 | **library-manage** | 导入、导入文件夹、导入歌单、新建歌单、删除歌单、曲库管理、歌单管理 | 运行中的 MusePlayer 实例 | 操作结果 JSON |
 | **skill-creator** | 创建skill、新建skill、写个skill、优化skill | 无 | 新 Skill 文件 |
 | **neat-freak** | 同步一下、整理文档、整理一下、收尾、/sync | 无 | 更新后的文档 |
+| **stats-export** | 导出统计、播放统计、统计导出、导出播放记录、muse_stats | 运行中的 MusePlayer 实例或 PlaybackStatsService | .muse_stats.json 文件 |
+| **playlist-export** | 导出歌单、歌单导出、备份歌单、导出播放列表 | 运行中的 MusePlayer 实例或 LibraryService | musearc_playlist_export_v2 JSON 文件 |
+| **build-release** | 打包、构建、发版、发布新版本、build、release | Python 3.12+、requirements.txt | .build/ 下的便携式运行时包 |
 
 ## 使用规则
 

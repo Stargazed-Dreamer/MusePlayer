@@ -16,13 +16,12 @@
 - [ ] 如果新增/修改了 Skill，是否在 `_index.md` 中注册/更新？
 - [ ] 如果发现了新的坑或陷阱，是否写入 `AGENTS.md` 关键约束？
 - [ ] 如果修改了 TCP 控制协议（新增/修改命令），是否更新 `player-control.md` 或 `library-manage.md`？
-- [ ] 如果修改了配置项，是否更新 `config.example.toml`？
+- [ ] 如果修改了配置项，是否同步更新 `app/models/entities.py` 的 `Settings` 模型与 `app/ui/settings_dialog.py`？（项目使用 `data/settings.json`，无 TOML 配置模板）
 
 ## 配置变更
 
-- [ ] 如果新增了配置项，是否在 `Settings` 模型和设置对话框中同步？
-- [ ] 如果新增了配置项，是否在 `config.example.toml` 中添加模板？
-- [ ] 配置默认值是否合理？
+- [ ] 如果新增了配置项，是否在 `Settings` 模型（`app/models/entities.py`）和设置对话框（`app/ui/settings_dialog.py`）中同步？
+- [ ] 配置默认值是否合理？（参考 `docs/architecture_design_cn.md` 的 Settings 字段一览表）
 
 ## Git
 

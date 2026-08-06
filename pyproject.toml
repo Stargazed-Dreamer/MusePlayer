@@ -1,0 +1,113 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "museplayer"
+version = "0.5.5"  # 与 app/version.py 的 APP_VERSION 保持一致
+description = "基于 PySide6 + PyAV 的本地音乐播放器桌面应用"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.12"
+authors = [{name = "MusePlayer Contributors"}]
+keywords = ["music-player", "pyside6", "pyav", "audio", "desktop"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Multimedia :: Sound/Audio :: Players",
+]
+dependencies = [
+    "PySide6>=6.7",
+    "numpy>=1.26",
+    "av>=12.0",
+    "sounddevice>=0.4.6",
+    "mutagen>=1.47",
+    "comtypes>=1.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+    "pytest-qt>=4.4",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/museplayer/museplayer"
+"Bug Tracker" = "https://github.com/museplayer/museplayer/issues"
+
+[tool.setuptools]
+# 项目非标准布局，使用 py_modules 和 packages 显式指定
+# 实际上本项目不通过 pip install 分发，pyproject.toml 主要用于工具配置
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = [".build", ".venv", "testFile", "docs/酷炫的demo.py"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+]
+ignore = [
+    "E501",  # 行长度由 formatter 管理
+    "B008",  # 函数调用默认参数（PySide6 Signal 常用）
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "core"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "."
+packages = ["app", "core"]
+# 渐进式类型检查：先宽松，后续逐步收紧
+ignore_missing_imports = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = false
+no_implicit_optional = true
+check_untyped_defs = false  # 先不强制检查未注解函数
+# 排除路径
+exclude = [
+    "\\.build/",
+    "\\.venv/",
+    "testFile/",
+    "docs/",
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+markers = [
+    "slow: 标记较慢的测试",
+    "integration: 需要实际音频设备的集成测试",
+]

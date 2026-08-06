@@ -15,8 +15,8 @@ MusePlayer 使用 PyAV 作为底层音频解码内核，sounddevice 作为音频
 
 - **语言/框架**：Python 3.12 + PySide6 6.7+
 - **核心依赖**：PyAV>=12.0（音频解码）、sounddevice>=0.4.6（音频输出）、numpy>=1.26（PCM 数据）、mutagen>=1.47（元数据）、comtypes>=1.4（Windows 任务栏）
-- **构建工具**：无（纯 Python，pip install）
-- **部署方式**：本地桌面应用，PyInstaller 打包（build.bat）
+- **构建工具**：tools/export_build.py（嵌入式 Python + PySide6 模块裁剪，非 PyInstaller）
+- **部署方式**：本地桌面应用，便携式运行时包打包（`build.bat` → `tools/export_build.py`）
 
 ## 启动方式
 
@@ -71,6 +71,16 @@ start.bat
 ```
 MusePlayer/
 ├── main.py                   # 应用入口（崩溃兜底 + Qt 启动）
+├── start.bat                 # 开发启动脚本（.venv\Scripts\python main.py）
+├── build.bat                 # 打包入口（调用 tools/export_build.py）
+├── icon.ico                  # 应用图标
+├── requirements.txt          # 依赖清单（pip install -r）
+├── pyproject.toml            # 项目元数据 + ruff/mypy 配置
+├── .pre-commit-config.yaml   # 预提交钩子（ruff + ruff-format）
+├── LICENSE                   # MIT 许可证
+├── README.md                 # 项目说明（面向用户/贡献者）
+├── CHANGELOG.md              # 版本变更日志
+├── CONTRIBUTING.md           # 贡献指南
 ├── core/                     # 底层音频播放内核
 │   ├── core.py               # PyAVPlayerCore（解码 + 播放控制）
 │   ├── output.py             # AudioOutputBackend 接口 + SoundDevice 实现
@@ -102,14 +112,25 @@ MusePlayer/
 │   │   ├── shortcut_settings.py # 快捷键操作与默认值
 │   │   ├── global_hotkeys.py # Windows 全局快捷键注册
 │   │   └── theme.py          # QSS 主题（日间/夜间）
-│   ├── utils/                # 工具（日志配置）
+│   ├── utils/                # 工具
+│   │   └── logging_setup.py  # 日志配置（文件轮转、会话复用）
 │   └── version.py            # 版本号
-├── data/                     # 运行时数据（JSON 持久化）
-├── docs/                     # 架构文档、协议文档
+├── tests/                    # 自动化测试（pytest）
+│   ├── conftest.py           # 测试 fixtures
+│   ├── test_random_order.py  # 随机播放算法测试
+│   ├── test_entities.py      # 数据模型测试
+│   ├── test_stores.py        # 持久化存储测试
+│   ├── test_stats_service.py # 播放统计服务测试
+│   └── test_control_server.py# 控制协议 dispatch 测试
+├── data/                     # 运行时数据（JSON 持久化，gitignore）
+├── docs/                     # 架构文档、协议文档、格式规范
 ├── tools/                    # 构建脚本
+│   └── export_build.py       # 嵌入式 Python + PySide6 裁剪打包
 ├── .agents/skills/           # Skill 定义文件
 │   ├── _index.md             # Skill 索引（入口）
 │   └── *.md                  # 各 Skill 定义
+├── .github/workflows/        # CI/CD
+│   └── ci.yml                # lint + 类型检查 + 测试
 ├── .trae/rules/              # AI 规则
 │   └── project_rules.md      # 功能变更检查清单
 └── .gitignore
@@ -126,10 +147,16 @@ MusePlayer/
 ## 测试
 
 ```bash
-# 项目当前无自动化测试框架
-# 验证方式：启动应用后通过运行时控制接口发送 ping 命令
+# 自动化测试（pytest）
+pytest tests/ -v
+
+# 运行时控制接口验证（启动应用后）
 python -c "import socket,json;s=socket.socket();s.connect(('127.0.0.1',43121));s.sendall(json.dumps({'cmd':'ping'}).encode()+b'\n');print(s.recv(1024).decode())"
 ```
+
+- **单元测试**：`tests/` 目录下覆盖数据模型、持久化存储、随机播放算法、播放统计、控制协议分发
+- **运行时验证**：启动应用后通过 TCP 控制接口发送 `ping` 命令验证服务可用性
+- **CI**：`.github/workflows/ci.yml` 自动执行 ruff 检查 + pytest
 
 ## 功能变更检查清单
 
