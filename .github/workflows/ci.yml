@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [main, master]
+    tags: ["v*"]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   lint:
@@ -103,3 +105,53 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           python -c "import app.services.app_controller; import app.runtime.control_server; import core.core; print('import OK')"
+
+  build-portable:
+    # Windows 便携包构建：打 v* tag 时自动触发，也支持手动触发
+    # 产出便携式运行时包并上传到 GitHub Release
+    runs-on: windows-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write  # 上传 Release 资源需要写权限
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 构建便携包
+        run: python tools/export_build.py
+
+      - name: 打包为 zip
+        id: pack
+        shell: pwsh
+        run: |
+          $bundle = Get-ChildItem -Directory .build/portable_runtime_v* | Select-Object -First 1
+          $zipName = "$($bundle.Name)_windows.zip"
+          Compress-Archive -Path "$($bundle.FullName)/*" -DestinationPath $zipName -Force
+          "zip_path=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "zip_name=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Produced: $zipName"
+
+      - name: 上传构建产物（artifact）
+        uses: actions/upload-artifact@v4
+        with:
+          name: MusePlayer-portable-windows
+          path: ${{ env.zip_name }}
+          retention-days: 14
+
+      - name: 上传到 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.zip_name }}
+          generate_release_notes: true
