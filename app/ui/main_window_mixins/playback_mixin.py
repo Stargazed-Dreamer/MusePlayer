@@ -1279,11 +1279,16 @@ class MainWindowPlaybackMixin:
             self.statusBar().showMessage("歌曲文件不存在，无法定位", 3000)
             return
         try:
-            # Keep /select and path as separate args to avoid parser issues with unicode/comma paths.
-            subprocess.Popen(["explorer.exe", "/select,", str(source)])
-            self.statusBar().showMessage("已在资源管理器定位文件", 2500)
+            # 按平台分发文件管理器定位命令，Keep /select and path as separate args to avoid parser issues.
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer.exe", "/select,", str(source)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", str(source)])
+            else:  # Linux / 其他：打开所在目录
+                subprocess.Popen(["xdg-open", str(source.parent)])
+            self.statusBar().showMessage("已在文件管理器定位文件", 2500)
         except Exception as exc:
-            self.statusBar().showMessage(f"打开资源管理器失败: {exc}", 5000)
+            self.statusBar().showMessage(f"打开文件管理器失败: {exc}", 5000)
     def _on_speed_changed(self, index: int) -> None:
         """处理播放速度选择变化事件。
         

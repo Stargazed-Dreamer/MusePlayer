@@ -280,6 +280,10 @@ def main() -> int:
     app.setStyle("Fusion")  # 设置UI风格为跨平台一致的Fusion样式
     if sys.platform.startswith("win"):  # Windows系统下设置中文字体
         app.setFont(QFont("Microsoft YaHei", 9))
+    elif sys.platform == "darwin":  # macOS 使用苹方
+        app.setFont(QFont("PingFang SC", 13))
+    else:  # Linux 使用思源黑体
+        app.setFont(QFont("Noto Sans CJK SC", 10))
     project_root = Path(__file__).resolve().parent  # 获取项目根目录路径
     icon_path = project_root / "icon.ico"  # 应用图标文件路径
     if icon_path.exists():  # 如果图标文件存在则设置应用图标

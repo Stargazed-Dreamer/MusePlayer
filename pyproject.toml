@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "museplayer"
-version = "0.5.5"  # 与 app/version.py 的 APP_VERSION 保持一致
+version = "1.0.0"  # 与 app/version.py 的 APP_VERSION 保持一致
 description = "基于 PySide6 + PyAV 的本地音乐播放器桌面应用"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -17,6 +17,8 @@ classifiers = [
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3 :: Only",
@@ -28,7 +30,7 @@ dependencies = [
     "av>=12.0",
     "sounddevice>=0.4.6",
     "mutagen>=1.47",
-    "comtypes>=1.4",
+    "comtypes>=1.4; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -42,8 +44,8 @@ dev = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/museplayer/museplayer"
-"Bug Tracker" = "https://github.com/museplayer/museplayer/issues"
+"Homepage" = "https://github.com/Stargazed-Dreamer/MusePlayer"
+"Bug Tracker" = "https://github.com/Stargazed-Dreamer/MusePlayer/issues"
 
 [tool.setuptools]
 # 项目非标准布局，使用 py_modules 和 packages 显式指定

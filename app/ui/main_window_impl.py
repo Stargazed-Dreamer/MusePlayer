@@ -64,6 +64,17 @@ from app.ui.main_window_helpers import (
     _make_rich_title_icon,
 )
 
+class NoWheelComboBox(QComboBox):
+    """禁用滚轮切换选项的下拉框。
+
+    鼠标悬停时滚动滚轮不会改变当前选中项，避免误操作；
+    仍可通过点击展开列表进行选择。
+    """
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
 class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow):
     """播放器主窗口。
 
@@ -478,7 +489,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
 
         side_title = QLabel("当前歌单")
         side_title.setObjectName("MetaLabel")
-        self.playlist_combo = QComboBox()
+        self.playlist_combo = NoWheelComboBox()
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("搜索当前歌单（标题 / 歌手 / 专辑）")
         self.search_clear_btn = QToolButton(self.search_edit)
@@ -609,6 +620,9 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
 
         self.menuBar().setCornerWidget(self.menu_hint_widget, Qt.Corner.TopRightCorner)  # 将提示部件设置到菜单栏右上角
         self.random_state_label.hide()  # 隐藏随机状态标签
+        # 简洁模式下菜单栏需要支持拖动窗口，安装事件过滤器
+        self.menuBar().installEventFilter(self)
+        self.menu_hint_widget.installEventFilter(self)
 
         for menu in (menu_file,):  # 遍历菜单列表（当前只包含文件菜单）
             menu.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)  # 启用样式背景

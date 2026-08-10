@@ -534,20 +534,19 @@ class LibraryService:
 
     def create_playlist(self, name: str) -> Playlist:
         """创建新歌单。
-        
-        创建指定名称的歌单并设置为当前活动歌单。
+
+        仅创建指定名称的歌单，不切换当前活动歌单。
         歌单名称会自动清理空白并补全默认值。
-        
+
         Args:
             name: 歌单名称
-            
+
         Returns:
             新创建的Playlist对象
         """
         clean_name = (name or "").strip() or "新建歌单"
         playlist = Playlist(id=new_id(), name=clean_name)
         self.playlists[playlist.id] = playlist
-        self.active_playlist_id = playlist.id
         self.save()
         logger.info("创建歌单: %s (%s)", playlist.name, playlist.id)
         return playlist

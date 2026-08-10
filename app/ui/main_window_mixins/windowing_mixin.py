@@ -858,6 +858,32 @@ class MainWindowWindowingMixin:
                     self._drag_offset = None
                     return True
 
+        # 简洁模式下菜单栏支持拖动窗口（避开菜单项和角部提示控件中的交互子控件）
+        menu_bar = self.menuBar() if hasattr(self, "menuBar") else None
+        hint_widget = getattr(self, "menu_hint_widget", None)
+        if self._compact_mode and (watched is menu_bar or watched is hint_widget) and not self._compact_locked:
+            local_pos = event.position().toPoint()
+            on_action = False
+            if watched is menu_bar:
+                for action in menu_bar.actions():
+                    if menu_bar.actionGeometry(action).contains(local_pos):
+                        on_action = True
+                        break
+            if not on_action and not self._is_interactive_widget_at(
+                watched.mapToParent(local_pos)
+            ):
+                if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                    self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                    return True
+                elif event.type() == QEvent.Type.MouseMove and (event.buttons() & Qt.MouseButton.LeftButton):
+                    if self._drag_offset is not None:
+                        self.move(event.globalPosition().toPoint() - self._drag_offset)
+                        return True
+                elif event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+                    if self._drag_offset is not None:
+                        self._drag_offset = None
+                        return True
+
         if watched is getattr(self, "search_edit", None) and event.type() == QEvent.Type.Resize:
             self._position_search_clear_button()
             return False

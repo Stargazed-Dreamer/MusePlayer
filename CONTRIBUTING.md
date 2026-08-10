@@ -5,7 +5,9 @@
 ## 开发环境搭建
 
 - Python 3.12 或更高版本
-- Windows 平台（项目使用 comtypes 进行 Windows 任务栏集成、全局快捷键等）
+- 跨平台支持：Windows / Linux / macOS
+  - Windows：任务栏进度、全局快捷键等系统集成功能可用
+  - Linux/macOS：系统集成功能自动降级，核心播放功能正常
 
 ```bash
 # 克隆仓库后安装运行依赖
@@ -13,6 +15,13 @@ pip install -r requirements.txt
 
 # 安装开发依赖（ruff / pytest / mypy 等）
 pip install -e ".[dev]"
+```
+
+Linux 还需安装 PortAudio 系统依赖：
+
+```bash
+sudo apt-get install -y libportaudio2  # Debian/Ubuntu
+# 或 sudo dnf install -y portaudio  # Fedora
 ```
 
 启动应用进行验证：

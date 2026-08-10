@@ -239,16 +239,6 @@ TBPF_PAUSED = 0x00000004
 CLSID_TASKBAR_LIST = "{56FDF344-FD6D-11d0-958A-006097C9A090}"
 IID_ITASKBAR_LIST3 = "{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}"
 
-WM_NCHITTEST = 0x0084
-HTLEFT = 10
-HTRIGHT = 11
-HTTOP = 12
-HTTOPLEFT = 13
-HTTOPRIGHT = 14
-HTBOTTOM = 15
-HTBOTTOMLEFT = 16
-HTBOTTOMRIGHT = 17
-
 
 if comtypes is not None and COMMETHOD is not None and GUID is not None:
     class ITaskbarList3(IUnknown):
@@ -2191,40 +2181,65 @@ def _make_sidebar_toggle_icon(*, collapsed: bool, color: QColor | str = "#f4f4f4
 
 
 def _make_lock_icon(locked: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
-    """创建锁图标.
+    """创建锁头图标。
+
+    锁定态整体使用强调色发亮（与 theme.py 的 ACCENT_STRONG 一致），
+    未锁定态使用常规控制色，二者一眼可辨。
 
     Args:
-        locked: True为锁定状态，False为解锁状态。
-        color: 图标颜色，默认为"#f4f4f4"。
+        locked: True 为已锁定（激活发亮），False 为未锁定（默认）。
+        color: 未激活时的图标颜色。
 
     Returns:
-        QIcon: 锁图标。
+        QIcon: 锁头图标。
     """
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(pix)
     painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor(color), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    icon_color = QColor("#81e98b") if locked else QColor(color)
+    pen = QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
 
-    painter.drawRoundedRect(QRectF(7, 11, 10, 8), 2.0, 2.0)
+    # 锁体（圆角矩形）
+    painter.drawRoundedRect(QRectF(6.0, 11.0, 12.0, 8.5), 2.5, 2.5)
+
+    # 锁扣（U 形弧）：拉长弧线，两端正好嵌在锁体顶部
+    shackle = QRectF(7.5, 5.0, 9.0, 12.0)
     if locked:
-        painter.drawArc(7, 5, 10, 8, 0 * 16, 180 * 16)
-        painter.drawLine(12, 14, 12, 17)
+        # 闭合：上半弧形成穹顶
+        painter.drawArc(shackle, 0, 180 * 16)
+        # 锁孔（圆点 + 短竖线）强化"已锁"语义
+        painter.setBrush(icon_color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QRectF(10.9, 13.0, 2.2, 2.2))
+        painter.setPen(pen)
+        painter.drawLine(12.0, 15.0, 12.0, 17.0)
+        painter.setBrush(QColor(0, 0, 0, 0))
     else:
-        painter.drawArc(7, 5, 10, 8, 35 * 16, 250 * 16)
+        # 张开：以左端为轴抬起 28°，右臂轻微抬起，呈现"已开锁"姿态
+        pivot = shackle.bottomLeft()
+        painter.save()
+        painter.translate(pivot.x(), pivot.y())
+        painter.rotate(-28)
+        painter.translate(-pivot.x(), -pivot.y())
+        painter.drawArc(shackle, 0, 180 * 16)
+        painter.restore()
 
     painter.end()
     return QIcon(pix)
 
 
 def _make_pin_icon(pinned: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
-    """创建图钉图标.
+    """创建图钉（thumbtack）图标。
+
+    已固定态整体使用强调色发亮（与 theme.py 的 ACCENT_STRONG 一致），
+    未固定态使用常规控制色，二者一眼可辨。
 
     Args:
-        pinned: True为已固定状态，False为未固定状态。
-        color: 图标颜色，默认为"#f4f4f4"。
+        pinned: True 为已固定（激活发亮），False 为未固定（默认）。
+        color: 未激活时的图标颜色。
 
     Returns:
         QIcon: 图钉图标。
@@ -2234,19 +2249,28 @@ def _make_pin_icon(pinned: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
 
     painter = QPainter(pix)
     painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor(color), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    icon_color = QColor("#81e98b") if pinned else QColor(color)
+    pen = QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
 
-    painter.drawEllipse(QRectF(7.2, 3.6, 9.6, 4.8))
-    painter.drawLine(12, 8, 12, 16)
-    painter.drawLine(9, 10, 15, 10)
-    painter.drawLine(10, 13, 14, 13)
-    painter.drawLine(12, 16, 9.2, 20)
+    # 图钉头部（扁椭圆 thumb pad，实心）
+    painter.setBrush(icon_color)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.drawEllipse(QRectF(5.5, 2.5, 13.0, 5.5))  # 宽 13、高 5.5，明显扁平
 
-    if not pinned:
-        strike = QPen(QColor("#9aa69b"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-        painter.setPen(strike)
-        painter.drawLine(6, 18, 18, 6)
+    # 针杆（尖锐三角，向下汇聚到一点）
+    painter.setPen(pen)
+    painter.setBrush(QColor(0, 0, 0, 0))
+    needle = QPainterPath()
+    needle.moveTo(9.8, 7.8)
+    needle.lineTo(14.2, 7.8)
+    needle.lineTo(12.0, 19.5)
+    needle.closeSubpath()
+    painter.drawPath(needle)
+
+    if pinned:
+        # 已固定：针尖下方一道短横线，表示"已钉入"表面
+        painter.drawLine(8.0, 20.5, 16.0, 20.5)
 
     painter.end()
     return QIcon(pix)

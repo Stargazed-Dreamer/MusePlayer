@@ -3,4 +3,4 @@ numpy>=1.26
 av>=12.0
 sounddevice>=0.4.6
 mutagen>=1.47
-comtypes>=1.4
+comtypes>=1.4; sys_platform == "win32"

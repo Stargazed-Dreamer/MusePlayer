@@ -30,7 +30,12 @@ temp/
 output/
 input/
 
-# 根目录散落的调试/临时文件（不应入库）
+# 根目录散落的调试/临时文件（不应入库，但本地保留使用）
 crash.txt
 todo.txt
 *.muse_stats.json
+对话存档.txt
+*存档*.txt
+
+# 临时工作文档
+release_plan_draft.md

@@ -1,0 +1,29 @@
+# 默认自动处理换行（按平台）
+* text=auto
+
+# 跨平台脚本统一 LF
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+
+# Windows 专用脚本保持 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制文件
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.icns binary
+*.flac binary
+*.mp3 binary
+*.m4a binary
+*.wav binary
+*.ogg binary
+*.opus binary

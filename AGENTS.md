@@ -14,19 +14,23 @@ MusePlayer 使用 PyAV 作为底层音频解码内核，sounddevice 作为音频
 ## 技术栈
 
 - **语言/框架**：Python 3.12 + PySide6 6.7+
-- **核心依赖**：PyAV>=12.0（音频解码）、sounddevice>=0.4.6（音频输出）、numpy>=1.26（PCM 数据）、mutagen>=1.47（元数据）、comtypes>=1.4（Windows 任务栏）
+- **核心依赖**：PyAV>=12.0（音频解码）、sounddevice>=0.4.6（音频输出）、numpy>=1.26（PCM 数据）、mutagen>=1.47（元数据）、comtypes>=1.4（**仅 Windows**，任务栏进度，须以环境标记 `; sys_platform == 'win32'` 声明）
 - **构建工具**：tools/export_build.py（嵌入式 Python + PySide6 模块裁剪，非 PyInstaller）
 - **部署方式**：本地桌面应用，便携式运行时包打包（`build.bat` → `tools/export_build.py`）
 
 ## 启动方式
 
 ```bash
-# 方式1：直接运行
+# 方式1：直接运行（跨平台）
 python main.py
 
-# 方式2：批处理启动
-start.bat
+# 方式2：开发启动脚本
+start.bat        # Windows
+./start.sh       # Linux / macOS
 ```
+
+> 便携式运行时包（`build.bat` → `tools/export_build.py`）目前仅支持 Windows；
+> macOS / Linux 用户请使用 `pip install -r requirements.txt && python main.py`。
 
 ## 关键约束
 
@@ -65,6 +69,38 @@ start.bat
 
 - 项目使用 PySide6（Qt for Python），类型提示依赖 `from __future__ import annotations`
 - `data/` 目录下的 JSON 文件在运行时被修改，不要手动编辑正在运行的实例的数据文件
+
+### 隐私与公开发布
+
+> 项目已公开发布。所有提交进入仓库的内容都会被公开，维护时必须遵守以下隐私红线。
+
+- **绝不向仓库提交个人数据**：本地绝对路径、用户名、邮箱、手机号、密钥、Token、个人音乐库结构、对话/调试记录一律不得入库
+- **运行时数据走 `data/` 目录**：所有运行时生成的状态（session/library/settings/playback_stats/logs/crashlogs）只能落在已被 `.gitignore` 覆盖的 `data/` 目录下，**绝不**在项目根目录或其他位置生成数据文件
+- **崩溃/日志文件名固定**：`crash.txt`、`crashlog.log`、`*.log` 已被 gitignore；新增日志/转储文件必须使用 `.log` 后缀或显式加入 `.gitignore`
+- **开发笔记/对话存档不入库**：`todo.txt`、`对话存档.txt`、`*存档*.txt` 已被 gitignore；新增临时笔记请沿用相似命名或加入 gitignore
+- **测试素材不入库**：`testFile/`、`test*`、`_library_test_*` 已被 gitignore；测试音频/歌词只放这些目录
+- **导出产物及时清理**：根目录下的 `*.muse_stats.json`、`playback_stats.muse_stats.json` 等导出文件已被 gitignore，发布前应物理删除
+- **代码中绝不硬编码本机路径**：所有路径必须基于 `Path(__file__)`、`Settings` 字段或用户选择动态计算；`C:\Users\`、`/home/<user>`、`F:\codex\` 等绝对路径禁止出现在源码中
+- **错误堆栈可能泄露路径**：`crash.txt` / 日志中的 traceback 会暴露本机路径，这些文件必须留在 gitignore 之内
+- **新增依赖前检查是否携带个人配置**：例如某些库会在 `~/.config/` 写文件，文档中应说明
+- **公开前清单**：每次发布前确认 `data/`、`.build/`、`testFile/`、`*.log`、`crash.txt`、`todo.txt`、`*.muse_stats.json`、`对话存档.txt` 均已物理清理（即使已被 gitignore，避免打包误入）
+
+### 跨平台兼容性
+
+> 项目目标：Windows 一等公民，macOS / Linux 实验性支持。新代码必须避免不必要的平台绑定。
+
+- **平台专有代码必须加守卫**：任何调用 `ctypes.windll`、`winreg`、`comtypes`、`RegisterHotKey` 等 Windows 专有 API 的代码，必须包裹在 `if sys.platform.startswith("win"):` 内，或在模块顶部用 `try: import ... except ImportError: ... = None` 软导入
+- **平台专有依赖必须用环境标记**：`comtypes`、`pywin32` 等仅 Windows 的包，在 `requirements.txt` 和 `pyproject.toml` 中必须写为 `comtypes>=1.4; sys_platform == 'win32'`，禁止无条件依赖
+- **非 Windows 平台必须能启动**：缺失 Windows 专有模块时，应用应正常启动并自动降级（任务栏进度 no-op、全局快捷键返回提示），**绝不**抛 `ImportError` 崩溃
+- **路径处理统一用 `pathlib.Path` 或 `os.path.join`**：禁止硬编码 `\\` 分隔符；需要规范化时用 `replace("\\", "/")` 是允许的（双向兼容）
+- **调用外部程序必须按平台分发**：`subprocess.Popen(["explorer.exe", ...])` 这类调用必须先判断 `sys.platform`，Windows 用 `explorer.exe`、macOS 用 `open -R`、Linux 用 `xdg-open`
+- **中文字体按平台选择**：Windows→`Microsoft YaHei`、macOS→`PingFang SC`、Linux→`Noto Sans CJK SC`
+- **音频 hostapi 偏好不写死索引**：`core/output.py` 中"优先 WASAPI"应理解为"优先低延迟 hostapi"，注释/变量名不要写死 Windows 语义
+- **Windows 专有功能可保留专属实现**：任务栏进度（`ITaskbarList3`）、全局快捷键（`RegisterHotKey`）无跨平台等价物时，保留 Windows 实现 + 非 Windows 用 no-op / 提示即可，不必强行重写
+- **便携式打包保留 Windows 专用**：`tools/export_build.py` 的嵌入式 Python 方案是 Windows 专有设计，无需跨平台化；macOS / Linux 通过 `pip install` 运行
+- **新增 `.bat` 启动脚本时同步考虑 `.sh`**：跨平台入口脚本应成对提供
+- **`pyproject.toml` classifiers 维护三平台**：Windows / Linux / macOS 均应列出，避免被 PyPI 误判为 Windows-only
+- **死代码及时清理**：未使用的 Windows 常量（如 `WM_NCHITTEST`、`HTLEFT` 等）应删除，避免误导后续维护者以为是活跃绑定
 
 ## 项目结构
 
