@@ -1,5 +1,7 @@
 # Runtime Control Protocol
 
+> Protocol Version: 1.0 (defined in `app/version.py` `PROTOCOL_VERSION`)
+
 MusePlayer exposes a runtime control endpoint on `127.0.0.1:43121` by default.
 
 ## Transport

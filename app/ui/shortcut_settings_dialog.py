@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -8,10 +7,10 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QGridLayout,
     QHBoxLayout,
+    QKeySequenceEdit,
     QLabel,
     QMessageBox,
     QPushButton,
-    QKeySequenceEdit,
     QVBoxLayout,
 )
 
@@ -125,11 +124,9 @@ class ShortcutSettingsDialog(QDialog):
     def apply_to_settings(self) -> Settings:
         self._settings.global_shortcuts_enabled = self.global_enabled_check.isChecked()
         self._settings.interface_shortcuts = {
-            action_id: self._portable_text(editor)
-            for action_id, editor in self._interface_edits.items()
+            action_id: self._portable_text(editor) for action_id, editor in self._interface_edits.items()
         }
         self._settings.global_shortcuts = {
-            action_id: self._portable_text(editor)
-            for action_id, editor in self._global_edits.items()
+            action_id: self._portable_text(editor) for action_id, editor in self._global_edits.items()
         }
         return self._settings

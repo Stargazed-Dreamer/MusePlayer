@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import ctypes
 import sys
+from collections.abc import Callable
 from ctypes import wintypes
-from typing import Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence
-
 
 WM_HOTKEY = 0x0312
 MOD_ALT = 0x0001

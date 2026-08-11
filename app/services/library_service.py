@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """曲库服务层。
 
 核心职责：
@@ -9,13 +7,16 @@ from __future__ import annotations
 4. 支持按统一格式导出歌单（含播放统计），供后续数据库分析使用。
 """
 
+from __future__ import annotations
+
+import contextlib
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
-from pathlib import Path
 import time
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
 
 from app.models.entities import Playlist, Track, new_id
 from app.models.library_store import LibraryStore
@@ -69,22 +70,30 @@ class LibraryService:
 
     def load(self, *, quick: bool = False) -> None:
         """加载曲库数据。
-        
+
         执行曲库初始化流程：
         1. 从持久化存储加载基础数据
         2. 确保"全部歌曲"歌单存在
         3. 设置活动歌单（如果不存在则使用默认）
         4. 同步歌单与实际曲库数据
-        
+
         当 quick=True 时跳过耗时的磁盘检查（缺失文件检测、歌词路径清理、
         重复曲目检测），这些操作可通过 deferred_cleanup() 在后台执行。
-        
+
         这是应用启动时的关键初始化步骤，确保内存数据与磁盘数据的一致性。
         """
         tracks, playlists, active = self._store.load()
         self.load_preloaded(tracks, playlists, active, quick=quick)
 
-    def load_preloaded(self, tracks: dict[str, Track], playlists: dict[str, Playlist], active: str | None, indexes: tuple[dict[Path, Track], dict[str, Track]] | None = None, *, quick: bool = False) -> None:
+    def load_preloaded(
+        self,
+        tracks: dict[str, Track],
+        playlists: dict[str, Playlist],
+        active: str | None,
+        indexes: tuple[dict[Path, Track], dict[str, Track]] | None = None,
+        *,
+        quick: bool = False,
+    ) -> None:
         self.tracks = tracks
         self.playlists = playlists
         self._ensure_system_playlists()
@@ -112,10 +121,9 @@ class LibraryService:
             self._path_index, self._sha256_index = indexes
         logger.info("曲库加载完成: tracks=%s playlists=%s quick=%s", len(self.tracks), len(self.playlists), quick)
 
-
     def deferred_cleanup(self) -> None:
         """执行延迟的曲库清理操作（缺失文件检测、歌词路径清理、重复曲目检测）。
-        
+
         适用于在后台线程中运行，避免阻塞 UI 启动。
         如果检测到变更会自动保存并重建索引。
         """
@@ -132,41 +140,38 @@ class LibraryService:
     def _record_cleanup(self, *, item: str, reason: str) -> None:
         """
         记录数据清理操作，将清理事件写入日志和文件。
-    
+
         功能:
             - 检查是否启用数据维护日志记录
             - 构造清理事件描述文本
             - 通过标准日志记录器输出警告级别日志
             - 将带时间戳的清理记录追加到指定日志文件
-        
+
         参数:
             item (str): 被清理的数据项目标识
             reason (str): 清理原因说明
-        
+
         返回值:
             None: 此方法不返回任何值，仅执行记录操作
         """
         # 检查是否启用数据维护日志记录，未启用则直接返回
         if not self._data_maintenance_logging_enabled:
             return
-    
+
         # 构造清理事件描述文本
         text = f"数据清理: item={item} reason={reason}"
-    
-        try:
+
+        with contextlib.suppress(Exception):  # 日志记录失败时静默忽略异常，不影响主流程
             # 通过日志记录器输出警告级别日志
             logger.warning(text)
-        except Exception:
-            # 日志记录失败时静默忽略异常，不影响主流程
-            pass
-    
+
         try:
             # 确保日志文件父目录存在，不存在则自动创建
             self._cleanup_log_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
             # 生成当前时间戳，格式为年-月-日 时:分:秒
             stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
+
             # 以追加模式打开日志文件，使用UTF-8编码
             with self._cleanup_log_path.open("a", encoding="utf-8") as f:
                 # 写入带时间戳的清理记录并换行
@@ -180,10 +185,8 @@ class LibraryService:
         path_index: dict[Path, Track] = {}
         sha256_index: dict[str, Track] = {}
         for track in tracks.values():
-            try:
+            with contextlib.suppress(Exception):
                 path_index[Path(track.path).resolve()] = track
-            except Exception:
-                pass
             sha = str(getattr(track, "source_sha256", "") or "").strip().lower()
             if sha:
                 sha256_index[sha] = track
@@ -195,7 +198,7 @@ class LibraryService:
 
     def _drop_missing_tracks(self) -> bool:
         """清理曲库中指向不存在的文件的跟踪记录。
-        
+
         遍历所有曲目，检查文件路径是否存在，将不存在的文件记录移除。
         这是数据清理的重要步骤，防止播放时出现文件找不到的错误。
         """
@@ -258,10 +261,10 @@ class LibraryService:
 
     def _deduplicate_tracks(self) -> bool:
         """基于文件特征检测并合并重复曲目。
-        
+
         使用文件名、文件大小和时长构建唯一键值进行去重，
         保留最新添加的记录，更新歌单引用关系。
-        
+
         算法流程：
         1. 按时间戳排序，新添加的曲目优先保留
         2. 使用 (文件名, 文件大小, 时长) 作为去重键
@@ -317,13 +320,13 @@ class LibraryService:
     @staticmethod
     def _dedupe_key(track: Track) -> tuple[str, int, int]:
         """生成曲目的去重识别键。
-        
+
         基于文件名、文件大小和时长创建唯一标识，用于检测重复曲目。
         采用小写文件名以确保大小写不敏感的比较。
-        
+
         Args:
             track: Track对象
-            
+
         Returns:
             去重键 (小写文件名, 文件大小, 时长毫秒数)
             如果无法获取文件大小，返回-1
@@ -344,7 +347,7 @@ class LibraryService:
 
     def save(self) -> None:
         """持久化保存曲库数据。
-        
+
         保存所有曲目、歌单和当前活动歌单状态到存储层。
         """
         self._store.save(self.tracks, self.playlists, self.active_playlist_id)
@@ -352,15 +355,15 @@ class LibraryService:
     def _ensure_all_songs_playlist(self) -> None:
         """
         确保存储库中存在“全部歌曲”播放列表。
-    
+
         功能：
             检查播放列表集合中是否存在ID为ALL_SONGS_ID的播放列表。
             如果不存在，则创建一个名为"全部歌曲"的空播放列表并添加。
             如果已存在，则将其名称更新为"全部歌曲"。
-    
+
         参数：
             self (类实例): 调用方法的实例本身。
-    
+
         返回值：
             None: 该方法无返回值。
         """
@@ -375,7 +378,9 @@ class LibraryService:
     def _ensure_favorites_playlist(self) -> None:
         """确保收藏播放列表存在。如果不存在，则创建一个新的收藏播放列表；如果存在，则将其名称设置为“我喜欢”。参数：无。返回：None。"""
         if FAVORITES_ID not in self.playlists:  # 检查收藏播放列表是否不存在于self.playlists字典中
-            self.playlists[FAVORITES_ID] = Playlist(id=FAVORITES_ID, name="我喜欢", track_ids=[])  # 创建新的收藏播放列表并添加到字典
+            self.playlists[FAVORITES_ID] = Playlist(
+                id=FAVORITES_ID, name="我喜欢", track_ids=[]
+            )  # 创建新的收藏播放列表并添加到字典
             return  # 返回，因为新播放列表已创建完成
         self.playlists[FAVORITES_ID].name = "我喜欢"  # 如果已存在，则将播放列表名称重命名为“我喜欢”
 
@@ -464,10 +469,10 @@ class LibraryService:
 
     def get_playlist(self, playlist_id: str | None) -> Playlist:
         """获取指定ID的歌单，如果不存在则返回"全部歌曲"歌单。
-        
+
         Args:
             playlist_id: 歌单ID，None返回默认歌单
-            
+
         Returns:
             Playlist对象
         """
@@ -479,9 +484,9 @@ class LibraryService:
 
     def list_playlists(self) -> list[Playlist]:
         """获取所有歌单列表。
-        
+
         返回的列表以"全部歌曲"为首，其余歌单按名称字母序排序。
-        
+
         Returns:
             排序后的歌单列表
         """
@@ -499,10 +504,10 @@ class LibraryService:
 
     def get_playlist_tracks(self, playlist_id: str | None) -> list[Track]:
         """获取指定歌单的所有曲目。
-        
+
         Args:
             playlist_id: 歌单ID
-            
+
         Returns:
             该歌单下的Track对象列表
         """
@@ -511,13 +516,13 @@ class LibraryService:
 
     def search_playlist_tracks(self, playlist_id: str | None, keyword: str) -> list[Track]:
         """在指定歌单中搜索曲目。
-        
+
         搜索范围包括曲目标题、艺术家、专辑名，不区分大小写。
-        
+
         Args:
             playlist_id: 要搜索的歌单ID
             keyword: 搜索关键词
-            
+
         Returns:
             匹配的Track对象列表
         """
@@ -553,9 +558,9 @@ class LibraryService:
 
     def rename_playlist(self, playlist_id: str, name: str) -> None:
         """重命名歌单。
-        
+
         "全部歌曲"歌单为系统保留不允许重命名。
-        
+
         Args:
             playlist_id: 要重命名的歌单ID
             name: 新的歌单名称
@@ -573,14 +578,14 @@ class LibraryService:
 
     def copy_playlist(self, source_playlist_id: str, new_name: str | None = None) -> Playlist | None:
         """复制歌单。
-        
+
         创建源歌单的副本，包含所有曲目的引用。
         自动设置唯一的歌单名称。
-        
+
         Args:
             source_playlist_id: 源歌单ID
             new_name: 新歌单名称，None则使用默认命名规则
-            
+
         Returns:
             新创建的Playlist对象，如果源歌单不存在返回None
         """
@@ -601,14 +606,14 @@ class LibraryService:
 
     def merge_playlist(self, source_playlist_id: str, target_playlist_id: str) -> int:
         """合并两个歌单。
-        
+
         将源歌单的所有曲目添加到目标歌单，自动去重，
         保持目标歌单原有的排序。
-        
+
         Args:
             source_playlist_id: 源歌单ID
             target_playlist_id: 目标歌单ID
-            
+
         Returns:
             实际新增的曲目数量
         """
@@ -637,10 +642,10 @@ class LibraryService:
 
     def delete_playlist(self, playlist_id: str) -> None:
         """删除歌单及其相关的孤立曲目。
-        
+
         删除指定歌单，如果曲目不再被其他歌单引用则一并删除。
         "全部歌曲"歌单为系统保留，不允许删除。
-        
+
         Args:
             playlist_id: 要删除的歌单ID
         """
@@ -648,7 +653,7 @@ class LibraryService:
             return  # 系统保护，不允许删除系统歌单
         if playlist_id not in self.playlists:
             return
-        
+
         removed = self.playlists[playlist_id]
         del self.playlists[playlist_id]
 
@@ -659,17 +664,17 @@ class LibraryService:
 
         # 重新同步全部歌曲歌单
         self._normalize_playlist_tracks()
-        
+
         # 如果删除的是当前活动歌单，切换到全部歌曲
         if self.active_playlist_id == playlist_id:
             self.active_playlist_id = ALL_SONGS_ID
-            
+
         self.save()
         logger.info("删除歌单: %s (%s), 清理歌曲=%s", removed.name, playlist_id, len(orphan_track_ids))
 
     def set_active_playlist(self, playlist_id: str) -> None:
         """设置当前活动歌单。
-        
+
         Args:
             playlist_id: 要设为活动的歌单ID
         """
@@ -680,9 +685,9 @@ class LibraryService:
 
     def add_track_ids_to_playlist(self, playlist_id: str, track_ids: list[str]) -> None:
         """批量添加曲目到歌单。
-        
+
         自动去重，只添加有效且未存在的曲目。
-        
+
         Args:
             playlist_id: 目标歌单ID
             track_ids: 要添加的曲目ID列表
@@ -791,10 +796,10 @@ class LibraryService:
 
     def get_track(self, track_id: str | None) -> Track | None:
         """根据ID获取单个曲目信息。
-        
+
         Args:
             track_id: 曲目ID
-            
+
         Returns:
             Track对象，如果ID无效或不存在返回None
         """
@@ -810,7 +815,7 @@ class LibraryService:
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> list[Track]:
         """导入整个文件夹的音频文件到曲库。
-        
+
         智能文件夹导入策略：
         1. 如果指定了现有歌单ID且不是"全部歌曲"：
            - 将所选目录下的音频文件导入到该歌单
@@ -818,18 +823,18 @@ class LibraryService:
         2. 如果没有指定歌单或指定"全部歌曲"：
            - 所选目录下的音频文件导入到以目录名为基础的新歌单
            - 第一级子目录分别创建/复用独立歌单
-        
+
         深层子目录（第二级及以下）不再展开，控制导入范围避免歌单过多。
-        
+
         Args:
             folder: 要导入的文件夹路径
             playlist_id: 指定目标歌单ID，None则自动创建新歌单
             recursive: Scan模式下是否递归搜索，默认为True但只影响当前目录层级
             progress_callback: 进度回调函数 (processed_count, total_count, current_file_path)
-            
+
         Returns:
             新导入的Track对象列表
-            
+
         Raises:
             FileNotFoundError: 文件夹不存在或不是目录
         """
@@ -932,18 +937,18 @@ class LibraryService:
 
     def import_file(self, file_path: Path, playlist_id: str | None = None, *, skip_save: bool = False) -> Track:
         """导入单个音频文件到曲库。
-        
+
         将指定的音频文件元数据提取到曲库，并添加到指定的歌单中。
         如果文件已存在，则直接引用现有曲目记录。
-        
+
         Args:
             file_path: 音频文件路径
             playlist_id: 目标歌单ID，None则使用当前活动歌单
             skip_save: 为True时跳过持久化保存（批量导入时由调用方统一保存）
-            
+
         Returns:
             Track对象
-            
+
         Raises:
             FileNotFoundError: 文件不存在或不是常规文件
             ValueError: 文件格式不受支持
@@ -1018,15 +1023,27 @@ class LibraryService:
         """
         if not isinstance(payload, dict):
             raise ValueError("歌单数据无效")  # 检查payload是否为字典，如果不是则抛出异常
-        playlist_hash = str(payload.get("playlist_hash", "")).strip()  # 从payload中获取playlist_hash，如果没有则默认为空字符串，并去除首尾空格
+        playlist_hash = str(
+            payload.get("playlist_hash", "")
+        ).strip()  # 从payload中获取playlist_hash，如果没有则默认为空字符串，并去除首尾空格
         if playlist_hash:
             hash_part = playlist_hash[:12]  # 如果playlist_hash存在，取前12个字符作为哈希部分
         else:
-            raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)  # 将payload转换为JSON字符串，确保非ASCII字符保留，按键排序
-            hash_part = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]  # 计算JSON字符串的SHA1哈希，并取前12个十六进制字符
-        hint_part = hashlib.sha1(str(source_hint or "runtime_payload").encode("utf-8")).hexdigest()[:8]  # 基于source_hint计算SHA1哈希，取前8个字符作为提示部分
-        virtual_source_file = (self._store.path.parent / f"_runtime_{hash_part}_{hint_part}.muse_playlist.json").resolve()  # 构建虚拟源文件路径，使用哈希部分和提示部分生成文件名，并解析为绝对路径
-        return self._import_muse_playlist_data(payload, source_file=virtual_source_file, fallback_name="导入歌单")  # 调用导入方法，传入有效载荷、虚拟源文件路径和备用名称
+            raw = json.dumps(
+                payload, ensure_ascii=False, sort_keys=True
+            )  # 将payload转换为JSON字符串，确保非ASCII字符保留，按键排序
+            hash_part = hashlib.sha1(raw.encode("utf-8")).hexdigest()[
+                :12
+            ]  # 计算JSON字符串的SHA1哈希，并取前12个十六进制字符
+        hint_part = hashlib.sha1(str(source_hint or "runtime_payload").encode("utf-8")).hexdigest()[
+            :8
+        ]  # 基于source_hint计算SHA1哈希，取前8个字符作为提示部分
+        virtual_source_file = (
+            self._store.path.parent / f"_runtime_{hash_part}_{hint_part}.muse_playlist.json"
+        ).resolve()  # 构建虚拟源文件路径，使用哈希部分和提示部分生成文件名，并解析为绝对路径
+        return self._import_muse_playlist_data(
+            payload, source_file=virtual_source_file, fallback_name="导入歌单"
+        )  # 调用导入方法，传入有效载荷、虚拟源文件路径和备用名称
 
     def _import_muse_playlist_data(self, payload: dict, *, source_file: Path, fallback_name: str) -> Playlist:
         """从 payload 字典解析并导入 Muse 格式的歌单数据。
@@ -1120,7 +1137,11 @@ class LibraryService:
 
             # 解析完整的音频文件和歌词文件绝对路径
             track_path = self._resolve_muse_track_path(db_root=db_root, storage_relpath=storage_relpath)
-            lyrics_path = self._resolve_muse_track_path(db_root=db_root, storage_relpath=lyrics_relpath) if lyrics_relpath else None
+            lyrics_path = (
+                self._resolve_muse_track_path(db_root=db_root, storage_relpath=lyrics_relpath)
+                if lyrics_relpath
+                else None
+            )
 
             # 尝试通过多种来源字段查找内部已存在的对应曲目记录
             track = self._find_track_by_source_fields(
@@ -1218,16 +1239,16 @@ class LibraryService:
     def export_playlist_file(self, playlist_id: str, out_dir: Path, playback_stats_service) -> Path:
         """
         导出歌单文件为JSON格式。
-    
+
         功能：
             从当前库中导出指定歌单的详细信息，包括歌曲元数据、播放统计和歌词，
             生成一个完整的JSON文件。
-    
+
         参数：
             playlist_id (str): 要导出的歌单ID。
             out_dir (Path): 导出文件的输出目录。
             playback_stats_service: 播放统计服务，用于获取每首歌的播放数据。
-    
+
         返回值：
             Path: 生成的JSON文件的完整路径。
         """
@@ -1242,7 +1263,7 @@ class LibraryService:
         # 获取或生成歌单的导出哈希值（用于唯一标识导出文件）
         playlist_hash = self._get_or_create_export_hash(playlist)
         # 获取当前UTC时间作为导出时间戳
-        exported_at = datetime.now(timezone.utc).isoformat()
+        exported_at = datetime.now(UTC).isoformat()
         # 确定源数据库位置：优先使用歌单自身的数据库位置，否则使用默认路径
         database_location = str(
             Path(str(playlist.source_database_location or "")).resolve()
@@ -1358,7 +1379,7 @@ class LibraryService:
         if raw:  # 如果哈希已存在，直接返回
             return raw
         # 使用SHA1算法基于播放列表ID生成新的哈希值，并编码为十六进制字符串
-        raw = hashlib.sha1(f"playlist:{playlist.id}".encode("utf-8")).hexdigest()
+        raw = hashlib.sha1(f"playlist:{playlist.id}".encode()).hexdigest()
         # 将新哈希存储到播放列表对象的属性中
         playlist.source_playlist_hash = raw
         # 更新播放列表的修改时间戳
@@ -1377,7 +1398,9 @@ class LibraryService:
         返回值：
             str: 清理后的安全字符串。如果清理后为空，则返回默认值"playlist"。
         """
-        safe = "".join(ch if ch not in "\\/:*?\"<>|" else "_" for ch in str(name or "").strip()).strip()  # 去除首尾空格，替换特殊字符为下划线，然后连接
+        safe = "".join(
+            ch if ch not in '\\/:*?"<>|' else "_" for ch in str(name or "").strip()
+        ).strip()  # 去除首尾空格，替换特殊字符为下划线，然后连接
         return safe or "playlist"  # 如果safe为空字符串或None，则返回默认名称"playlist"
 
     def _export_track_lyrics(self, track: Track, db_root: Path) -> list[dict]:
@@ -1413,7 +1436,9 @@ class LibraryService:
         main = str(track.source_lyrics_path or "").strip()  # 尝试获取主歌词路径，并转换为字符串、去除首尾空格
         if main:  # 如果主路径非空
             paths.append(main)  # 将其添加到结果列表中
-        extra = str(getattr(track, "extra_lyrics_paths", "") or "").strip()  # 尝试获取额外歌词路径，转换为字符串并去除空格
+        extra = str(
+            getattr(track, "extra_lyrics_paths", "") or ""
+        ).strip()  # 尝试获取额外歌词路径，转换为字符串并去除空格
         if extra:  # 如果额外路径非空
             for p in extra.split("|"):  # 遍历以 "|" 分隔的每个路径
                 p = p.strip()  # 对单个路径进行空格处理
@@ -1466,13 +1491,13 @@ class LibraryService:
 
     def sync_muse_playlist_stats(self, playback_stats_service) -> int:
         """同步播放统计数据到外部歌单文件。
-        
+
         将运行时收集的播放统计数据回写到对应的 .muse_playlist.json 文件中，
         只在本地有实际统计数据时才更新，避免覆盖文件中已有的历史数据。
-        
+
         Args:
             playback_stats_service: 播放统计服务实例
-            
+
         Returns:
             更新的文件数量
         """
@@ -1484,7 +1509,7 @@ class LibraryService:
         # 将运行时统计回写至外部歌单文件。
         # 安全策略：本地无统计时，不覆盖文件中已有统计，避免误清空历史数据。
         updated_files = 0
-        updated_at = datetime.now(timezone.utc).isoformat()
+        updated_at = datetime.now(UTC).isoformat()
 
         # 遍历所有歌单，只处理 Muse 格式导出的歌单文件
         for playlist in self.playlists.values():
@@ -1493,7 +1518,7 @@ class LibraryService:
                 continue
             if playlist.source_schema != MUSE_PLAYLIST_SCHEMA:
                 continue
-            
+
             source_file_text = str(playlist.source_file or "").strip()
             if not source_file_text:
                 continue
@@ -1531,7 +1556,11 @@ class LibraryService:
                     by_relpath[rel] = idx
 
             changed = False
-            db_root = Path(str(playlist.source_database_location or "")).resolve() if playlist.source_database_location else None
+            db_root = (
+                Path(str(playlist.source_database_location or "")).resolve()
+                if playlist.source_database_location
+                else None
+            )
 
             # 遍历当前歌单中的所有本地曲目
             for local_track_id in playlist.track_ids:
@@ -1551,7 +1580,9 @@ class LibraryService:
                     rel = self._normalize_relpath(track.source_storage_relpath)
                     if not rel and db_root is not None:
                         try:
-                            rel = self._normalize_relpath(str(Path(track.path).resolve().relative_to(db_root)).replace("\\", "/"))
+                            rel = self._normalize_relpath(
+                                str(Path(track.path).resolve().relative_to(db_root)).replace("\\", "/")
+                            )
                         except Exception:
                             rel = ""
                     if rel and rel in by_relpath:
@@ -1567,7 +1598,7 @@ class LibraryService:
                 stats = playback_stats_service.export_stats_for_track(local_track_id)
                 if stats is None:
                     continue
-                prev_stats = row.get("stats") 
+                prev_stats = row.get("stats")
                 # 只有当统计数据实际发生变化时标记为需要更新
                 if not isinstance(prev_stats, dict) or prev_stats != stats:
                     row["stats"] = stats
@@ -1626,15 +1657,15 @@ class LibraryService:
     @staticmethod
     def _normalize_relpath(value: str) -> str:
         """标准化相对路径格式。
-        
+
         将路径转换为统一的相对路径格式，用于歌单数据中的路径存储。
         - 转换为正斜杠
         - 移除开头的 ./ 前缀
         - 移除首尾斜杠
-        
+
         Args:
             value: 原始路径字符串
-            
+
         Returns:
             标准化后的相对路径
         """
@@ -1646,14 +1677,14 @@ class LibraryService:
     @staticmethod
     def _resolve_muse_track_path(*, db_root: Path, storage_relpath: str) -> Path:
         """解析Muse数据库中的存储相对路径为绝对路径。
-        
+
         处理歌单导入时从数据库记录中读取的存储路径，将其转换为完整的文件路径。
         支持相对路径和绝对路径的混合处理。
-        
+
         Args:
             db_root: 数据库根目录路径
             storage_relpath: 存储相对路径或绝对路径
-            
+
         Returns:
             解析后的完整Path对象
         """
@@ -1687,26 +1718,26 @@ class LibraryService:
             # 当无哈希值时，对源文件路径进行SHA1哈希处理，取前16位作为基础ID
             digest = hashlib.sha1(str(source_file).lower().encode("utf-8")).hexdigest()
             base = f"muse_{digest[:16]}"
-    
+
         candidate = base  # 初始候选ID为基础ID
         idx = 2  # 从2开始编号，避免与无后缀的基础ID重复
-    
+
         # 循环检查候选ID是否已存在于播放列表中
         while candidate in self.playlists:
             existing = self.playlists[candidate]
-        
+
             # 判断已存在的播放列表是否与当前内容相同（通过哈希值或文件路径比较）
             same_hash = bool(playlist_hash) and existing.source_playlist_hash == playlist_hash
             same_file = bool(existing.source_file) and Path(existing.source_file).resolve() == source_file.resolve()
-        
+
             # 如果内容相同（哈希或文件路径匹配），则跳出循环复用该ID
             if same_hash or same_file:
                 break
-        
+
             # 内容不同但ID冲突时，生成带数字后缀的新候选ID
             candidate = f"{base}_{idx}"
             idx += 1
-    
+
         return candidate
 
     def _find_existing_muse_playlist(self, *, playlist_hash: str, source_file: Path) -> Playlist | None:
@@ -1770,14 +1801,14 @@ class LibraryService:
             hit = self._sha256_index.get(source_sha256.lower())
             if hit is not None:
                 return hit
-    
+
         # 第二优先级：通过source_track_id查找
         if source_track_id:
             # 遍历所有tracks，查找匹配的source_track_id
             for track in self.tracks.values():
                 if track.source_track_id == source_track_id:
                     return track
-    
+
         # 第三优先级：通过标准化后的相对路径查找
         if normalized_relpath:
             # 遍历所有tracks，比较标准化后的相对路径
@@ -1789,20 +1820,20 @@ class LibraryService:
         hit = self._path_index.get(resolved_source)
         if hit is not None:
             return hit
-    
+
         # 所有查找方式都未找到匹配项
         return None
 
     @staticmethod
     def _scan_audio_files(folder: Path, recursive: bool = True) -> list[Path]:
         """扫描文件夹中的音频文件。
-        
+
         使用指定的扩展名过滤标准来扫描音频文件，并按字母顺序排序返回。
-        
+
         Args:
             folder: 要扫描的文件夹路径
             recursive: 是否递归扫描子文件夹，默认为True
-            
+
         Returns:
             按字母序排序的音频文件路径列表
         """
@@ -1820,16 +1851,16 @@ class LibraryService:
 
     def _resolve_target_playlist_for_folder_import(self, folder: Path, playlist_id: str | None) -> Playlist:
         """为文件夹导入解析目标歌单。
-        
+
         智能歌单匹配策略：
         1. 如果指定了现有歌单ID且有效，直接使用该歌单
         2. 根据文件夹名查找现有歌单
         3. 如果不存在，创建以文件夹名命名的新歌单
-        
+
         Args:
             folder: 要导入的文件夹路径
             playlist_id: 指定的目标歌单ID，None则自动选择
-            
+
         Returns:
             目标Playlist对象
         """
@@ -1847,13 +1878,13 @@ class LibraryService:
 
     def _find_playlist_by_name(self, name: str) -> Playlist | None:
         """根据歌单名称查找现有歌单。
-        
+
         不区分大小写的名称匹配，忽略首尾空格。
         系统保留歌单"全部歌曲"不参与查找。
-        
+
         Args:
             name: 要查找的歌单名称
-            
+
         Returns:
             找到的Playlist对象，如果未找到则返回None
         """
@@ -1899,13 +1930,13 @@ class LibraryService:
 
     def _find_orphan_track_ids(self, exclude_playlist_id: str | None = None) -> set[str]:
         """查找不再被任何歌单引用的孤立曲目ID。
-        
+
         通过扫描所有歌单的track_ids，找出曲库中存在但不再被任何歌单引用的曲目。
         系统保留歌单"全部歌曲"不参与引用统计。
-        
+
         Args:
             exclude_playlist_id: 要排除的歌单ID，用于在删除歌单时查找孤立曲目
-            
+
         Returns:
             孤立曲目ID的集合
         """
@@ -1925,10 +1956,10 @@ class LibraryService:
     def _remove_track_globally(self, track_id: str) -> None:
         """
         从全局索引中移除指定ID的音轨。
-    
+
         参数:
             track_id (str): 要移除的音轨ID。
-    
+
         返回:
             None: 无返回值。
         """

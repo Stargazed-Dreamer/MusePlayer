@@ -23,15 +23,14 @@ from core.output import list_output_devices
 
 
 class SettingsDialog(QDialog):
-
     def __init__(self, settings: Settings, parent=None):
         """
         初始化设置窗口。
-    
+
         参数:
             settings (Settings): 一个Settings对象，用于管理设置。
             parent (QWidget, optional): 父窗口，默认为None。
-    
+
         返回值:
             无
         """
@@ -201,14 +200,10 @@ class SettingsDialog(QDialog):
 
         # 创建“记住上次窗口大小和位置”复选框，并从设置中读取初始值
         self.remember_window_geometry_check = QCheckBox("记住上次窗口大小和位置")
-        self.remember_window_geometry_check.setChecked(
-            bool(getattr(self._settings, "remember_window_geometry", True))
-        )
+        self.remember_window_geometry_check.setChecked(bool(getattr(self._settings, "remember_window_geometry", True)))
 
         self.copy_song_info_check = QCheckBox("允许复制当前歌曲信息（Ctrl+C / 点击信息项）")
-        self.copy_song_info_check.setChecked(
-            bool(getattr(self._settings, "copy_song_info_enabled", True))
-        )
+        self.copy_song_info_check.setChecked(bool(getattr(self._settings, "copy_song_info_enabled", True)))
 
         # 创建最大窗口宽度和高度的输入框
         self.max_window_width_edit = QLineEdit()
@@ -244,13 +239,13 @@ class SettingsDialog(QDialog):
 
     def _build_network_group(self, parent_layout: QVBoxLayout) -> None:
         """构建网络控制接口设置组。
-    
+
         功能：在父布局中创建网络控制相关的设置界面，包括控制接口开关、
              主机地址输入框和端口号输入框。
-    
+
         参数：
             parent_layout (QVBoxLayout): 父级垂直布局，用于承载网络设置组
-        
+
         返回值：
             None: 该方法无返回值，直接将控件添加到父布局中
         """
@@ -351,7 +346,7 @@ class SettingsDialog(QDialog):
         # 如果解析出的整数值小于传入的最小允许值，则返回None和包含具体最小值要求的错误信息
         if value < minimum:
             # 注意：错误信息中的具体数值（如600, 800）是硬编码的，可能不适用于所有情况。这里保持原代码逻辑。
-            return None, f"最大窗口尺寸过小：宽度至少 600，高度至少 800。"
+            return None, "最大窗口尺寸过小：宽度至少 600，高度至少 800。"
         # 所有条件检查通过，返回解析成功的整数值和空错误信息
         return value, ""
 
@@ -461,8 +456,8 @@ class SettingsDialog(QDialog):
             return
         # 如果用户取消禁用，恢复崩溃日志勾选状态
         self.crash_logging_check.blockSignals(True)  # 阻止信号以避免在设置勾选时触发事件
-        self.crash_logging_check.setChecked(True)    # 恢复崩溃日志为勾选状态
-        self.crash_logging_check.blockSignals(False) # 解除信号阻止
+        self.crash_logging_check.setChecked(True)  # 恢复崩溃日志为勾选状态
+        self.crash_logging_check.blockSignals(False)  # 解除信号阻止
 
     def _on_data_maintenance_logging_toggled(self, enabled: bool) -> None:
         """

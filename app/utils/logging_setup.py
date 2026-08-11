@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+import contextlib
 import logging
+from datetime import datetime
 from pathlib import Path
 
 LOGGER_ROOT = "museplayer"
@@ -50,10 +51,8 @@ def configure_logging(data_dir: Path, enabled: bool, current_log_path: Path | No
     # 清理所有现有处理器并关闭文件句柄，防止资源泄漏
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
-        try:
+        with contextlib.suppress(Exception):
             handler.close()
-        except Exception:
-            pass
 
     if not enabled:
         # 禁用日志时设置最高级别，并添加空处理器避免"no handlers"警告
@@ -111,12 +110,9 @@ def _prune_old_logs(log_dir: Path, keep: int) -> None:
     files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     # 遍历除了最新的keep个文件以外的所有文件进行删除，使用max确保索引非负
     for file_path in files[max(0, int(keep)) :]:
-        try:
+        with contextlib.suppress(Exception):  # 删除失败时忽略异常
             # 删除日志文件
             file_path.unlink()
-        except Exception:
-            # 删除失败时忽略异常
-            pass
 
 
 def _remove_legacy_logs(log_dir: Path) -> None:
@@ -134,16 +130,15 @@ def _remove_legacy_logs(log_dir: Path) -> None:
     """
     # 构建待检查的文件路径列表，包括主日志文件和所有滚动日志文件
     legacy_candidates = [log_dir / "museplayer.log", *log_dir.glob("museplayer.log.*")]
-    
+
     # 遍历所有候选文件路径
     for file_path in legacy_candidates:
         # 检查路径是否指向一个实际存在的文件，如果不是则跳过
         if not file_path.is_file():
             continue
-        
+
         # 尝试删除文件
-        try:
+        with contextlib.suppress(
+            Exception
+        ):  # 捕获所有可能的异常（如权限错误、文件被占用等），并静默处理，确保函数不会因个别文件删除失败而中断
             file_path.unlink()
-        # 捕获所有可能的异常（如权限错误、文件被占用等），并静默处理，确保函数不会因个别文件删除失败而中断
-        except Exception:
-            pass

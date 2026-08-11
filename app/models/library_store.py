@@ -9,14 +9,14 @@ from .entities import Playlist, Track
 
 class LibraryStore:
     """曲库数据存储器。
-    
+
     负责曲目和歌单数据的持久化存储和加载。
     数据以JSON格式保存在library.json文件中。
     """
-    
+
     def __init__(self, data_dir: Path):
         """初始化曲库存储器。
-        
+
         Args:
             data_dir: 数据存储目录路径
         """
@@ -25,7 +25,7 @@ class LibraryStore:
     @property
     def path(self) -> Path:
         """获取曲库文件路径。
-        
+
         Returns:
             Path: 曲库JSON文件的完整路径
         """
@@ -33,10 +33,10 @@ class LibraryStore:
 
     def load(self) -> tuple[dict[str, Track], dict[str, Playlist], str | None]:
         """加载曲库数据。
-        
+
         从JSON文件读取曲目和歌单数据，并转换为实体对象。
         如果文件不存在或格式错误，返回空数据。
-        
+
         Returns:
             tuple: (曲目字典, 歌单字典, 活跃歌单ID)
         """
@@ -119,10 +119,10 @@ class LibraryStore:
         active_playlist_id: str | None,
     ) -> None:
         """保存曲库数据。
-        
+
         将曲目和歌单数据转换为字典格式并保存到JSON文件。
         自动创建必要的目录结构。
-        
+
         Args:
             tracks: 曲目字典，ID到Track对象的映射
             playlists: 歌单字典，ID到Playlist对象的映射

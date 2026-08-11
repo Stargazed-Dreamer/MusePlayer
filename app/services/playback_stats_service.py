@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """播放统计服务。
 
 统计口径说明：
@@ -11,15 +9,17 @@ from __future__ import annotations
 6. `peak_session_play_count` / `peak_session_play_at`: 历史最高密集播放次数及时间。
 """
 
+from __future__ import annotations
+
 import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-import time
 
 
 def _now_ts() -> float:
     """获取当前时间戳。
-    
+
     Returns:
         float: 当前时间的时间戳（秒）
     """
@@ -29,10 +29,11 @@ def _now_ts() -> float:
 @dataclass(slots=True)
 class PlaybackStatsEntry:
     """播放统计条目。
-    
+
     记录单个曲目的详细播放统计信息。
     使用slots=True优化内存使用。
     """
+
     track_id: str
     """曲目ID"""
     play_count: int = 0
@@ -56,7 +57,7 @@ class PlaybackStatsEntry:
 
     def to_dict(self) -> dict:
         """转换为字典格式，用于序列化。
-        
+
         Returns:
             dict: 包含所有统计数据的字典
         """
@@ -74,14 +75,14 @@ class PlaybackStatsEntry:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict) -> "PlaybackStatsEntry":
+    def from_dict(cls, payload: dict) -> PlaybackStatsEntry:
         """从字典创建PlaybackStatsEntry实例，用于反序列化。
-        
+
         对数值进行验证和限制，确保数据的合法性。
-        
+
         Args:
             payload: 包含统计数据的字典
-            
+
         Returns:
             PlaybackStatsEntry: 新创建的统计条目实例
         """
@@ -101,16 +102,16 @@ class PlaybackStatsEntry:
 
 class PlaybackStatsService:
     """播放统计服务。
-    
+
     负责收集、存储和管理所有曲目的播放统计数据。
     使用JSON文件持久化统计数据，支持增量保存以优化性能。
     """
-    
+
     def __init__(self, data_dir: Path):
         """初始化播放统计服务。
-        
+
         创建统计文件路径并自动加载现有统计数据。
-        
+
         Args:
             data_dir: 数据存储目录路径
         """
@@ -123,7 +124,7 @@ class PlaybackStatsService:
 
     def _load(self) -> None:
         """从JSON文件加载播放统计数据。
-        
+
         如果文件不存在或格式错误，将初始化空的统计数据。
         """
         if not self._path.exists():
@@ -147,7 +148,7 @@ class PlaybackStatsService:
 
     def save_if_dirty(self) -> None:
         """有条件地保存统计数据。
-        
+
         仅在数据被修改（脏状态）时写入磁盘，
         以减少不必要的磁盘I/O操作。
         """
@@ -160,10 +161,10 @@ class PlaybackStatsService:
 
     def record_play_start(self, track_id: str, *, active_request: bool) -> None:
         """记录播放开始事件。
-        
+
         当曲目开始播放时调用此方法增加相应的计数器。
         同时更新本次启动期间的会话播放计数，并判断是否更新历史最高密集播放次数。
-        
+
         Args:
             track_id: 曲目ID
             active_request: 是否为用户主动触发的播放
@@ -199,10 +200,10 @@ class PlaybackStatsService:
 
     def record_play_progress(self, track_id: str, played_seconds: float, duration_sec: float) -> None:
         """记录播放进度。
-        
+
         累加播放时间和播放百分比，使用增量方式避免
         进度拖动导致的重复统计。
-        
+
         Args:
             track_id: 曲目ID
             played_seconds: 本次播放的秒数增量
@@ -226,9 +227,9 @@ class PlaybackStatsService:
 
     def remove_track(self, track_id: str) -> None:
         """移除曲目的统计数据。
-        
+
         当曲目从库中删除时调用此方法清理统计信息。
-        
+
         Args:
             track_id: 要移除的曲目ID
         """
@@ -238,9 +239,9 @@ class PlaybackStatsService:
 
     def record_early_skip(self, track_id: str) -> None:
         """记录早期跳过事件。
-        
+
         当曲目在前5%的时间内被跳过时调用此方法。
-        
+
         Args:
             track_id: 曲目ID
         """
@@ -257,9 +258,9 @@ class PlaybackStatsService:
 
     def record_complete_play(self, track_id: str) -> None:
         """记录完播事件。
-        
+
         当曲目播放进度达到95%以上时调用此方法。
-        
+
         Args:
             track_id: 曲目ID
         """
@@ -295,12 +296,12 @@ class PlaybackStatsService:
 
     def export_stats_for_track(self, track_id: str) -> dict[str, int] | None:
         """导出指定曲目的统计数据。
-        
+
         返回适用于外部使用的统计信息字典。
-        
+
         Args:
             track_id: 曲目ID
-            
+
         Returns:
             dict[str, int] | None: 统计数据字典，如果曲目不存在则返回None
         """

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from collections.abc import Callable
@@ -7,15 +8,21 @@ from collections.abc import Callable
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtNetwork import QHostAddress, QTcpServer, QTcpSocket
 
+from app.version import PROTOCOL_VERSION
+
 logger = logging.getLogger("museplayer.runtime")
+
+# 当前控制服务器实现的协议版本（供外部程序协商使用）
+__protocol_version__ = PROTOCOL_VERSION
 
 
 class ControlServer(QObject):
     """运行时控制服务器。
-    
+
     提供TCP接口供外部程序控制播放器。
     支持JSON格式的命令和响应。
     """
+
     error_occurred = Signal(str)
     """错误发生时发出的信号 (错误消息)"""
     listening_changed = Signal(bool, str, int)
@@ -23,7 +30,7 @@ class ControlServer(QObject):
 
     def __init__(self, dispatcher: Callable[[dict], dict], parent: QObject | None = None):
         """初始化控制服务器。
-        
+
         Args:
             dispatcher: 命令分发函数，接收JSON命令字典并返回响应字典
             parent: Qt父对象
@@ -52,13 +59,13 @@ class ControlServer(QObject):
 
     def start(self, host: str, port: int) -> bool:
         """启动控制服务器。
-        
+
         开始在指定地址和端口监听TCP连接。
-        
+
         Args:
             host: 监听的主机地址
             port: 监听的端口号
-            
+
         Returns:
             bool: 启动成功返回True，失败返回False
         """
@@ -83,7 +90,7 @@ class ControlServer(QObject):
 
     def stop(self) -> None:
         """停止控制服务器。
-        
+
         关闭所有客户端连接并停止监听。
         """
         # 关闭所有客户端连接
@@ -103,7 +110,7 @@ class ControlServer(QObject):
 
     def _on_new_connection(self) -> None:
         """处理新客户端连接。
-        
+
         为每个新连接分配缓冲区并设置信号槽连接。
         """
         while self._server.hasPendingConnections():
@@ -119,25 +126,23 @@ class ControlServer(QObject):
 
     def _on_disconnected(self, ptr: int) -> None:
         """处理客户端断开连接。
-        
+
         清理相关资源。
-        
+
         Args:
             ptr: socket描述符
         """
         sock = self._sockets.pop(ptr, None)
         self._buffers.pop(ptr, None)
         if sock is not None:
-            try:
+            with contextlib.suppress(Exception):
                 sock.deleteLater()
-            except Exception:
-                pass
 
     def _on_ready_read(self, ptr: int) -> None:
         """处理socket数据读取。
-        
+
         按行协议处理命令，每行一个JSON命令。
-        
+
         Args:
             ptr: socket描述符
         """
@@ -166,10 +171,10 @@ class ControlServer(QObject):
 
     def _handle_line(self, line: bytes) -> dict:
         """处理单行JSON命令。
-        
+
         Args:
             line: 包含JSON命令的字节串
-            
+
         Returns:
             dict: 命令执行结果
         """
@@ -197,7 +202,7 @@ class ControlServer(QObject):
     @staticmethod
     def _send_response(socket: QTcpSocket, payload: dict) -> None:
         """发送响应给客户端。
-        
+
         Args:
             socket: 目标socket
             payload: 要发送的响应数据

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """应用控制器。
 
 该层是 UI 与服务层之间的编排中枢，负责：
@@ -8,10 +6,13 @@ from __future__ import annotations
 3. 对外命令分发（本地 UI 与运行时控制协议共用）
 """
 
-from datetime import datetime
+from __future__ import annotations
+
+import contextlib
 import json
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtMultimedia import QMediaDevices
@@ -21,7 +22,7 @@ from app.runtime import ControlServer
 from app.services.library_service import ALL_SONGS_ID, LibraryService
 from app.services.metadata_service import MetadataService
 from app.services.playback_stats_service import PlaybackStatsService
-from app.services.player_service import PlayMode, PlayerService
+from app.services.player_service import PlayerService, PlayMode
 from app.utils import configure_logging, get_logger
 
 
@@ -77,6 +78,7 @@ class AppController(QObject):
             return
         self._services_initialized = True
         import time as _time
+
         _t0 = _time.perf_counter()
 
         self.metadata_service = MetadataService()
@@ -95,16 +97,22 @@ class AppController(QObject):
             gain_boost_getter=lambda: float(self.settings.global_gain_boost),
             read_strategy_getter=lambda: str(self.settings.read_strategy),
         )
-        self.player_service.set_playlist_loop_sort_getter(lambda: str(getattr(self.settings, "playlist_loop_sort", "default")))
-        self.player_service.set_prefer_playlist_order_getter(lambda: bool(getattr(self.settings, "prefer_playlist_order", False)))
-        self.player_service.set_random_display_order_getter(lambda: str(getattr(self.settings, "random_display_order", "original")))
+        self.player_service.set_playlist_loop_sort_getter(
+            lambda: str(getattr(self.settings, "playlist_loop_sort", "default"))
+        )
+        self.player_service.set_prefer_playlist_order_getter(
+            lambda: bool(getattr(self.settings, "prefer_playlist_order", False))
+        )
+        self.player_service.set_random_display_order_getter(
+            lambda: str(getattr(self.settings, "random_display_order", "original"))
+        )
         self.player_service.set_single_loop_mode_enabled(self.settings.enable_single_loop_mode)
         self.player_service.set_playlist_loop_mode_enabled(self.settings.enable_playlist_loop_mode)
         self.player_service.set_output_device(getattr(self.settings, "output_device", ""))
         self.player_service.error_occurred.connect(self.error_occurred)
         self.error_occurred.connect(self._record_runtime_error)
         _t1 = _time.perf_counter()
-        print(f"[Services计时] 播放器初始化: {_t1-_t0:.3f}s")
+        print(f"[Services计时] 播放器初始化: {_t1 - _t0:.3f}s")
 
     def restore_session_preview(self, state: SessionState) -> bool:
         if self.library_service is None or self.player_service is None:
@@ -165,6 +173,7 @@ class AppController(QObject):
         if self.library_service is None:
             return
         import time as _time
+
         _t0 = _time.perf_counter()
 
         tracks, playlists, active, indexes = payload
@@ -196,7 +205,7 @@ class AppController(QObject):
             self.runtime_status_changed.emit(False, self.settings.control_host, self.settings.control_port)
 
         _t2 = _time.perf_counter()
-        print(f"[Services计时] 库加载: {_t1-_t0:.3f}s | 服务: {_t2-_t1:.3f}s | 总计: {_t2-_t0:.3f}s")
+        print(f"[Services计时] 库加载: {_t1 - _t0:.3f}s | 服务: {_t2 - _t1:.3f}s | 总计: {_t2 - _t0:.3f}s")
 
     def restore_session(self) -> None:
         """恢复上次播放会话（在窗口显示后调用以加速启动）。"""
@@ -211,7 +220,7 @@ class AppController(QObject):
 
     def shutdown(self) -> None:
         """应用程序关闭流程。
-        
+
         按正确顺序关闭所有服务：暂停统计收集、保存会话状态、
         持久化统计数据、保存库状态、保存设置、停止服务。
         """
@@ -229,7 +238,7 @@ class AppController(QObject):
 
     def save_session(self) -> None:
         """保存当前会话状态。
-        
+
         包括播放器状态、歌单信息、播放位置等所有临时状态。
         同时执行播放统计的同步和保存，确保数据一致性。
         """
@@ -240,14 +249,14 @@ class AppController(QObject):
 
     def save_stats_now(self) -> None:
         """立即保存统计数据到磁盘。
-        
+
         触发一次完整的会话保存，包括播放器状态和统计信息。
         """
         self.save_session()
 
     def _apply_save_timer_settings(self) -> None:
         """应用保存定时器设置。
-    
+
         根据self.settings中的配置，启动或停止会话保存定时器。
         功能：如果定时保存启用，则启动定时器；否则停止定时器。
         参数：无（直接使用self.settings）
@@ -268,9 +277,9 @@ class AppController(QObject):
 
     def start_runtime_server(self) -> bool:
         """启动运行时控制服务器。
-        
+
         根据设置配置启动或停止控制接口。
-        
+
         Returns:
             bool: 是否成功启动或被正确禁用
         """
@@ -288,9 +297,9 @@ class AppController(QObject):
 
     def restart_runtime_server(self) -> bool:
         """重启运行时控制服务器。
-        
+
         先停止当前服务器然后根据最新设置重新启动。
-        
+
         Returns:
             bool: 是否成功重启
         """
@@ -302,12 +311,12 @@ class AppController(QObject):
 
     def update_settings(self, settings: Settings) -> bool:
         """更新应用设置并应用所有相关变更。
-        
+
         保存新设置、更新播放器配置、重启控制服务器等。
-        
+
         Args:
             settings: 新的设置对象
-            
+
         Returns:
             bool: 所有更新操作是否成功
         """
@@ -333,7 +342,7 @@ class AppController(QObject):
 
     def set_theme_preference(self, dark_theme: bool) -> None:
         """设置主题偏好（暗色/亮色）。
-        
+
         Args:
             dark_theme: True为暗色主题，False为亮色主题
         """
@@ -346,12 +355,12 @@ class AppController(QObject):
 
     def persist_window_geometry(self, *, x: int, y: int, width: int, height: int) -> None:
         """持久化窗口几何信息。
-        
+
         保存窗口位置和大小，用于应用重启后恢复界面布局。
-        
+
         Args:
             x: 窗口X坐标
-            y: 窗口Y坐标  
+            y: 窗口Y坐标
             width: 窗口宽度
             height: 窗口高度
         """
@@ -423,9 +432,9 @@ class AppController(QObject):
 
     def get_current_cover(self) -> bytes | None:
         """获取当前播放曲目的封面图像。
-        
+
         从音频文件内嵌的元数据中提取封面图像数据。
-        
+
         Returns:
             bytes: 封面图像的二进制数据，如果没有则返回None
         """
@@ -441,14 +450,14 @@ class AppController(QObject):
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> int:
         """导入文件夹中的音频文件。
-        
+
         递归扫描文件夹，导入所有支持的音频格式文件到曲库。
-        
+
         Args:
             folder: 要导入的文件夹路径
             playlist_id: 目标歌单ID，None表示导入到默认歌单
             progress_callback: 进度回调函数
-            
+
         Returns:
             int: 成功导入的文件数量
         """
@@ -512,13 +521,13 @@ class AppController(QObject):
     def import_muse_playlist_data(self, payload: dict | str, source_hint: str = "runtime_payload") -> str:
         """
         导入Muse播放列表数据。
-    
+
         功能：将Muse播放列表数据导入到音乐库中，并返回导入后的播放列表ID。
-    
+
         参数：
             payload (dict | str): 播放列表数据，可以是字典对象或JSON格式的字符串。
             source_hint (str): 数据来源提示，默认为"runtime_payload"，用于标识数据来源。
-    
+
         返回值：
             str: 导入成功的播放列表ID。
         """
@@ -533,13 +542,13 @@ class AppController(QObject):
         else:
             # 输入类型不支持时抛出异常
             raise ValueError("playlist payload must be dict or json string")
-    
+
         # 调用库服务导入播放列表数据，传入数据和来源提示
         playlist = self.library_service.import_muse_playlist_payload(data, source_hint=source_hint)
-    
+
         # 发出库变更信号，通知UI或其他组件库已更新
         self.library_changed.emit()
-    
+
         # 返回导入后的播放列表ID
         return playlist.id
 
@@ -657,10 +666,10 @@ class AppController(QObject):
 
     def remove_track_from_playlist(self, playlist_id: str, track_id: str) -> None:
         """从歌单中移除指定曲目，智能处理播放状态切换。
-        
+
         如果移除的是当前播放曲目，会自动选择相邻曲目继续播放
         或将播放状态切换到合适状态，确保用户体验的连续性。
-        
+
         Args:
             playlist_id: 目标歌单ID
             track_id: 要移除的曲目ID
@@ -691,7 +700,7 @@ class AppController(QObject):
         # 清理被移除曲目的统计数据
         for removed_id in removed_ids:
             self.playback_stats_service.remove_track(removed_id)
-            
+
         # 处理播放状态转换逻辑
         if self.player_service.current_playlist_id == playlist_id:
             if removed_current_from_active:
@@ -733,23 +742,26 @@ class AppController(QObject):
                     )
                 else:
                     self.player_service.pause()
-                    
+
         # 安全清理：如果当前播放曲目已经不存在于库中，需要重置状态
-        if self.player_service.current_track_id and self.player_service.current_track_id not in self.library_service.tracks:
+        if (
+            self.player_service.current_track_id
+            and self.player_service.current_track_id not in self.library_service.tracks
+        ):
             self.player_service.pause()
             self.player_service.set_playlist(self.player_service.current_playlist_id)
-            
+
         self.library_changed.emit()
 
     def dispatch_command(self, payload: dict) -> dict:
         """运行时控制接口命令分发入口。
-        
+
         处理来自外部控制的命令请求，支持播放控制、库管理、导入等功能。
         这是JSON-RPC风格的API接口，返回标准化的响应格式。
-        
+
         Args:
             payload: 包含cmd字段和其他参数的命令数据
-            
+
         Returns:
             dict: 标准化的响应，包含ok字段和相应数据或错误信息
         """
@@ -912,7 +924,9 @@ class AppController(QObject):
             for tid in playlist.track_ids:
                 t = self.library_service.tracks.get(tid)
                 if t is not None:
-                    tracks_info.append({"id": t.id, "title": t.title, "artist": t.artist, "duration_sec": float(t.duration_sec)})
+                    tracks_info.append(
+                        {"id": t.id, "title": t.title, "artist": t.artist, "duration_sec": float(t.duration_sec)}
+                    )
             result["tracks"] = tracks_info
             return {"ok": True, "result": result}
 
@@ -980,15 +994,13 @@ class AppController(QObject):
         if not text:  # 如果消息为空字符串，则直接返回，不记录
             return
 
-        try:  # 尝试使用logger记录错误，如果记录失败则忽略异常
+        with contextlib.suppress(Exception):  # 尝试使用logger记录错误，如果记录失败则忽略异常
             self.logger.error(text)
-        except Exception:
-            pass
 
-        try:  # 尝试将错误消息写入文件，包括创建目录、生成时间戳和写入内容，如果任何步骤失败则忽略异常
+        with contextlib.suppress(
+            Exception
+        ):  # 尝试将错误消息写入文件，包括创建目录、生成时间戳和写入内容，如果任何步骤失败则忽略异常
             self._runtime_error_file.parent.mkdir(parents=True, exist_ok=True)  # 创建日志文件的父目录，如果已存在则跳过
             stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # 生成当前时间的格式化字符串
             with self._runtime_error_file.open("a", encoding="utf-8") as f:  # 以追加模式打开文件，使用UTF-8编码
                 f.write(f"{stamp} {text}\n")  # 写入时间戳和错误消息，后跟换行符
-        except Exception:
-            pass

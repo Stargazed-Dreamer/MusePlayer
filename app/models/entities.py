@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-import time
-import uuid
 
 
 def _now_ts() -> float:
     """获取当前时间戳。
-    
+
     Returns:
         float: 当前时间的时间戳（秒）
     """
@@ -18,7 +18,7 @@ def _now_ts() -> float:
 
 def new_id() -> str:
     """生成新的唯一ID。
-    
+
     Returns:
         str: 32字符的十六进制UUID字符串
     """
@@ -28,10 +28,11 @@ def new_id() -> str:
 @dataclass(slots=True)
 class Track:
     """音乐曲目实体类。
-    
+
     表示单个音乐文件的所有元数据和状态信息。
     使用slots=True优化内存使用。
     """
+
     id: str
     """曲目唯一标识符"""
     path: str
@@ -66,7 +67,7 @@ class Track:
     @property
     def path_obj(self) -> Path:
         """获取路径对象。
-        
+
         Returns:
             Path: 音频文件的路径对象
         """
@@ -74,7 +75,7 @@ class Track:
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典格式，用于序列化。
-        
+
         Returns:
             dict[str, Any]: 包含所有属性的字典
         """
@@ -97,12 +98,12 @@ class Track:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Track":
+    def from_dict(cls, data: dict[str, Any]) -> Track:
         """从字典创建Track实例，用于反序列化。
-        
+
         Args:
             data: 包含Track数据的字典
-            
+
         Returns:
             Track: 新创建的Track实例
         """
@@ -128,10 +129,11 @@ class Track:
 @dataclass(slots=True)
 class Playlist:
     """播放列表实体类。
-    
+
     表示一组音乐曲目的集合，包含播放列表的元数据和来源信息。
     使用slots=True优化内存使用。
     """
+
     id: str
     """播放列表唯一标识符"""
     name: str
@@ -157,14 +159,14 @@ class Playlist:
 
     def touch(self) -> None:
         """更新播放列表的修改时间戳。
-        
+
         用于标记播放列表内容或元数据的更改。
         """
         self.updated_at = _now_ts()
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典格式，用于序列化。
-        
+
         Returns:
             dict[str, Any]: 包含所有属性的字典
         """
@@ -183,12 +185,12 @@ class Playlist:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Playlist":
+    def from_dict(cls, data: dict[str, Any]) -> Playlist:
         """从字典创建Playlist实例，用于反序列化。
-        
+
         Args:
             data: 包含Playlist数据的字典
-            
+
         Returns:
             Playlist: 新创建的Playlist实例
         """
@@ -210,10 +212,11 @@ class Playlist:
 @dataclass(slots=True)
 class Settings:
     """应用设置实体类。
-    
+
     包含所有可配置的应用程序和播放器设置。
     使用slots=True优化内存使用。
     """
+
     control_host: str = "127.0.0.1"
     """控制接口监听主机地址"""
     control_port: int = 43121
@@ -283,9 +286,9 @@ class Settings:
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典格式，用于序列化。
-        
+
         确保所有数值类型正确转换。
-        
+
         Returns:
             dict[str, Any]: 包含所有设置项的字典
         """
@@ -326,14 +329,14 @@ class Settings:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Settings":
+    def from_dict(cls, data: dict[str, Any]) -> Settings:
         """从字典创建Settings实例，用于反序列化。
-        
+
         对输入数据进行验证和范围限制，确保设置的合法性。
-        
+
         Args:
             data: 包含设置数据的字典
-            
+
         Returns:
             Settings: 新创建的Settings实例
         """
@@ -347,7 +350,7 @@ class Settings:
             max_window_width = 600
         if 0 < max_window_height < 800:
             max_window_height = 800
-        
+
         return cls(
             control_host=str(data.get("control_host", "127.0.0.1")),
             # 限制端口范围在有效范围内
@@ -384,18 +387,23 @@ class Settings:
             startup_file_check=bool(data.get("startup_file_check", True)),
             copy_song_info_enabled=bool(data.get("copy_song_info_enabled", True)),
             global_shortcuts_enabled=bool(data.get("global_shortcuts_enabled", True)),
-            interface_shortcuts=dict(data.get("interface_shortcuts", {})) if isinstance(data.get("interface_shortcuts", {}), dict) else {},
-            global_shortcuts=dict(data.get("global_shortcuts", {})) if isinstance(data.get("global_shortcuts", {}), dict) else {},
+            interface_shortcuts=dict(data.get("interface_shortcuts", {}))
+            if isinstance(data.get("interface_shortcuts", {}), dict)
+            else {},
+            global_shortcuts=dict(data.get("global_shortcuts", {}))
+            if isinstance(data.get("global_shortcuts", {}), dict)
+            else {},
         )
 
 
 @dataclass(slots=True)
 class SessionState:
     """会话状态实体类。
-    
+
     保存播放器的当前状态，用于会话恢复和状态同步。
     使用slots=True优化内存使用。
     """
+
     current_playlist_id: str | None = None
     """当前播放列表ID，None表示未设置"""
     current_track_id: str | None = None
@@ -419,7 +427,7 @@ class SessionState:
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典格式，用于序列化。
-        
+
         Returns:
             dict[str, Any]: 包含当前会话状态的字典
         """
@@ -437,14 +445,14 @@ class SessionState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SessionState":
+    def from_dict(cls, data: dict[str, Any]) -> SessionState:
         """从字典创建SessionState实例，用于反序列化。
-        
+
         对输入数据进行验证和范围限制，确保会话状态的合法性。
-        
+
         Args:
             data: 包含会话状态数据的字典
-            
+
         Returns:
             SessionState: 新创建的SessionState实例
         """

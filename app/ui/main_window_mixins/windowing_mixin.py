@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """MainWindow 窗口行为与交互相关 mixin。
 
 该mixin承载主窗口的所有窗口管理和交互功能：
@@ -29,6 +27,8 @@ from __future__ import annotations
 - 通过事件过滤机制处理复杂的交互逻辑
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 
@@ -48,30 +48,30 @@ from app.ui.main_window_helpers import (
 
 class MainWindowWindowingMixin:
     """主窗口窗口行为管理mixin。
-    
+
     提供完整的窗口状态管理和用户交互控制：
-    
+
     双模式界面：
     - 富模式：完整功能界面，包含所有播放控制和媒体信息
     - 简洁模式：最小化界面，仅保留核心播放控制和迷你信息栏
     - 无缝切换：保持播放状态和用户设置的一致性
-    
+
     窗口管理：
     - 几何控制：大小、位置、最小/最大限制
     - 屏幕吸附：智能边缘吸附，支持多窗口布局
     - 状态记忆：自动保存窗口配置到设置文件
-    
+
     交互增强：
     - 透明度调节：支持窗口半透明效果（特别适合简洁模式）
     - 置顶显示：保持在其他窗口之上的显示模式
     - 锁定模式：防止意外退出简洁模式
     - 无边框控制：自定义窗口装饰和控制按钮
-    
+
     事件处理：
     - 鼠标事件：拖拽、调整大小、区域检测
     - 键盘事件：全局快捷键、焦点管理
     - 窗口事件：显示/隐藏、激活/失焦、关闭处理
-    
+
     文件操作：
     - 拖拽导入：支持拖拽音频文件到窗口进行播放
     - 文件关联：与系统文件管理器集成
@@ -80,19 +80,19 @@ class MainWindowWindowingMixin:
     # ============================================================================
     # 模式切换管理
     # ============================================================================
-    
+
     def _toggle_compact_mode(self) -> None:
         """在丰富模式与简洁模式之间切换。
-        
+
         模式切换逻辑：
         - 富模式 → 简洁模式：保存当前几何信息，切换到紧凑布局
         - 简洁模式 → 富模式：恢复之前保存的几何信息，切换到完整布局
-        
+
         状态保持：
         - 播放状态、进度、音量等保持不变
         - 歌词显示适配到不同布局空间
         - 侧边栏状态在进入简洁模式时自动收起
-        
+
         界面调整：
         - 富模式：显示完整控制栏、媒体信息、歌词、歌单
         - 简洁模式：仅显示进度条、基础控制按钮、迷你信息栏
@@ -238,9 +238,10 @@ class MainWindowWindowingMixin:
         self._update_locate_current_button()
         self._ensure_window_inside_screen()
         self.statusBar().showMessage("已退出简洁模式", 3000)
+
     def _exit_compact_mode(self) -> None:
         """退出简洁模式，切换到富模式界面。
-        
+
         这是一个便捷方法，用于在某些操作后自动退出简洁模式：
         - 检查当前是否处于简洁模式
         - 如果是，则调用模式切换方法
@@ -248,14 +249,15 @@ class MainWindowWindowingMixin:
         if not self._compact_mode:
             return
         self._toggle_compact_mode()
+
     def _toggle_rich_maximize(self) -> None:
         """在富模式下切换窗口最大化/还原状态。
-        
+
         处理窗口的三种状态切换：
         - 最大化 → 正常：还原窗口到正常大小
         - 吸附状态 → 正常：从屏幕吸附状态还原
         - 正常 → 最大化：最大化窗口
-        
+
         简洁模式下此功能不可用。
         """
         if self._compact_mode:
@@ -269,20 +271,22 @@ class MainWindowWindowingMixin:
             self.showMaximized()
             self._snap_docked = False
         self._refresh_rich_title_icons()
+
     def _is_rich_restore_state(self) -> bool:
         """检查窗口是否处于需要还原的状态。
-        
+
         判断当前窗口是否需要显示"还原"按钮：
         - 窗口最大化时需要还原
         - 窗口吸附到屏幕边缘时需要还原
-        
+
         Returns:
             True表示需要显示还原按钮，False表示显示最大化按钮
         """
         return bool(self.isMaximized() or self._snap_docked)
+
     def _remember_geometry_before_snap(self) -> None:
         """保存屏幕吸附前的窗口几何信息。
-        
+
         在窗口即将吸附到屏幕边缘时，保存当前的窗口位置和大小：
         - 只在窗口处于正常状态时保存
         - 用于后续从吸附状态还原时使用
@@ -290,9 +294,10 @@ class MainWindowWindowingMixin:
         if self.isMaximized() or self._snap_docked:
             return
         self._geometry_before_snap = QRect(self.geometry())
+
     def _restore_from_snap(self) -> None:
         """从屏幕吸附状态恢复到正常窗口状态。
-        
+
         使用之前保存的几何信息还原窗口：
         - 清除吸附状态标志
         - 恢复之前的窗口位置和大小
@@ -306,6 +311,7 @@ class MainWindowWindowingMixin:
         if geo is not None and geo.isValid():
             self.setGeometry(geo)
         self._ensure_window_inside_screen()
+
     def _refresh_rich_title_icons(self) -> None:
         """刷新富文本标题栏上的图标。
 
@@ -319,8 +325,11 @@ class MainWindowWindowingMixin:
             return  # 如果不存在则直接返回
         color = self._control_icon_color()  # 获取控制图标颜色
         self.rich_min_btn.setIcon(_make_rich_title_icon("min", color=color))  # 设置最小化按钮图标
-        self.rich_max_btn.setIcon(_make_rich_title_icon("restore" if self._is_rich_restore_state() else "max", color=color))  # 设置最大化/恢复按钮图标，根据当前状态选择图标
+        self.rich_max_btn.setIcon(
+            _make_rich_title_icon("restore" if self._is_rich_restore_state() else "max", color=color)
+        )  # 设置最大化/恢复按钮图标，根据当前状态选择图标
         self.rich_close_btn.setIcon(_make_rich_title_icon("close", color=color))  # 设置关闭按钮图标
+
     def _refresh_window_flags(self) -> None:
         """刷新窗口的特定标志状态。
 
@@ -345,6 +354,7 @@ class MainWindowWindowingMixin:
             # 如果启用了置顶标志，则将窗口提升到最前
             if self._always_on_top:
                 self.raise_()
+
     def _apply_window_size_limits(self) -> None:
         """按设置应用窗口最大尺寸限制。
 
@@ -360,12 +370,13 @@ class MainWindowWindowingMixin:
 
         self.setMaximumWidth(max(max_w, self.minimumWidth()))
         self.setMaximumHeight(max(max_h, self.minimumHeight()))
+
     def _refresh_compact_top_buttons(self) -> None:
         """刷新简洁模式顶部控制按钮的图标和提示文本。
-        
+
         根据当前窗口状态更新各个控制按钮的表现：
         - 锁定按钮：显示当前锁定状态和对应图标
-        - 置顶按钮：显示当前置顶状态和对应图标  
+        - 置顶按钮：显示当前置顶状态和对应图标
         - 关闭按钮：保持一致的样式和颜色
         """
         color = self._control_icon_color()
@@ -374,6 +385,7 @@ class MainWindowWindowingMixin:
         self.pin_btn.setIcon(_make_pin_icon(self._always_on_top, color=color))
         self.pin_btn.setToolTip("取消置顶" if self._always_on_top else "置顶窗口")
         self.compact_close_btn.setIcon(_make_rich_title_icon("close", color=color))
+
     def _layout_compact_top_bar(self) -> None:
         """计算并设置紧凑顶部栏（compact_top_bar）的内部布局，使其控件居中。
 
@@ -397,9 +409,7 @@ class MainWindowWindowingMixin:
         # 确保紧凑顶部栏的高度不小于其最小高度
         height = max(self.compact_top_bar.minimumHeight(), self.compact_top_bar.height())
         # 计算右侧控件（锁按钮、图钉按钮、关闭按钮）的总宽度，并加上12像素的间距
-        right_controls_width = (
-            self.lock_btn.width() + self.pin_btn.width() + self.compact_close_btn.width() + 12
-        )
+        right_controls_width = self.lock_btn.width() + self.pin_btn.width() + self.compact_close_btn.width() + 12
         # 计算左侧控件（透明度滑块）的宽度，并加上12像素的间距
         left_controls_width = self.opacity_slider.width() + 12
         # 计算标题标签允许的最大宽度：宽度减去左右两侧控件占用空间和边距（16像素），并确保至少为80像素
@@ -412,16 +422,17 @@ class MainWindowWindowingMixin:
         self.compact_top_title_label.move((width - max_title_width) // 2, (height - title_h) // 2)
         # 将标题标签提升到窗口栈的顶部，确保其绘制在其他控件之上（例如覆盖背景）
         self.compact_top_title_label.raise_()
+
     def _reposition_volume_value_label(self) -> None:
         """重新定位音量值标签的位置，使其相对于音量面板居中显示，并确保标签在可见区域内。
-    
+
         功能：
             调整音量值标签的显示位置，使其位于音量面板的正下方居中位置。
             同时确保标签不会超出容器边界，并置于最上层。
-    
+
         参数：
             无（self参数为实例自身）
-    
+
         返回值：
             无
         """
@@ -450,9 +461,10 @@ class MainWindowWindowingMixin:
         self.volume_value_label.move(x, y)
         # 将标签置于最上层，防止被其他控件遮挡
         self.volume_value_label.raise_()
+
     def _ensure_window_inside_screen(self) -> None:
         """确保窗口始终位于屏幕可见区域内。
-        
+
         如果窗口位置或大小超出屏幕边界，自动调整到合适位置：
         - 获取当前屏幕的可用几何区域（排除任务栏等系统区域）
         - 检测窗口是否超出边界
@@ -481,9 +493,10 @@ class MainWindowWindowingMixin:
 
         if target_x != geo.x() or target_y != geo.y():
             self.move(target_x, target_y)
+
     def _restore_window_geometry(self) -> None:
         """从设置中恢复之前保存的窗口几何信息。
-        
+
         在应用启动时调用，恢复用户上次关闭时的窗口状态：
         - 检查是否启用了窗口几何记忆功能
         - 从设置中读取保存的窗口大小和位置
@@ -505,10 +518,11 @@ class MainWindowWindowingMixin:
         if x >= 0 and y >= 0:
             self.move(x, y)
         self._ensure_window_inside_screen()
+
     def _persist_window_geometry(self) -> None:
         """
         将当前窗口的几何信息（位置和大小）持久化保存。
-    
+
         功能：根据设置决定是否保存窗口的位置和尺寸，以便下次启动时恢复窗口状态。
         参数：无。
         返回值：无。
@@ -525,9 +539,10 @@ class MainWindowWindowingMixin:
             width=int(self.width()),  # 窗口的宽度
             height=int(self.height()),  # 窗口的高度
         )
+
     def _ensure_taskbar_progress_initialized(self) -> None:
         """确保Windows任务栏进度显示功能已初始化。
-        
+
         在Windows平台上初始化任务栏进度显示：
         - 获取窗口句柄（只支持Windows平台）
         - 验证句柄有效性
@@ -537,6 +552,7 @@ class MainWindowWindowingMixin:
         if hwnd <= 0:
             return
         self._taskbar_progress.attach(hwnd)
+
     def _update_taskbar_progress(self, position: float, duration: float) -> None:
         """更新任务栏进度。在Windows平台上，初始化任务栏进度并设置进度。
 
@@ -551,9 +567,10 @@ class MainWindowWindowingMixin:
             return  # 如果不是Windows平台，直接返回
         self._ensure_taskbar_progress_initialized()  # 确保任务栏进度已初始化
         self._taskbar_progress.set_progress(position, duration)  # 设置任务栏进度
+
     def _toggle_sidebar(self) -> None:
         """切换侧边栏的展开/收起状态。
-        
+
         控制主窗口侧边栏的显示和隐藏：
         - 简洁模式下不可用（此时侧边栏已自动隐藏）
         - 展开→收起：保存当前宽度，完全隐藏侧边栏
@@ -581,6 +598,7 @@ class MainWindowWindowingMixin:
         self._update_sidebar_toggle_icon()
         self._reposition_sidebar_toggle()
         self.statusBar().showMessage("已收起快捷侧边栏" if self._sidebar_collapsed else "已展开快捷侧边栏", 1800)
+
     def _on_splitter_moved(self, _pos: int, _index: int) -> None:
         """当分割器被移动时触发的方法。
 
@@ -598,17 +616,20 @@ class MainWindowWindowingMixin:
                 self._sidebar_collapsed = True
             else:  # 否则，侧边栏未被折叠
                 self._sidebar_collapsed = False
-                self._sidebar_last_width = max(self._sidebar_min_width, sizes[1])  # 更新侧边栏最后宽度为最小宽度和当前宽度的较大值
+                self._sidebar_last_width = max(
+                    self._sidebar_min_width, sizes[1]
+                )  # 更新侧边栏最后宽度为最小宽度和当前宽度的较大值
         self._update_sidebar_toggle_icon()  # 更新侧边栏切换按钮的图标
         self._reposition_sidebar_toggle()  # 重新定位侧边栏切换按钮
+
     def _update_sidebar_toggle_icon(self) -> None:
         """更新侧边栏切换按钮的图标。
-    
+
         根据侧边栏的折叠状态和控制图标颜色，生成并设置新的切换图标。
-    
+
         参数:
             无额外参数（通过self访问实例属性）。
-    
+
         返回值:
             None（直接修改按钮图标）。
         """
@@ -616,6 +637,7 @@ class MainWindowWindowingMixin:
         self.sidebar_toggle_btn.setIcon(
             _make_sidebar_toggle_icon(collapsed=self._sidebar_collapsed, color=self._control_icon_color())
         )
+
     def _reposition_sidebar_toggle(self) -> None:
         if not hasattr(self, "sidebar_toggle_btn"):
             return
@@ -635,19 +657,20 @@ class MainWindowWindowingMixin:
         y = geo.y() + (geo.height() - self.sidebar_toggle_btn.height()) // 2
         self.sidebar_toggle_btn.move(x, y)
         self.sidebar_toggle_btn.raise_()
+
     def _clamp_sidebar_width(self, total_width: int, preferred: int) -> int:
         """约束侧边栏宽度到合理的范围内。
-        
+
         确保侧边栏宽度适配可用空间且符合最小/最大限制：
         - 考虑主窗口的总宽度
         - 保留最小主内容区域宽度（252像素）
         - 应用配置的最小/最大侧边栏宽度限制
         - 将期望宽度调整到有效范围内
-        
+
         Args:
             total_width: 主窗口的总宽度
             preferred: 期望的侧边栏宽度
-            
+
         Returns:
             符合约束条件的实际宽度
         """
@@ -655,6 +678,7 @@ class MainWindowWindowingMixin:
         hard_max = max(self._sidebar_min_width, total - 252)
         upper = min(self._sidebar_max_width, hard_max)
         return max(self._sidebar_min_width, min(int(preferred), upper))
+
     def _prefer_resize_to_sidebar(
         self,
         delta_width: int,
@@ -663,10 +687,10 @@ class MainWindowWindowingMixin:
         total_width: int | None = None,
     ) -> None:
         """优先调整侧边栏大小的窗口resize处理。
-        
+
         当窗口大小改变时，优先调整侧边栏的宽度而不是主内容区域。
         这样可以在窗口resize时保持更好的用户体验。
-        
+
         Args:
             delta_width: 宽度变化量
             old_sidebar_width: 调整前的侧边栏宽度，如果为None则使用上次的记录值
@@ -685,14 +709,15 @@ class MainWindowWindowingMixin:
             return
         self.main_splitter.setSizes([max(0, total - target_side), target_side])
         self._sidebar_last_width = target_side
+
     def _hit_test_resize_edges(self, pos: QPoint):
         """检测鼠标位置是否在窗口边缘的可调整区域内。
-        
+
         用于实现自定义的窗口边缘拖动调整大小功能。
-        
+
         Args:
             pos: 相对于窗口的本地坐标位置
-            
+
         Returns:
             Qt.Edge的组合值，表示鼠标在哪个边缘，如果不在边缘则返回None
         """
@@ -716,12 +741,13 @@ class MainWindowWindowingMixin:
         elif y >= h - margin:
             edges |= Qt.Edge.BottomEdge
         return edges if edges else None
+
     def _cursor_for_resize_edges(edges) -> Qt.CursorShape:
         """根据边缘类型返回对应的鼠标光标形状。
-        
+
         Args:
             edges: Qt.Edge的组合值，表示可调整的边缘
-            
+
         Returns:
             对应的鼠标光标形状
         """
@@ -740,14 +766,15 @@ class MainWindowWindowingMixin:
         if has_top or has_bottom:
             return Qt.CursorShape.SizeVerCursor
         return Qt.CursorShape.ArrowCursor
+
     def _screen_for_global_pos(self, global_pos: QPoint):
         """获取指定全局坐标所在屏幕对象。
-        
+
         优先尝试通过坐标查找，如果找不到则使用窗口的屏幕或主屏幕。
-        
+
         Args:
             global_pos: 全局屏幕坐标
-            
+
         Returns:
             QScreen对象
         """
@@ -756,14 +783,15 @@ class MainWindowWindowingMixin:
             return screen
         handle = self.windowHandle()
         return handle.screen() if handle is not None else QGuiApplication.primaryScreen()
+
     def _apply_titlebar_snap(self, global_pos: QPoint) -> None:
         """应用标题栏拖动吸附效果。
-        
+
         模拟Windows系统的标题栏吸附行为：
         - 拖动到屏幕顶部：最大化窗口
         - 拖动到屏幕左侧：窗口占据左半屏
         - 拖动到屏幕右侧：窗口占据右半屏
-        
+
         Args:
             global_pos: 鼠标的全局屏幕坐标
         """
@@ -787,24 +815,28 @@ class MainWindowWindowingMixin:
             return
         if global_pos.x() >= avail.right() - threshold:
             self._remember_geometry_before_snap()
-            self.setGeometry(avail.left() + avail.width() // 2, avail.top(), avail.width() - avail.width() // 2, avail.height())
+            self.setGeometry(
+                avail.left() + avail.width() // 2, avail.top(), avail.width() - avail.width() // 2, avail.height()
+            )
             self._snap_docked = True
             self._refresh_rich_title_icons()
+
     def nativeEvent(self, eventType, message):
         """回退到Qt默认原生事件处理，避免与系统窗口缩放冲突。"""
         return super().nativeEvent(eventType, message)
+
     def eventFilter(self, watched, event):
         """事件过滤器，处理各种UI组件的交互事件。
-        
+
         监控并处理以下事件：
         1. 自定义标题栏的鼠标交互（双击最大化，拖动等）
         2. 播放列表的鼠标悬停和删除操作
         3. 歌词列表的鼠标悬停效果
-        
+
         Args:
             watched: 被监控的对象
             event: Qt事件对象
-            
+
         Returns:
             True表示事件已被处理，False交由父类处理
         """
@@ -853,15 +885,28 @@ class MainWindowWindowingMixin:
                 if self._drag_offset is not None:
                     self.move(event.globalPosition().toPoint() - self._drag_offset)
                     return True
-            elif event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
-                if self._drag_offset is not None:
-                    self._drag_offset = None
-                    return True
+            elif (
+                event.type() == QEvent.Type.MouseButtonRelease
+                and event.button() == Qt.MouseButton.LeftButton
+                and self._drag_offset is not None
+            ):
+                self._drag_offset = None
+                return True
 
         # 简洁模式下菜单栏支持拖动窗口（避开菜单项和角部提示控件中的交互子控件）
         menu_bar = self.menuBar() if hasattr(self, "menuBar") else None
         hint_widget = getattr(self, "menu_hint_widget", None)
-        if self._compact_mode and (watched is menu_bar or watched is hint_widget) and not self._compact_locked:
+        if (
+            self._compact_mode
+            and (watched is menu_bar or watched is hint_widget)
+            and not self._compact_locked
+            and event.type()
+            in (
+                QEvent.Type.MouseButtonPress,
+                QEvent.Type.MouseMove,
+                QEvent.Type.MouseButtonRelease,
+            )
+        ):
             local_pos = event.position().toPoint()
             on_action = False
             if watched is menu_bar:
@@ -869,9 +914,7 @@ class MainWindowWindowingMixin:
                     if menu_bar.actionGeometry(action).contains(local_pos):
                         on_action = True
                         break
-            if not on_action and not self._is_interactive_widget_at(
-                watched.mapToParent(local_pos)
-            ):
+            if not on_action and not self._is_interactive_widget_at(watched.mapToParent(local_pos)):
                 if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                     self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
                     return True
@@ -916,12 +959,13 @@ class MainWindowWindowingMixin:
                 self.lyrics_delegate.set_hover_row(-1)
                 self.lyrics_list.viewport().update()
         return super().eventFilter(watched, event)
+
     def _adjust_volume_from_wheel_delta(self, delta: int) -> None:
         """根据鼠标滚轮调整音量。
-        
+
         滚轮向上增加音量，向下减少音量。使用与键盘快捷键相同的音量调整策略，
         确保用户的操作预期一致。
-        
+
         Args:
             delta: 滚轮变化量，正值表示向上滚动，负值表示向下滚动
         """
@@ -931,14 +975,15 @@ class MainWindowWindowingMixin:
         self.player.adjust_gain_by_key(increase)
         self._refresh_volume_ui()
         self.statusBar().showMessage(f"音量：{self.player.gain_percent()}%", 1200)
+
     def _is_inside_playback_controls(self, pos: QPoint) -> bool:
         """检查指定位置是否在播放控制区域内。
-        
+
         用于确定鼠标滚轮事件是否应该用于调整音量。
-        
+
         Args:
             pos: 相对于窗口的本地坐标位置
-            
+
         Returns:
             如果位置在播放控制区域内则返回True，否则返回False
         """
@@ -948,12 +993,13 @@ class MainWindowWindowingMixin:
                 return True
             child = child.parentWidget()
         return False
+
     def wheelEvent(self, event) -> None:
         """处理鼠标滚轮事件。
-        
+
         当鼠标在播放控制区域内时，滚轮用于调整音量；
         在其他区域则传递给父类处理默认行为。
-        
+
         Args:
             event: 鼠标滚轮事件
         """
@@ -967,13 +1013,14 @@ class MainWindowWindowingMixin:
             event.accept()
             return
         super().wheelEvent(event)
+
     def mousePressEvent(self, event) -> None:
         """处理鼠标按下事件。
-        
+
         支持两种鼠标拖动操作：
         1. 非紧凑模式下：检测是否在窗口边缘，如果是则开始系统级窗口调整
         2. 紧凑模式下：检测是否在可拖动区域，如果是则开始窗口拖动
-        
+
         Args:
             event: 鼠标按下事件
         """
@@ -987,13 +1034,14 @@ class MainWindowWindowingMixin:
             event.accept()
             return
         super().mousePressEvent(event)
+
     def mouseMoveEvent(self, event) -> None:
         """处理鼠标移动事件。
-        
+
         支持以下功能：
         1. 拖动窗口（包括自定义标题栏和紧凑模式下的拖动）
         2. 根据鼠标位置设置合适的调整大小光标
-        
+
         Args:
             event: 鼠标移动事件
         """
@@ -1006,14 +1054,15 @@ class MainWindowWindowingMixin:
             event.accept()
             return
         super().mouseMoveEvent(event)
+
     def mouseReleaseEvent(self, event) -> None:
         """处理鼠标释放事件。
-        
+
         主要功能：
         1. 释放窗口拖动状态
         2. 应用标题栏吸附效果（如果适用）
         3. 恢复正常的鼠标光标显示
-        
+
         Args:
             event: 鼠标释放事件
         """
@@ -1027,20 +1076,22 @@ class MainWindowWindowingMixin:
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
     def leaveEvent(self, event) -> None:
         """处理鼠标离开窗口事件。
-        
+
         当鼠标离开窗口时，恢复默认的光标形状。
-        
+
         Args:
             event: 鼠标离开事件
         """
         super().leaveEvent(event)
+
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         """处理拖放进入事件。
-        
+
         检查拖放的内容是否包含本地文件URL，如果是则接受拖放操作。
-        
+
         Args:
             event: 拖放进入事件
         """
@@ -1053,6 +1104,7 @@ class MainWindowWindowingMixin:
                 event.acceptProposedAction()
                 return
         event.ignore()
+
     def dropEvent(self, event: QDropEvent) -> None:
         mime = event.mimeData()
         if not mime.hasUrls():
@@ -1068,7 +1120,6 @@ class MainWindowWindowingMixin:
             event.ignore()
             return
 
-        lyrics_exts = {".lrc", ".qrc"}
         lyrics_name_suffixes = ("_qm.qrc.txt", "_qmRoma.qrc.txt", "_qmts.qrc.txt")
         audio_exts = {".mp3", ".flac", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".wma"}
 
@@ -1077,9 +1128,7 @@ class MainWindowWindowingMixin:
                 return True
             if p.suffix.lower() == ".qrc":
                 return True
-            if p.suffix.lower() == ".txt" and p.name.endswith(lyrics_name_suffixes):
-                return True
-            return False
+            return p.suffix.lower() == ".txt" and p.name.endswith(lyrics_name_suffixes)
 
         def _is_audio_file(p: Path) -> bool:
             return p.suffix.lower() in audio_exts
@@ -1183,15 +1232,16 @@ class MainWindowWindowingMixin:
         # 保存库服务并重新加载当前歌词
         self.controller.library_service.save()
         self._reload_current_lyrics()
+
     def _is_interactive_widget_at(self, pos: QPoint) -> bool:
         """检查指定位置是否在交互控件上。
-        
+
         用于确定在紧凑模式下是否可以开始窗口拖拽。
         如果点击在按钮、滑块等交互控件上，则不应触发窗口拖拽。
-        
+
         Args:
             pos: 相对于窗口的本地坐标位置
-            
+
         Returns:
             如果位置在交互控件上则返回True，否则返回False
         """
@@ -1202,15 +1252,16 @@ class MainWindowWindowingMixin:
                 return True
             child = child.parentWidget()
         return False
+
     def resizeEvent(self, event) -> None:
         """处理窗口大小调整事件。
-        
+
         在窗口大小改变时执行以下操作：
         1. 优先调整侧边栏大小而不是主内容区域
         2. 重新定位和调整各个UI组件
         3. 更新播放列表中项目的高度
         4. 更新定位当前播放歌曲的按钮状态
-        
+
         Args:
             event: 窗口大小调整事件
         """
@@ -1245,21 +1296,23 @@ class MainWindowWindowingMixin:
             if label is not None and hasattr(label, "_refresh_display_text"):
                 label._refresh_display_text()
         self._last_window_width = self.width()
+
     def showEvent(self, event) -> None:
         """处理窗口显示事件。
-        
+
         窗口显示时初始化任务栏进度条显示。
-        
+
         Args:
             event: 窗口显示事件
         """
         super().showEvent(event)
         QTimer.singleShot(0, self._ensure_taskbar_progress_initialized)
+
     def changeEvent(self, event) -> None:
         """处理窗口状态改变事件。
-        
+
         主要用于在窗口最大化状态改变时更新自定义标题栏的图标显示。
-        
+
         Args:
             event: 状态改变事件
         """
@@ -1268,9 +1321,10 @@ class MainWindowWindowingMixin:
             if self.isMaximized():
                 self._snap_docked = False
             self._refresh_rich_title_icons()
+
     def _update_track_item_heights(self) -> None:
         """更新播放列表中所有项目的高度。
-        
+
         根据项目的文本内容计算合适的高度，确保文本能够完整显示。
         """
         for row in range(self.track_list.count()):
@@ -1278,9 +1332,10 @@ class MainWindowWindowingMixin:
             if item is None:
                 continue
             item.setSizeHint(QSize(0, self._track_item_height_for_text(item.text() or "")))
+
     def _position_locate_current_button(self) -> None:
         """定位"跳转到当前播放"按钮的位置。
-        
+
         将按钮放置在播放列表视图的右下角，确保按钮始终可见。
         """
         if not hasattr(self, "locate_current_btn"):
@@ -1290,9 +1345,10 @@ class MainWindowWindowingMixin:
         y = max(2, vp.height() - self.locate_current_btn.height() - 4)
         self.locate_current_btn.move(x, y)
         self.locate_current_btn.raise_()
+
     def _find_current_track_row(self) -> int:
         """查找当前正在播放的歌曲在播放列表中的行号。
-        
+
         Returns:
             当前播放歌曲的行号，如果未找到则返回-1
         """
@@ -1304,12 +1360,13 @@ class MainWindowWindowingMixin:
             if item is not None and item.data(0x0100) == current_id:
                 return row
         return -1
+
     def _is_track_row_visible(self, row: int) -> bool:
         """检查指定行的项目是否在播放列表的可视区域内。
-        
+
         Args:
             row: 要检查的行号
-            
+
         Returns:
             如果项目完全可见则返回True，否则返回False
         """
@@ -1323,9 +1380,10 @@ class MainWindowWindowingMixin:
             return False
         vp = self.track_list.viewport().rect()
         return rect.top() >= vp.top() and rect.bottom() <= vp.bottom()
+
     def _update_locate_current_button(self) -> None:
         """更新"跳转到当前播放"按钮的显示状态。
-        
+
         只有当当前播放的歌曲不在可视区域内时才显示按钮。
         """
         if not hasattr(self, "locate_current_btn"):
@@ -1334,9 +1392,10 @@ class MainWindowWindowingMixin:
         should_show = row >= 0 and not self._is_track_row_visible(row)
         self.locate_current_btn.setVisible(bool(should_show))
         self._position_locate_current_button()
+
     def _locate_current_track_in_list(self) -> None:
         """在播放列表中定位并滚动到当前播放的歌曲。
-        
+
         将当前播放的歌曲设置为选中状态，并滚动到可视区域中央。
         然后更新定位按钮的显示状态。
         """
@@ -1348,52 +1407,56 @@ class MainWindowWindowingMixin:
         if item is not None:
             self.track_list.scrollToItem(item, QListWidget.ScrollHint.PositionAtCenter)
         self._update_locate_current_button()
+
     def minimumSizeHint(self) -> QSize:
         """返回窗口的最小尺寸提示。
-        
+
         在紧凑模式下，窗口可以缩小到非常小的尺寸（理论上为0,0），
         在其他模式下使用父类的最小尺寸。
-        
+
         Returns:
             最小尺寸QSize对象
         """
         if self._compact_mode:
             return QSize(0, 0)
         return super().minimumSizeHint()
+
     def _lyric_text_of_item(self, item: QListWidgetItem) -> str:
         """获取歌词列表中项目的纯文本内容。
-        
+
         去除首尾空白字符，确保返回干净的歌词文本。
-        
+
         Args:
             item: 歌词列表中的列表项
-            
+
         Returns:
             清理后的歌词文本
         """
         return (item.text() or "").strip()
+
     def _track_text_of_item(self, item: QListWidgetItem) -> str:
         """获取播放列表项目中歌曲的显示名称。
-        
+
         如果项目名称为空或只有空白字符，则返回"未知歌曲"作为默认值。
-        
+
         Args:
             item: 播放列表中的列表项
-            
+
         Returns:
             歌曲名称，如果为空则返回"未知歌曲"
         """
         text = (item.text() or "").strip()
         return text or "未知歌曲"
+
     def closeEvent(self, event: QCloseEvent) -> None:
         """处理窗口关闭事件。
-        
+
         在窗口关闭前执行清理工作：
         1. 保存窗口几何信息以便下次启动时恢复
         2. 清理任务栏进度条
         3. 关闭应用程序控制器
         4. 最后调用父类的关闭处理
-        
+
         Args:
             event: 窗口关闭事件
         """

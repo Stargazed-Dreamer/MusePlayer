@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """MainWindow 的可复用辅助组件与绘制工具。
 
 该模块集中承载：
@@ -24,6 +22,9 @@ from __future__ import annotations
 - 封装平台特定功能（如Windows任务栏集成）
 """
 
+from __future__ import annotations
+
+import contextlib
 import ctypes
 import html
 import re
@@ -36,19 +37,19 @@ from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QHBoxLayout,
+    QLabel,
     QListWidget,
-    QSlider,
     QSizePolicy,
+    QSlider,
     QStatusBar,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionSlider,
     QStyleOptionViewItem,
-    QWidget,
-    QHBoxLayout,
-    QLabel,
     QToolButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from app.services.player_service import PlayMode
@@ -230,6 +231,7 @@ class LyricEntry:
         # 回退选项：尝试返回原文、罗马音、翻译或默认符号
         return self.original or self.romaji or self.translation or "♪"
 
+
 TBPF_NOPROGRESS = 0x00000000
 TBPF_INDETERMINATE = 0x00000001
 TBPF_NORMAL = 0x00000002
@@ -241,6 +243,7 @@ IID_ITASKBAR_LIST3 = "{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}"
 
 
 if comtypes is not None and COMMETHOD is not None and GUID is not None:
+
     class ITaskbarList3(IUnknown):
         _iid_ = GUID(IID_ITASKBAR_LIST3)
         _methods_ = [
@@ -250,20 +253,51 @@ if comtypes is not None and COMMETHOD is not None and GUID is not None:
             COMMETHOD([], HRESULT, "ActivateTab", (["in"], c_void_p, "hwnd")),
             COMMETHOD([], HRESULT, "SetActiveAlt", (["in"], c_void_p, "hwnd")),
             COMMETHOD([], HRESULT, "MarkFullscreenWindow", (["in"], c_void_p, "hwnd"), (["in"], c_int, "fFullscreen")),
-            COMMETHOD([], HRESULT, "SetProgressValue", (["in"], c_void_p, "hwnd"), (["in"], c_ulonglong, "ullCompleted"), (["in"], c_ulonglong, "ullTotal")),
+            COMMETHOD(
+                [],
+                HRESULT,
+                "SetProgressValue",
+                (["in"], c_void_p, "hwnd"),
+                (["in"], c_ulonglong, "ullCompleted"),
+                (["in"], c_ulonglong, "ullTotal"),
+            ),
             COMMETHOD([], HRESULT, "SetProgressState", (["in"], c_void_p, "hwnd"), (["in"], c_int, "tbpFlags")),
             COMMETHOD([], HRESULT, "RegisterTab", (["in"], c_void_p, "h1"), (["in"], c_void_p, "h2")),
             COMMETHOD([], HRESULT, "UnregisterTab", (["in"], c_void_p, "h")),
             COMMETHOD([], HRESULT, "SetTabOrder", (["in"], c_void_p, "h1"), (["in"], c_void_p, "h2")),
-            COMMETHOD([], HRESULT, "SetTabActive", (["in"], c_void_p, "h1"), (["in"], c_void_p, "h2"), (["in"], c_int, "f")),
-            COMMETHOD([], HRESULT, "ThumbBarAddButtons", (["in"], c_void_p, "h"), (["in"], c_uint, "n"), (["in"], c_void_p, "p")),
-            COMMETHOD([], HRESULT, "ThumbBarUpdateButtons", (["in"], c_void_p, "h"), (["in"], c_uint, "n"), (["in"], c_void_p, "p")),
+            COMMETHOD(
+                [], HRESULT, "SetTabActive", (["in"], c_void_p, "h1"), (["in"], c_void_p, "h2"), (["in"], c_int, "f")
+            ),
+            COMMETHOD(
+                [],
+                HRESULT,
+                "ThumbBarAddButtons",
+                (["in"], c_void_p, "h"),
+                (["in"], c_uint, "n"),
+                (["in"], c_void_p, "p"),
+            ),
+            COMMETHOD(
+                [],
+                HRESULT,
+                "ThumbBarUpdateButtons",
+                (["in"], c_void_p, "h"),
+                (["in"], c_uint, "n"),
+                (["in"], c_void_p, "p"),
+            ),
             COMMETHOD([], HRESULT, "ThumbBarSetImageList", (["in"], c_void_p, "h"), (["in"], c_void_p, "p")),
-            COMMETHOD([], HRESULT, "SetOverlayIcon", (["in"], c_void_p, "h"), (["in"], c_void_p, "p1"), (["in"], c_void_p, "p2")),
+            COMMETHOD(
+                [],
+                HRESULT,
+                "SetOverlayIcon",
+                (["in"], c_void_p, "h"),
+                (["in"], c_void_p, "p1"),
+                (["in"], c_void_p, "p2"),
+            ),
             COMMETHOD([], HRESULT, "SetThumbnailTooltip", (["in"], c_void_p, "h"), (["in"], c_void_p, "p")),
             COMMETHOD([], HRESULT, "SetThumbnailClip", (["in"], c_void_p, "h"), (["in"], c_void_p, "p")),
         ]
 else:
+
     class ITaskbarList3:
         pass
 
@@ -273,13 +307,13 @@ class MultiHintStatusBar(QStatusBar):
 
     与 Qt 原生 `showMessage` 不同，本实现允许多来源提示共存，
     并通过 `-` 拼接展示，适合播放器同时显示音量/状态/预告信息。
-    
+
     工作机制：
     - 每个消息都有独立的key、过期时间和显示优先级
     - 定时器定期清理过期消息（160ms间隔）
     - 消息按优先级排序后拼接显示，用" - "分隔
     - 支持自动key推断（从消息内容提取前缀）
-    
+
     典型使用场景：
     - key="音量": 显示当前音量值
     - key="状态": 显示播放状态或操作反馈
@@ -288,21 +322,21 @@ class MultiHintStatusBar(QStatusBar):
 
     def __init__(self, parent=None):
         """初始化多提示状态栏。
-        
+
         Args:
             parent: 父级QWidget
         """
         super().__init__(parent)
-        
+
         # hints字典结构：{key: (text, expire_time, order)}
         # - key: 消息类型标识（如"音量"、"状态"）
         # - text: 实际显示的文本内容
         # - expire_time: 过期时间戳（None表示永不过期）
         # - order: 显示优先级（数字越小优先级越高）
         self._hints: dict[str, tuple[str, float | None, int]] = {}
-        
+
         self._order_counter = 0  # 用于生成唯一的显示优先级
-        
+
         # 创建定时器定期清理过期消息并刷新显示
         self._timer = QTimer(self)
         self._timer.setInterval(160)  # 160ms刷新间隔，平衡性能和响应性
@@ -332,7 +366,7 @@ class MultiHintStatusBar(QStatusBar):
 
     def set_hint(self, key: str, text: str, timeout_ms: int = 0) -> None:
         """设置一条状态提示。
-        
+
         Args:
             key: 提示类型标识（如"音量"、"状态"）
             text: 要显示的文本内容
@@ -341,14 +375,14 @@ class MultiHintStatusBar(QStatusBar):
         if not text:
             self.clear_hint(key)
             return
-        
+
         now = self._now_sec()
         # 计算过期时间戳，如果timeout_ms > 0则设置过期时间，否则为None（永不过期）
         expire = (now + max(0, int(timeout_ms)) / 1000.0) if timeout_ms > 0 else None
-        
+
         # 如果key已存在则保持原有优先级，否则分配新的优先级
         order = self._hints[key][2] if key in self._hints else self._next_order()
-        
+
         self._hints[key] = (str(text), expire, order)
         self._render()
 
@@ -391,7 +425,9 @@ class MultiHintStatusBar(QStatusBar):
         返回值：无。
         """
         now = self._now_sec()  # 获取当前时间（秒）
-        expired = [k for k, (_, e, _) in self._hints.items() if e is not None and e <= now]  # 从self._hints中筛选出过期键（结束时间e存在且小于等于当前时间）
+        expired = [
+            k for k, (_, e, _) in self._hints.items() if e is not None and e <= now
+        ]  # 从self._hints中筛选出过期键（结束时间e存在且小于等于当前时间）
         if not expired:  # 如果没有过期项
             return  # 提前返回
         for key in expired:  # 遍历所有过期键
@@ -429,6 +465,7 @@ class LyricsListWidget(QListWidget):
         user_interacted: 用户交互时发出的信号。
         copy_requested: 用户请求复制时发出的信号。
     """
+
     user_interacted = Signal()
     copy_requested = Signal()
 
@@ -476,6 +513,7 @@ class LyricLineWidget(QWidget):
         _start_sec: 歌词开始时间（秒）。
         _end_sec: 歌词结束时间（秒）。
     """
+
     def __init__(self, text: str, start_sec: float, end_sec: float, parent=None):
         """初始化歌词行小部件.
 
@@ -683,6 +721,7 @@ class LyricsItemDelegate(QStyledItemDelegate):
         _end_times: 歌词结束时间列表。
         _structured: 结构化歌词数据列表。
     """
+
     def __init__(self, parent=None):
         """初始化歌词视图组件。
 
@@ -737,8 +776,16 @@ class LyricsItemDelegate(QStyledItemDelegate):
 
         if is_hover:
             painter.setPen(QColor("#5f7892"))
-            painter.drawText(left_rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), _format_lrc_time(self._start_times[row]))
-            painter.drawText(right_rect, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), _format_lrc_time(self._end_times[row]))
+            painter.drawText(
+                left_rect,
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                _format_lrc_time(self._start_times[row]),
+            )
+            painter.drawText(
+                right_rect,
+                int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                _format_lrc_time(self._end_times[row]),
+            )
 
         if self._structured and 0 <= row < len(self._structured):
             entry = self._structured[row]
@@ -749,7 +796,9 @@ class LyricsItemDelegate(QStyledItemDelegate):
             painter.drawText(text_rect, int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), text)
         painter.restore()
 
-    def _paint_structured_entry(self, painter: QPainter, entry: LyricEntry, rect: QRect, opt: QStyleOptionViewItem) -> None:
+    def _paint_structured_entry(
+        self, painter: QPainter, entry: LyricEntry, rect: QRect, opt: QStyleOptionViewItem
+    ) -> None:
         """
         此方法用于绘制结构化的歌词条目，包括日文原文、注音、罗马字和翻译。
         参数：
@@ -765,7 +814,9 @@ class LyricsItemDelegate(QStyledItemDelegate):
         secondary_pen.setAlpha(160)  # 设置副画笔透明度为160，用于绘制次要文本如注音和翻译
         fm = opt.fontMetrics  # 获取字体度量对象，用于计算文本尺寸和行高
         base_line_h = fm.height() + 4  # 计算基础行高，为字体高度加4像素，确保文本行间有适当间距
-        furi_line_h = max(10, int(fm.height() * 0.6) + 2)  # 计算注音行高，取最大值10像素或字体高度的60%加2像素，保证最小可读性
+        furi_line_h = max(
+            10, int(fm.height() * 0.6) + 2
+        )  # 计算注音行高，取最大值10像素或字体高度的60%加2像素，保证最小可读性
         y = rect.top()  # 设置绘制起始y坐标为矩形顶部，用于逐步向下绘制文本行
         has_japanese = bool(entry.original)  # 检查条目是否包含日文原文
         has_furigana = bool(entry.furigana)  # 检查条目是否包含注音
@@ -777,29 +828,45 @@ class LyricsItemDelegate(QStyledItemDelegate):
                 self._paint_furigana_line(painter, entry, rect, y, furi_line_h, secondary_pen, fm)  # 调用方法绘制注音行
                 y += furi_line_h  # 更新y坐标，为日文原文行腾出空间
             painter.setPen(text_pen)  # 设置画笔为文本颜色，用于绘制主要日文原文
-            painter.drawText(QRect(rect.left(), y, rect.width(), base_line_h), int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), entry.original)  # 绘制日文原文，水平和垂直居中对齐
+            painter.drawText(
+                QRect(rect.left(), y, rect.width(), base_line_h),
+                int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
+                entry.original,
+            )  # 绘制日文原文，水平和垂直居中对齐
             y += base_line_h  # 更新y坐标，移动到下一行
 
         if has_romaji:  # 如果存在罗马字
             painter.setPen(secondary_pen)  # 设置画笔为副画笔（半透明），用于绘制罗马字
             romaji_font = painter.font()  # 获取当前字体对象
-            romaji_font.setPointSize(max(7, romaji_font.pointSize() - 1))  # 调整字体大小，最小为7点，比当前字号小1点，以区分主次
+            romaji_font.setPointSize(
+                max(7, romaji_font.pointSize() - 1)
+            )  # 调整字体大小，最小为7点，比当前字号小1点，以区分主次
             painter.setFont(romaji_font)  # 应用调整后的字体
-            painter.drawText(QRect(rect.left(), y, rect.width(), base_line_h), int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), entry.romaji)  # 绘制罗马字，水平和垂直居中对齐
+            painter.drawText(
+                QRect(rect.left(), y, rect.width(), base_line_h),
+                int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
+                entry.romaji,
+            )  # 绘制罗马字，水平和垂直居中对齐
             romaji_font.setPointSize(romaji_font.pointSize() + 1)  # 恢复字体大小，增加1点，避免影响后续绘制
             painter.setFont(romaji_font)  # 应用恢复后的字体
             y += base_line_h  # 更新y坐标，移动到下一行
 
         if has_translation:  # 如果存在翻译文本
             painter.setPen(secondary_pen)  # 设置画笔为副画笔（半透明），用于绘制翻译
-            painter.drawText(QRect(rect.left(), y, rect.width(), base_line_h), int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), entry.translation)  # 绘制翻译文本，水平和垂直居中对齐
+            painter.drawText(
+                QRect(rect.left(), y, rect.width(), base_line_h),
+                int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
+                entry.translation,
+            )  # 绘制翻译文本，水平和垂直居中对齐
 
-    def _paint_furigana_line(self, painter: QPainter, entry: LyricEntry, rect: QRect, y: int, line_h: int, pen: QColor, fm) -> None:
+    def _paint_furigana_line(
+        self, painter: QPainter, entry: LyricEntry, rect: QRect, y: int, line_h: int, pen: QColor, fm
+    ) -> None:
         """绘制歌词条目的注音行。
-    
+
         该方法负责在指定矩形区域内绘制歌词文本及其对应的注音（ふりがな）。
         注音会根据原始字符的位置进行水平居中排列，并适当调整字符间距以避免注音重叠。
-    
+
         Args:
             painter (QPainter): 用于绘制的QPainter对象。
             entry (LyricEntry): 包含原始歌词文本和注音信息的歌词条目。
@@ -808,7 +875,7 @@ class LyricsItemDelegate(QStyledItemDelegate):
             line_h (int): 当前行的高度。
             pen (QColor): 绘制注音使用的画笔颜色。
             fm (QFontMetrics): 用于测量原始文本字符宽度的字体度量对象。
-    
+
         Returns:
             None: 该方法不返回任何值，直接在painter上绘制内容。
         """
@@ -830,7 +897,7 @@ class LyricsItemDelegate(QStyledItemDelegate):
 
         # 计算每个字符对应的注音宽度（如果没有注音则为0）
         furi_widths: list[float] = []
-        for i, ch in enumerate(text):
+        for i, _ in enumerate(text):
             if i in furi_map:  # 如果该字符有注音
                 furi_widths.append(float(furi_fm.horizontalAdvance(furi_map[i])))  # 计算注音宽度
             else:
@@ -845,14 +912,18 @@ class LyricsItemDelegate(QStyledItemDelegate):
         start_x = rect.left() + (rect.width() - total_w) / 2.0  # 计算起始X坐标，使内容在矩形内水平居中
 
         x = start_x  # 初始化当前绘制X坐标
-        for i, ch in enumerate(text):  # 遍历每个字符
+        for i, _ in enumerate(text):  # 遍历每个字符
             if i in furi_map:  # 如果该字符有注音
                 furi_text = furi_map[i]  # 获取注音文本
                 furi_w = furi_fm.horizontalAdvance(furi_text)  # 计算注音文本宽度
                 cell_w = char_widths[i] + extra_per_char  # 计算当前字符的分配宽度（包括额外空间）
                 furi_x = x + (cell_w - furi_w) / 2.0  # 计算注音的X坐标，使其在字符单元格内水平居中
                 # 在指定位置绘制注音文本，使用左对齐和垂直居中
-                painter.drawText(QRectF(furi_x, y, furi_w + 4, line_h), int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), furi_text)
+                painter.drawText(
+                    QRectF(furi_x, y, furi_w + 4, line_h),
+                    int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                    furi_text,
+                )
             x += char_widths[i] + extra_per_char  # 更新X坐标，移动到下一个字符的位置
         painter.restore()  # 恢复painter到之前保存的状态
 
@@ -879,7 +950,13 @@ class LyricsItemDelegate(QStyledItemDelegate):
         # 计算每行基础文本高度（字体高度加上内边距）
         base_h = option.fontMetrics.height() + 4
         # 计算注音（如日文振假名）的高度。如果存在结构化数据、行索引有效且该项有注音，则计算注音高度；否则为0
-        furi_h = max(10, int(option.fontMetrics.height() * 0.6) + 2) if (self._structured and 0 <= index.row() < len(self._structured) and self._structured[index.row()].furigana) else 0
+        furi_h = (
+            max(10, int(option.fontMetrics.height() * 0.6) + 2)
+            if (
+                self._structured and 0 <= index.row() < len(self._structured) and self._structured[index.row()].furigana
+            )
+            else 0
+        )
         # 计算最终高度：取24像素和（基础行高 * 行数 + 注音高度 + 间距）中的较大值
         h = max(24, base_h * line_count + furi_h + 4)
         # 计算宽度：取160像素和（文本首行宽度 + 边距）中的较大值，以适应文本内容
@@ -897,6 +974,7 @@ class TrackItemDelegate(QStyledItemDelegate):
         REMOVE_WIDTH: 删除按钮的宽度。
         _hover_row: 当前鼠标悬停的行号。
     """
+
     REMOVE_WIDTH = 14
 
     def __init__(self, parent=None):
@@ -953,7 +1031,12 @@ class TrackItemDelegate(QStyledItemDelegate):
         painter.setPen(text_pen)
         painter.drawText(
             text_rect,
-            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere),
+            int(
+                Qt.AlignmentFlag.AlignLeft
+                | Qt.AlignmentFlag.AlignVCenter
+                | Qt.TextFlag.TextWordWrap
+                | Qt.TextFlag.TextWrapAnywhere
+            ),
             text,
         )
         painter.restore()
@@ -989,6 +1072,7 @@ class TrackListItemWidget(QWidget):
         text: 要显示的文本内容。
         parent: 父级小部件。
     """
+
     remove_clicked = Signal(str)
 
     def __init__(self, track_id: str, text: str, parent=None):
@@ -1067,6 +1151,7 @@ class TrackListItemWidget(QWidget):
         height = max(24, fm.height() + 8)
         return QSize(260, height)
 
+
 class _WindowsTaskbarProgress:
     """Windows任务栏进度桥接层（基于comtypes）.
 
@@ -1094,10 +1179,8 @@ class _WindowsTaskbarProgress:
             return
         try:
             self._shell32 = ctypes.WinDLL("shell32")
-            try:
+            with contextlib.suppress(Exception):
                 self._shell32.SetCurrentProcessExplicitAppUserModelID(ctypes.c_wchar_p("MusePlayer.Desktop"))
-            except Exception:
-                pass
         except Exception:
             self._enabled = False
 
@@ -1176,10 +1259,8 @@ class _WindowsTaskbarProgress:
         self._taskbar = None
         self._ready = False
         if self._enabled and comtypes is not None:
-            try:
+            with contextlib.suppress(Exception):
                 comtypes.CoUninitialize()
-            except Exception:
-                pass
 
 
 def _format_time(sec: float) -> str:
@@ -1280,7 +1361,7 @@ def _parse_qrc_words(text_raw: str) -> list[LyricWord]:
     for m in _QRC_WORD_RE.finditer(text_raw):
         # 将每个匹配到的子组（词组文本、开始时间、持续时间）转换为 LyricWord 对象
         # 并添加到列表中。注意：时间值从字符串转换为整数。
-        text = text_raw[text_start:m.start()]
+        text = text_raw[text_start : m.start()]
         if text:
             words.append(LyricWord(text=text, start_ms=int(m.group(1)), duration_ms=int(m.group(2))))
         text_start = m.end()
@@ -1289,10 +1370,10 @@ def _parse_qrc_words(text_raw: str) -> list[LyricWord]:
 
 def _parse_qrc_entries(raw: str) -> list[tuple[float, str]]:
     """解析 QRC 格式的歌词原始文本，提取时间戳和对应的歌词内容。
-    
+
     Args:
         raw (str): QRC 格式的歌词原始文本，可能是纯文本或 XML 格式。
-    
+
     Returns:
         list[tuple[float, str]]: 解析后的歌词列表，每个元素是一个元组，
             包含歌词时间戳（秒，浮点数）和对应的歌词文本（字符串），
@@ -1302,6 +1383,7 @@ def _parse_qrc_entries(raw: str) -> list[tuple[float, str]]:
     # 检查内容是否为 XML 格式（以特定标签开头）
     if content.startswith("<?xml") or content.startswith("<QrcInfos"):
         import xml.etree.ElementTree as ET
+
         try:
             root = ET.fromstring(content)
             # 遍历 XML 树，查找包含 LyricContent 属性的元素
@@ -1312,12 +1394,12 @@ def _parse_qrc_entries(raw: str) -> list[tuple[float, str]]:
                     break
         except Exception:
             pass  # 如果 XML 解析失败，则忽略并继续使用原始 content
-    
+
     result: list[tuple[float, str]] = []
     # 使用正则表达式匹配 QRC 歌词行（时间戳和歌词内容）
     for m in _QRC_LINE_RE.finditer(content):
         start_ms = int(m.group(1))  # 提取起始时间（毫秒）
-        text_raw = m.group(3)       # 提取原始歌词文本
+        text_raw = m.group(3)  # 提取原始歌词文本
         # 移除歌词中的逐字标记（通过正则替换），并去除首尾空格
         text = _QRC_WORD_RE.sub("", text_raw).strip()
         if not text:
@@ -1348,11 +1430,12 @@ def _parse_qrc_structured(raw: str, *, is_romaji: bool = False) -> list[tuple[fl
     """
     # 移除字符串首尾空白字符
     content = raw.strip()
-    
+
     # 检查是否为XML格式的QRC数据
     if content.startswith("<?xml") or content.startswith("<QrcInfos"):
         # 导入XML解析库
         import xml.etree.ElementTree as ET
+
         try:
             # 解析XML内容
             root = ET.fromstring(content)
@@ -1367,10 +1450,10 @@ def _parse_qrc_structured(raw: str, *, is_romaji: bool = False) -> list[tuple[fl
         except Exception:
             # XML解析失败，保持原content不变
             pass
-    
+
     # 初始化结果列表，类型注解为包含(浮点数, 字符串, LyricWord列表)的元组列表
     result: list[tuple[float, str, list[LyricWord]]] = []
-    
+
     # 使用正则表达式匹配所有歌词行
     for m in _QRC_LINE_RE.finditer(content):
         # 提取起始时间（毫秒）
@@ -1379,18 +1462,18 @@ def _parse_qrc_structured(raw: str, *, is_romaji: bool = False) -> list[tuple[fl
         text_raw = m.group(3)
         # 移除文本中的时间标签并清理空白
         text = _QRC_WORD_RE.sub("", text_raw).strip()
-        
+
         # 跳过空文本行
         if not text:
             continue
-        
+
         # 解析歌词单词
         words = _parse_qrc_words(text_raw)
         # 将毫秒转换为秒
         sec = start_ms / 1000.0
         # 将解析结果添加到结果列表
         result.append((sec, text, words))
-    
+
     # 按时间顺序排序结果
     result.sort(key=lambda x: x[0])
     return result
@@ -1398,30 +1481,30 @@ def _parse_qrc_structured(raw: str, *, is_romaji: bool = False) -> list[tuple[fl
 
 def _detect_lyrics_format(raw: str) -> str:
     """检测歌词文本的格式类型。
-    
+
     通过分析原始字符串的内容特征，判断歌词格式是QRC格式还是LRC格式。
-    
+
     参数:
         raw (str): 原始歌词文本字符串
-        
+
     返回值:
         str: 格式标识字符串，"qrc" 或 "lrc"
     """
     # 移除字符串首尾的空白字符
     stripped = raw.strip()
-    
+
     # 检查是否以XML声明或QrcInfos标签开头（QRC格式特征）
     if stripped.startswith("<?xml") or stripped.startswith("<QrcInfos"):
         return "qrc"
-    
+
     # 检查原始字符串中是否包含QRC文件扩展名特征
     if "_qm.qrc" in raw or "_qmRoma.qrc" in raw or "_qmts.qrc" in raw:
         return "qrc"
-    
+
     # 使用预定义的正则表达式检查前500个字符是否符合QRC行格式
     if _QRC_LINE_RE.search(stripped[:500]):
         return "qrc"
-    
+
     # 默认返回LRC格式
     return "lrc"
 
@@ -1447,9 +1530,13 @@ def _detect_lyrics_lang(filename: str) -> str:
     返回值：str: 检测到的语言类型，如'romaji'（罗马字）、'translation'（翻译）、'japanese'（日语）或'original'（原始）。
     """
     name = (filename or "").lower()  # 将文件名转换为小写，确保大小写不敏感；如果filename为None则使用空字符串
-    if name.endswith("_qmroma.qrc.txt") or "_qmroma." in name:  # 检查文件名是否以"_qmroma.qrc.txt"结尾或包含"_qmroma."，以识别罗马字歌词
+    if (
+        name.endswith("_qmroma.qrc.txt") or "_qmroma." in name
+    ):  # 检查文件名是否以"_qmroma.qrc.txt"结尾或包含"_qmroma."，以识别罗马字歌词
         return "romaji"
-    if name.endswith("_qmts.qrc.txt") or "_qmts." in name:  # 检查文件名是否以"_qmts.qrc.txt"结尾或包含"_qmts."，以识别翻译歌词
+    if (
+        name.endswith("_qmts.qrc.txt") or "_qmts." in name
+    ):  # 检查文件名是否以"_qmts.qrc.txt"结尾或包含"_qmts."，以识别翻译歌词
         return "translation"
     if name.endswith("_qm.qrc.txt") or "_qm." in name:  # 检查文件名是否以"_qm.qrc.txt"结尾或包含"_qm."，以识别日语歌词
         return "japanese"
@@ -1516,7 +1603,7 @@ def _parse_kana_to_furigana_list(kana_content: str) -> list[str | None]:
 
 def _parse_kana_timed(kana_content: str) -> list[tuple[str | None, int]]:
     """解析QRC格式的假名内容，提取文本和时间信息。
-    
+
     该函数遍历输入的假名字符串，根据特定字符（如'1'和'('）识别时间节点，
     并将非节点字符收集为文本。最终返回一个列表，其中每个元素是一个元组，
     包含可选的文本和对应的开始时间（毫秒）。
@@ -1603,55 +1690,51 @@ def _assign_furigana_to_entries(entries: list[LyricEntry], kana_content: str) ->
     # 如果注音内容为空，直接返回不做处理
     if not kana_content:
         return
-    
+
     # 解析注音字符串为注音列表
     furigana_list = _parse_kana_to_furigana_list(kana_content)
-    
+
     # 如果解析结果为空，直接返回
     if not furigana_list:
         return
-    
+
     # 当前处理到的注音索引
     kana_idx = 0
-    
+
     # 遍历每个歌词条目
     for entry in entries:
         # 跳过原始文本为空的条目
         if not entry.original:
             continue
-        
+
         # 计算当前条目中非空格字符的数量
-        base_indexes = [
-            index
-            for index, char in enumerate(entry.original)
-            if _QRC_FURIGANA_BASE_RE.fullmatch(char)
-        ]
+        base_indexes = [index for index, char in enumerate(entry.original) if _QRC_FURIGANA_BASE_RE.fullmatch(char)]
         char_count = len(base_indexes)
-        
+
         # 检查剩余注音数量是否足够分配给当前条目
         if kana_idx + char_count > len(furigana_list):
             break
-        
+
         # 当前字符在原始文本中的索引
-        
+
         # 初始化当前条目的注音列表
         entry.furigana = []
-        
+
         # 遍历当前条目的每个字符
         for char_idx in base_indexes:
             # 跳过空格字符（全角和半角空格）
-            
+
             # 检查注音索引是否超出范围
             if kana_idx >= len(furigana_list):
                 break
-            
+
             # 获取当前注音
             furi = furigana_list[kana_idx]
-            
+
             # 如果当前注音不为空，则创建注音标注并添加到条目中
             if furi is not None:
                 entry.furigana.append(FuriganaAnnotation(char_index=char_idx, text=furi))
-            
+
             # 更新注音索引和字符索引
             kana_idx += 1
 
@@ -1662,12 +1745,12 @@ def build_structured_lyrics(
     extra_files: list[tuple[str, str]] | None = None,
 ) -> list[LyricEntry]:
     """从原始歌词文本构建结构化的歌词条目列表，支持合并多个歌词文件。
-    
+
     Args:
         main_raw (str): 主歌词文件的原始文本内容。
         main_filename (str, optional): 主歌词文件的文件名，用于辅助检测歌词语言。默认为空字符串。
         extra_files (list[tuple[str, str]] | None, optional): 额外的歌词文件列表，每个元素为 (原始文本, 文件名) 的元组。默认为None。
-    
+
     Returns:
         list[LyricEntry]: 按时间戳排序并填充了内容的歌词条目列表。
     """
@@ -1677,10 +1760,10 @@ def build_structured_lyrics(
 
     def _find_or_create(ts: float) -> LyricEntry:
         """根据时间戳查找现有条目，若未找到则创建一个新条目。
-        
+
         Args:
             ts (float): 歌词的时间戳。
-        
+
         Returns:
             LyricEntry: 找到的或新创建的歌词条目。
         """
@@ -1695,7 +1778,7 @@ def build_structured_lyrics(
 
     def _extract_kana(raw: str) -> None:
         """从原始歌词文本中提取假名（振假名）内容，并更新到外部变量 kana_content。
-        
+
         Args:
             raw (str): 原始歌词文本。
         """
@@ -1707,7 +1790,7 @@ def build_structured_lyrics(
 
     def _merge_lrc(raw: str, lang: str) -> None:
         """合并 LRC 格式歌词。
-        
+
         Args:
             raw (str): LRC 格式的原始歌词文本。
             lang (str): 歌词的语言类型（如 "translation", "romaji" 等）。
@@ -1725,7 +1808,7 @@ def build_structured_lyrics(
 
     def _merge_qrc(raw: str, lang: str) -> None:
         """合并 QRC 格式歌词（QRC 格式包含逐词时间信息）。
-        
+
         Args:
             raw (str): QRC 格式的原始歌词文本。
             lang (str): 歌词的语言类型。
@@ -1746,7 +1829,7 @@ def build_structured_lyrics(
 
     def _merge(raw: str, filename: str) -> None:
         """合并单个歌词文件的核心逻辑。
-        
+
         Args:
             raw (str): 歌词文件的原始文本内容。
             filename (str): 歌词文件的文件名，用于辅助检测语言和格式。
@@ -1849,29 +1932,29 @@ def _make_plus_minus_icon(is_plus: bool, *, color: QColor | str = "#f4f4f4") -> 
 
 def _make_compact_icon(is_compact: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
     """创建一个紧凑型图标，根据is_compact参数决定绘制两种不同尺寸的矩形图标。
-    
+
     Args:
         is_compact (bool): 是否为紧凑模式。True时绘制较大矩形（20x16），False时绘制较小矩形（16x10）。
         color (QColor | str, optional): 图标颜色，可以是QColor对象或颜色字符串。默认为"#f4f4f4"。
-    
+
     Returns:
         QIcon: 根据指定尺寸和颜色创建的图标对象。
     """
     # 创建一个24x24像素的透明画布
     pix = QPixmap(24, 24)
     pix.fill(Qt.GlobalColor.transparent)
-    
+
     # 初始化画笔，设置抗锯齿渲染
     painter = QPainter(pix)
     painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    
+
     # 创建画笔对象：设置颜色、线宽1.6、实线、圆头笔、圆角连接
     pen = QPen(QColor(color), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
-    
+
     # 设置画刷为完全透明（不填充）
     painter.setBrush(QColor(0, 0, 0, 0))
-    
+
     # 根据is_compact参数绘制不同尺寸的圆角矩形
     if is_compact:
         # 紧凑模式：在(2,4)位置绘制20x16的圆角矩形，圆角半径2像素
@@ -1879,10 +1962,10 @@ def _make_compact_icon(is_compact: bool, *, color: QColor | str = "#f4f4f4") -> 
     else:
         # 非紧凑模式：在(4,7)位置绘制16x10的圆角矩形，圆角半径2像素
         painter.drawRoundedRect(4, 7, 16, 10, 2, 2)
-    
+
     # 结束绘画操作
     painter.end()
-    
+
     # 将绘制好的像素图转换为图标并返回
     return QIcon(pix)
 

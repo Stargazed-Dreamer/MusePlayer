@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 
@@ -12,8 +12,10 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     av = None
 
+import contextlib
+
 from .output import AudioOutputBackend, NullOutputBackend, SoundDeviceOutputBackend
-from .types import AudioMeta, PlayerCoreError, PlaybackWindow
+from .types import AudioMeta, PlaybackWindow, PlayerCoreError
 
 
 class PyAVPlayerCore:
@@ -49,6 +51,18 @@ class PyAVPlayerCore:
         self._last_open_channels = 0
         self._error_callback: Callable[[str], None] | None = None
         self._last_runtime_error: str | None = None
+        # 流式解码状态（full 策略：边读边播）
+        self._streaming = False  # 是否处于流式解码模式
+        self._streaming_forward_done = False  # 正向解码（start→end）是否完成
+        self._streaming_done = False  # 全部解码（含 backfill）是否完成
+        self._streaming_thread: threading.Thread | None = None
+        self._streaming_stop = threading.Event()  # 通知生产者退出
+        self._streaming_generation = 0  # 代际标记，防止旧生产者写入新缓冲
+        self._streaming_total_frames = 0  # 整文件总帧数（预分配缓冲大小）
+        self._streaming_start_frame = 0  # 流式起始帧偏移
+        self._streaming_decoded_end = 0  # 正向已解码到的帧位置
+        self._streaming_backfill_end = 0  # 回填已解码到的帧位置
+        self._streaming_error: str | None = None
 
     def set_error_callback(self, callback: Callable[[str], None] | None) -> None:
         with self._lock:
@@ -83,6 +97,7 @@ class PyAVPlayerCore:
             window_sec=window_sec,
         )
         with self._lock:
+            self._stop_streaming_locked()
             self._source_path = source
             self._buffer = pcm
             self._sample_rate = sample_rate
@@ -93,7 +108,175 @@ class PyAVPlayerCore:
             self._try_reuse_or_reopen_stream()
             return self.meta()
 
-    def decode_window(self, source: Path, *, start_sec: float = 0.0, window_sec: float | None = None) -> tuple[np.ndarray, int, int]:
+    def load_streaming(self, source: Path, *, start_sec: float = 0.0, total_duration_sec: float = 0.0) -> AudioMeta:
+        """流式加载：边解码边播放，解码完成后整文件驻留内存可任意拖动。
+
+        预分配整文件缓冲，后台线程分块解码写入：
+        - Phase 1（正向）：从 start_sec 解码到文件末尾，使播放可尽快开始。
+        - Phase 2（回填）：从 0 解码到 start_sec，完成后整文件均在内存，可任意位置拖动。
+
+        Args:
+            source: 音频文件路径
+            start_sec: 起始播放位置（秒），播放从此处开始，正向解码也从此处开始
+            total_duration_sec: 整文件总时长（秒），用于预分配缓冲。为 0 或无法确定时回退到阻塞 load
+        """
+        source = Path(source).resolve()
+        if not source.exists():
+            raise FileNotFoundError(source)
+        start_sec = max(0.0, float(start_sec))
+        total_duration_sec = max(0.0, float(total_duration_sec))
+        # 时长未知则回退到阻塞完整加载
+        if total_duration_sec <= 0.0:
+            return self.load(source, start_sec=0.0)
+        total_frames = int(round(total_duration_sec * self._target_sample_rate))
+        if total_frames <= 0:
+            return self.load(source, start_sec=0.0)
+        start_frame = min(int(round(start_sec * self._target_sample_rate)), total_frames)
+        with self._lock:
+            self._stop_streaming_locked()
+            self._source_path = source
+            self._buffer = np.zeros((total_frames, self._target_channels), dtype=np.float32)
+            self._sample_rate = self._target_sample_rate
+            self._channels = self._target_channels
+            self._frame_cursor = start_frame
+            self._segment_end_frame = None
+            self._playing = False
+            # 初始化流式状态
+            self._streaming = True
+            self._streaming_forward_done = False
+            self._streaming_done = False
+            self._streaming_total_frames = total_frames
+            self._streaming_start_frame = start_frame
+            self._streaming_decoded_end = start_frame
+            self._streaming_backfill_end = 0
+            self._streaming_error = None
+            self._streaming_generation += 1
+            gen = self._streaming_generation
+            self._streaming_stop = threading.Event()
+            stop_event = self._streaming_stop
+            self._try_reuse_or_reopen_stream()
+            meta = self.meta()
+        # 启动后台生产者（不在锁内启动，避免线程调度导致持锁等待）
+        self._streaming_thread = threading.Thread(
+            target=self._streaming_producer,
+            args=(source, start_sec, start_frame, total_frames, stop_event, gen),
+            daemon=True,
+            name="museplayer-stream-decode",
+        )
+        self._streaming_thread.start()
+        return meta
+
+    def _streaming_producer(
+        self,
+        source: Path,
+        start_sec: float,
+        start_frame: int,
+        total_frames: int,
+        stop_event: threading.Event,
+        generation: int,
+    ) -> None:
+        """后台生产者：分块解码写入预分配缓冲。
+
+        Phase 1 解码 [start_sec, end]，Phase 2 回填 [0, start_sec]。
+        通过 generation 标记防止旧生产者向新缓冲写入。
+        """
+        chunk_sec = 5.0
+        try:
+            # Phase 1：正向解码 start -> end
+            write_cursor = start_frame
+            pos = start_sec
+            while write_cursor < total_frames:
+                if stop_event.is_set():
+                    return
+                remaining_sec = (total_frames - write_cursor) / self._target_sample_rate
+                window = min(chunk_sec, remaining_sec + 0.5)
+                pcm, _sr, _ch = self._decode_to_pcm(source, start_sec=pos, window_sec=window)
+                if pcm.shape[0] == 0:
+                    break
+                n = min(pcm.shape[0], total_frames - write_cursor)
+                with self._lock:
+                    if self._streaming_generation != generation or stop_event.is_set():
+                        return
+                    self._buffer[write_cursor : write_cursor + n] = pcm[:n]
+                    write_cursor += n
+                    self._streaming_decoded_end = max(self._streaming_decoded_end, write_cursor)
+                pos = start_sec + (write_cursor - start_frame) / self._target_sample_rate
+            with self._lock:
+                if self._streaming_generation != generation:
+                    return
+                self._streaming_forward_done = True
+            # Phase 2：回填 0 -> start
+            if start_frame > 0 and not stop_event.is_set():
+                write_cursor = 0
+                pos = 0.0
+                while write_cursor < start_frame:
+                    if stop_event.is_set():
+                        return
+                    remaining_sec = (start_frame - write_cursor) / self._target_sample_rate
+                    window = min(chunk_sec, remaining_sec + 0.5)
+                    pcm, _sr, _ch = self._decode_to_pcm(source, start_sec=pos, window_sec=window)
+                    if pcm.shape[0] == 0:
+                        break
+                    n = min(pcm.shape[0], start_frame - write_cursor)
+                    with self._lock:
+                        if self._streaming_generation != generation or stop_event.is_set():
+                            return
+                        self._buffer[write_cursor : write_cursor + n] = pcm[:n]
+                        write_cursor += n
+                        self._streaming_backfill_end = max(self._streaming_backfill_end, write_cursor)
+                    pos = write_cursor / self._target_sample_rate
+            with self._lock:
+                if self._streaming_generation != generation:
+                    return
+                self._streaming_done = True
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            callback = None
+            with self._lock:
+                if self._streaming_generation != generation:
+                    return
+                self._streaming_error = err
+                self._streaming_forward_done = True
+                self._streaming_done = True
+                callback = self._error_callback
+            if callback is not None:
+                with contextlib.suppress(Exception):
+                    callback(err)
+
+    def _stop_streaming_locked(self) -> None:
+        """通知流式生产者停止并作废其写入（须持有锁）。
+
+        递增 generation 使在途的旧生产者写入被拒绝；设置 stop event 使其尽快退出。
+        不等待线程结束（生产者会在下次检查点退出），避免持锁阻塞。
+        """
+        self._streaming_stop.set()
+        self._streaming_generation += 1
+        self._streaming = False
+        self._streaming_forward_done = False
+        self._streaming_done = False
+
+    def _readable_end_for_cursor(self, cursor: int) -> int:
+        """流式模式下给定游标位置的可读末尾帧。"""
+        if cursor >= self._streaming_start_frame:
+            return self._streaming_decoded_end
+        return min(self._streaming_backfill_end, self._streaming_start_frame)
+
+    def _is_seek_in_decoded_region(self, target_frame: int) -> bool:
+        """流式模式下目标帧是否已解码（可即时跳转）。
+
+        起始帧和已解码末尾帧均视为可跳转位置：
+        - 起始帧：生产者正从此处开始填充，无需重启
+        - 已解码末尾：游标追上解码进度时输出静音等待，无需重启
+        """
+        if self._streaming_done:
+            return 0 <= target_frame < self._streaming_total_frames
+        if self._streaming_start_frame <= target_frame <= self._streaming_decoded_end:
+            return True
+        return target_frame < self._streaming_start_frame and target_frame < self._streaming_backfill_end
+
+    def decode_window(
+        self, source: Path, *, start_sec: float = 0.0, window_sec: float | None = None
+    ) -> tuple[np.ndarray, int, int]:
         source = Path(source).resolve()
         if not source.exists():
             raise FileNotFoundError(source)
@@ -131,12 +314,17 @@ class PyAVPlayerCore:
             raise PlayerCoreError("Decoded PCM must be 2D array")
         prepared_pcm = np.ascontiguousarray(pcm.astype(np.float32, copy=False))  # 确保PCM数据为float32类型且内存连续
         with self._lock:  # 使用锁以确保线程安全
+            self._stop_streaming_locked()  # 终止可能存在的流式解码
             next_sample_rate = max(8_000, int(sample_rate))  # 确保采样率不低于8000
             next_channels = max(1, int(channels))  # 确保声道数至少为1
             need_reopen = bool(reopen_stream)  # 初始判断是否需要重新打开流
-            if self._stream_open and not need_reopen:  # 如果流已打开且不需要强制重开
-                if self._sample_rate != next_sample_rate or self._channels != next_channels:  # 如果采样率或声道数改变
-                    need_reopen = True  # 需要重新打开流以应用新设置
+            # 如果流已打开、无需强制重开，但采样率或声道数改变，则需要重新打开流以应用新设置
+            if (
+                self._stream_open
+                and not need_reopen
+                and (self._sample_rate != next_sample_rate or self._channels != next_channels)
+            ):
+                need_reopen = True
             self._source_path = source  # 设置源路径
             self._buffer = prepared_pcm  # 设置PCM缓冲区
             self._sample_rate = next_sample_rate  # 设置采样率
@@ -154,7 +342,9 @@ class PyAVPlayerCore:
                 self._ensure_stream_started()  # 确保流已启动
             return AudioMeta(  # 返回音频元数据对象
                 source_path=self._source_path,
-                duration_sec=(self._buffer.shape[0] / self._sample_rate) if self._sample_rate > 0 else 0.0,  # 计算持续时间
+                duration_sec=(self._buffer.shape[0] / self._sample_rate)
+                if self._sample_rate > 0
+                else 0.0,  # 计算持续时间
                 sample_rate=self._sample_rate,
                 channels=self._channels,
                 frame_count=self._buffer.shape[0],
@@ -162,13 +352,15 @@ class PyAVPlayerCore:
 
     def unload(self) -> None:
         """卸载当前音频资源，重置播放器状态。
-    
+
         功能：释放内部资源，将播放器恢复到未加载状态。
         参数：无。
         返回值：None。
         """
         with self._lock:
             # 获取锁，确保线程安全
+            self._stop_streaming_locked()  # 终止流式解码生产者
+            # 设置播放状态为False
             self._playing = False
             # 设置播放状态为False
             self._source_path = None
@@ -241,21 +433,48 @@ class PyAVPlayerCore:
     def seek(self, position_sec: float) -> None:
         """将音频播放位置移动到指定的秒数。
 
+        流式模式下，若目标位置尚未解码，则从目标位置重启流式解码
+        （保留原播放状态：若正在播放则继续播放，若暂停则保持暂停）。
+
         Args:
             position_sec (float): 要跳转的目标位置，单位为秒。
         Returns:
             None
         """
-        # 获取锁以确保线程安全
+        # 先在锁内判断是否需要重启流式解码（目标位置尚未解码）
+        restart_source: Path | None = None
+        restart_duration_sec = 0.0
+        restart_was_playing = False
         with self._lock:
             # 确保音频数据已加载，若未加载则抛出异常
             self._require_loaded()
-            # 将目标秒数转换为对应的帧数，并更新内部播放游标位置
-            self._frame_cursor = self._sec_to_frame(position_sec)
-            # 检查是否设置了片段结束帧，且新游标位置已达到或超过结束帧
-            if self._segment_end_frame is not None and self._frame_cursor >= self._segment_end_frame:
-                # 若已到达或越过预设的片段结束点，则停止播放
-                self._playing = False
+            # 将目标秒数转换为对应的帧数
+            target_frame = self._sec_to_frame(position_sec)
+            if self._streaming and not self._is_seek_in_decoded_region(target_frame):
+                # 流式模式下目标位置尚未解码，需从目标位置重启流式解码
+                restart_source = self._source_path
+                if self._streaming_total_frames > 0 and self._target_sample_rate > 0:
+                    restart_duration_sec = self._streaming_total_frames / self._target_sample_rate
+                restart_was_playing = self._playing
+            else:
+                # 已解码区域或非流式模式：直接移动游标
+                self._frame_cursor = target_frame
+                # 检查是否设置了片段结束帧，且新游标位置已达到或超过结束帧
+                if self._segment_end_frame is not None and self._frame_cursor >= self._segment_end_frame:
+                    # 若已到达或越过预设的片段结束点，则停止播放
+                    self._playing = False
+                return
+        # 释放锁后重启流式解码（load_streaming 内部会获取锁）
+        if restart_source is not None and restart_duration_sec > 0.0:
+            self.load_streaming(
+                restart_source,
+                start_sec=max(0.0, float(position_sec)),
+                total_duration_sec=restart_duration_sec,
+            )
+            if restart_was_playing:
+                with self._lock:
+                    self._playing = True
+                    self._ensure_stream_started()
 
     def set_volume(self, volume: float) -> None:
         """设置音量，将音量值限制在0.0到5.0之间。
@@ -285,7 +504,7 @@ class PyAVPlayerCore:
     def is_playing(self) -> bool:
         """
         检查当前是否正在播放。
-    
+
         功能：用于确定播放器的当前播放状态。
         参数：无（仅包含实例方法自身的self参数）。
         返回值：布尔值，True表示正在播放，False表示未播放。
@@ -322,11 +541,11 @@ class PyAVPlayerCore:
                 raise PlayerCoreError("No source loaded")  # 如果未加载音频源，则抛出错误
             # 构建并返回 AudioMeta 对象，从内部状态中提取各项元数据
             return AudioMeta(
-                source_path=self._source_path,       # 音频文件的路径
-                duration_sec=self.duration(),         # 音频总时长（秒）
-                sample_rate=self._sample_rate,        # 采样率
-                channels=self._channels,              # 声道数
-                frame_count=self._buffer.shape[0],    # 音频缓冲区的总帧数
+                source_path=self._source_path,  # 音频文件的路径
+                duration_sec=self.duration(),  # 音频总时长（秒）
+                sample_rate=self._sample_rate,  # 采样率
+                channels=self._channels,  # 声道数
+                frame_count=self._buffer.shape[0],  # 音频缓冲区的总帧数
             )
 
     def playback_window(self) -> PlaybackWindow:
@@ -345,6 +564,7 @@ class PyAVPlayerCore:
 
     def close(self) -> None:
         with self._lock:
+            self._stop_streaming_locked()
             self._playing = False
             if self._stream_open:
                 self._output.close()
@@ -374,10 +594,8 @@ class PyAVPlayerCore:
             # 检查是否正在播放且流已打开
             was_playing = bool(self._playing) and self._stream_open
             if self._stream_open:  # 如果流已打开，先停止并关闭
-                try:
+                with contextlib.suppress(Exception):  # 忽略任何异常
                     self._output.stop()  # 尝试停止输出
-                except Exception:
-                    pass  # 忽略任何异常
                 self._stream_open = False  # 标记流为关闭
             # 重新打开输出设备，使用当前的采样率和通道数
             self._output.open(
@@ -409,10 +627,8 @@ class PyAVPlayerCore:
             if not self._stream_open:  # 如果音频流未打开，则直接返回
                 return
             was_playing = bool(self._playing)  # 记录当前是否正在播放
-            try:
+            with contextlib.suppress(Exception):  # 忽略停止时可能发生的异常
                 self._output.stop()  # 尝试停止当前输出
-            except Exception:
-                pass  # 忽略停止时可能发生的异常
             self._stream_open = False  # 标记音频流为关闭状态
             self._output.open(  # 重新打开音频输出设备
                 sample_rate=self._sample_rate,  # 设置采样率
@@ -427,10 +643,8 @@ class PyAVPlayerCore:
                 self._output.start()
 
     def __del__(self):
-        try:
+        with contextlib.suppress(Exception):
             self.close()
-        except Exception:
-            pass
 
     def _require_loaded(self) -> None:
         """
@@ -483,10 +697,8 @@ class PyAVPlayerCore:
             and self._channels == self._last_open_channels
         )
         if same_params:  # 参数相同，无需重新打开流
-            try:
+            with contextlib.suppress(Exception):  # 忽略停止过程中可能出现的异常
                 self._output.stop()  # 尝试停止当前输出流
-            except Exception:  # 忽略停止过程中可能出现的异常
-                pass
             return  # 停止后直接返回，不执行后续关闭操作
         self._async_close_stream()  # 参数不同，异步关闭当前流以准备重新打开
 
@@ -505,11 +717,11 @@ class PyAVPlayerCore:
             return
         old_output = self._output  # 保存旧输出引用
         self._stream_open = False  # 设置流为关闭状态
-        try:
+        with contextlib.suppress(Exception):  # 忽略任何异常
             old_output.stop()  # 尝试停止旧输出
-        except Exception:
-            pass  # 忽略任何异常
-        threading.Thread(target=self._close_output_in_background, args=(old_output,), daemon=True).start()  # 启动后台线程关闭输出
+        threading.Thread(
+            target=self._close_output_in_background, args=(old_output,), daemon=True
+        ).start()  # 启动后台线程关闭输出
 
     @staticmethod
     def _close_output_in_background(backend: AudioOutputBackend) -> None:
@@ -544,33 +756,48 @@ class PyAVPlayerCore:
                 start = self._frame_cursor
                 rate = self._playback_rate
 
-                if abs(rate - 1.0) < 1e-6:
-                    end = min(start + int(frames), end_limit)
-                    if end > start:
-                        chunk = self._buffer[start:end]
-                        if self._volume != 1.0:
-                            chunk = chunk * self._volume
-                        outdata[: (end - start), : self._channels] = chunk
-                        self._frame_cursor = end
-                else:
-                    src_need = int(np.ceil(int(frames) * rate)) + 2
-                    end = min(start + src_need, end_limit)
-                    src = self._buffer[start:end]
-                    if src.shape[0] > 1:
-                        src_x = np.arange(src.shape[0], dtype=np.float32)
-                        dst_x = np.arange(int(frames), dtype=np.float32) * float(rate)
-                        dst_x = np.clip(dst_x, 0.0, float(src.shape[0] - 1))
-                        chunk = np.empty((int(frames), self._channels), dtype=np.float32)
-                        for ch in range(self._channels):
-                            chunk[:, ch] = np.interp(dst_x, src_x, src[:, ch]).astype(np.float32, copy=False)
-                        if self._volume != 1.0:
-                            chunk = chunk * self._volume
-                        outdata[: int(frames), : self._channels] = chunk
+                # 流式模式下，限制可读末尾为已解码区域，避免读到未填充的零数据
+                readable_end = end_limit
+                streaming_underrun = False
+                if self._streaming and not self._streaming_done:
+                    readable_end = min(end_limit, self._readable_end_for_cursor(start))
+                    if start >= readable_end:
+                        # 游标已追上解码进度，输出静音等待生产者推进
+                        streaming_underrun = True
 
-                    consumed = max(1, int(np.floor(int(frames) * rate)))
-                    self._frame_cursor = min(start + consumed, end_limit)
+                if not streaming_underrun:
+                    if abs(rate - 1.0) < 1e-6:
+                        end = min(start + int(frames), readable_end)
+                        if end > start:
+                            chunk = self._buffer[start:end]
+                            if self._volume != 1.0:
+                                chunk = chunk * self._volume
+                            outdata[: (end - start), : self._channels] = chunk
+                            self._frame_cursor = end
+                    else:
+                        src_need = int(np.ceil(int(frames) * rate)) + 2
+                        end = min(start + src_need, readable_end)
+                        src = self._buffer[start:end]
+                        if src.shape[0] > 1:
+                            src_x = np.arange(src.shape[0], dtype=np.float32)
+                            dst_x = np.arange(int(frames), dtype=np.float32) * float(rate)
+                            dst_x = np.clip(dst_x, 0.0, float(src.shape[0] - 1))
+                            chunk = np.empty((int(frames), self._channels), dtype=np.float32)
+                            for ch in range(self._channels):
+                                chunk[:, ch] = np.interp(dst_x, src_x, src[:, ch]).astype(np.float32, copy=False)
+                            if self._volume != 1.0:
+                                chunk = chunk * self._volume
+                            outdata[: int(frames), : self._channels] = chunk
+                            consumed = max(1, int(np.floor(int(frames) * rate)))
+                            self._frame_cursor = min(start + consumed, readable_end)
+                        elif not (self._streaming and not self._streaming_done):
+                            # 非流式或流式已完成：源数据不足，推进到 readable_end 触发自然结束
+                            self._frame_cursor = readable_end
+                        # else: 流式未完成且数据不足，保持游标等待解码推进
 
-                if self._frame_cursor >= end_limit:
+                # 仅当整文件解码完成（或非流式模式）且到达末尾时才停止播放
+                # 流式未完成时即使到达 readable_end 也保持 _playing=True，让回调输出静音等待
+                if self._frame_cursor >= end_limit and (not self._streaming or self._streaming_done):
                     self._playing = False
         except Exception as exc:
             with self._lock:
@@ -579,10 +806,8 @@ class PyAVPlayerCore:
                 callback = self._error_callback
             outdata.fill(0)
             if callback is not None:
-                try:
+                with contextlib.suppress(Exception):
                     callback(self._last_runtime_error)
-                except Exception:
-                    pass
 
     def _decode_to_pcm(
         self,
@@ -680,9 +905,8 @@ class PyAVPlayerCore:
                 elif seek_used:
                     trim_sec = max(0.0, start_sec - seek_target)
                 trim_frames = int(round(trim_sec * sample_rate))
-                if trim_frames > 0:
-                    if trim_frames < pcm.shape[0]:
-                        pcm = pcm[trim_frames:]
+                if 0 < trim_frames < pcm.shape[0]:
+                    pcm = pcm[trim_frames:]
             limit_frames = int(round(decode_window * sample_rate))
             if limit_frames > 0 and pcm.shape[0] > limit_frames:
                 pcm = pcm[:limit_frames]

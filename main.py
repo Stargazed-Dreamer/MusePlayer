@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """应用启动入口。
 
 除常规 Qt 启动外，本文件还负责安装"崩溃/异常保存兜底"：
@@ -9,8 +7,10 @@ from __future__ import annotations
 - SIGINT/SIGTERM
 """
 
+from __future__ import annotations
+
 import atexit
-from datetime import datetime
+import contextlib
 import faulthandler
 import json
 import os
@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject
@@ -35,7 +36,7 @@ _CRASHLOG_FILENAME = "crashlog.log"
 def _archive_previous_crashlog(crash_dir: Path) -> None:
     """
     将前一次的崩溃日志文件进行归档，以防止被覆盖。
-    
+
     本函数会检查指定目录中是否存在名为 _CRASHLOG_FILENAME 的崩溃日志文件。
     如果存在，则尝试将其重命名为带有时间戳的新文件名（例如 'crash_20231027_143025.log'）。
     如果目标归档文件名已存在，则会通过添加递增数字后缀来避免冲突。
@@ -60,10 +61,8 @@ def _archive_previous_crashlog(crash_dir: Path) -> None:
         return
     # 如果文件大小为0，说明是空日志文件，直接删除它
     if size == 0:
-        try:
+        with contextlib.suppress(OSError):
             prev.unlink()
-        except OSError:
-            pass
         return
     # 使用文件的最后修改时间生成一个时间戳字符串，用于新文件名
     stamp = datetime.fromtimestamp(prev.stat().st_mtime).strftime("%Y%m%d_%H%M%S")
@@ -80,10 +79,8 @@ def _archive_previous_crashlog(crash_dir: Path) -> None:
                 break
             i += 1
     # 将之前的崩溃日志文件重命名为归档文件
-    try:
+    with contextlib.suppress(OSError):
         prev.rename(archived)
-    except OSError:
-        pass
 
 
 def _install_persist_fallbacks(app: QApplication, controller: AppController) -> None:
@@ -113,10 +110,8 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
         crash_stream_holder["file"] = None
         if stream is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             stream.close()
-        except Exception:
-            pass
 
     def _write_crash(reason: str, exc_type=None, exc_value=None, exc_tb=None) -> None:
         if not _is_crash_logging_enabled():
@@ -146,14 +141,10 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
         if saved["done"]:
             return
         saved["done"] = True
-        try:
+        with contextlib.suppress(Exception):
             controller.playback_stats_service.save_if_dirty()
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             controller.save_session()
-        except Exception:
-            pass
 
     app.aboutToQuit.connect(lambda: _save_once("aboutToQuit"))
     atexit.register(lambda: _save_once("atexit"))
@@ -217,10 +208,8 @@ def _install_persist_fallbacks(app: QApplication, controller: AppController) -> 
         sig = getattr(signal, sig_name, None)
         if sig is None:
             continue
-        try:
+        with contextlib.suppress(Exception):
             signal.signal(sig, _signal_handler)
-        except Exception:
-            pass
 
 
 class _StartupEventProbe(QObject):
@@ -256,24 +245,23 @@ def _timed_startup_call(name: str, callback):
 
 def main() -> int:
     """应用程序主入口函数。
-    
+
     负责启动MusePlayer音乐播放器，包括：
     1. 初始化QApplication并配置基本属性（样式、字体、图标等）
     2. 按优先级分步初始化服务（播放器→曲库→会话恢复）
     3. 延迟加载UI组件和后台清理任务，优化启动速度
     4. 启动Qt事件循环
-    
+
     返回值:
         int: 应用程序退出码，0表示正常退出
     """
     t0 = time.perf_counter()  # 记录启动开始时间
-    startup_probe_enabled = os.getenv("MUSE_STARTUP_PROBE", "").strip().lower() in {
-        "1", "true", "yes", "on"
-    }
+    startup_probe_enabled = os.getenv("MUSE_STARTUP_PROBE", "").strip().lower() in {"1", "true", "yes", "on"}
 
     def _probe_log(message: str) -> None:
         if startup_probe_enabled:
             print(f"[StartupProbe] {message}", flush=True)
+
     app = QApplication(sys.argv)  # 创建Qt应用实例
     t1 = time.perf_counter()  # 记录QApplication创建耗时
     app.setApplicationName("MusePlayer")  # 设置应用程序名称
@@ -294,6 +282,7 @@ def main() -> int:
 
     # 先读会话数据（几KB，瞬间完成），用于窗口预览
     from app.models.session_store import SessionStore
+
     _session_preview = SessionStore(project_root / "data").load()
 
     # 轻量 Controller（仅加载设置，不初始化库和播放器）
@@ -333,7 +322,8 @@ def main() -> int:
     win.show()  # 显示主窗口
     t4 = time.perf_counter()  # 记录窗口显示耗时
 
-    from PySide6.QtCore import QTimer, QMetaObject, Qt as _Qt
+    from PySide6.QtCore import QMetaObject, QTimer
+    from PySide6.QtCore import Qt as _Qt
 
     _install_persist_fallbacks(app, controller)
     startup_file_check = bool(getattr(controller.settings, "startup_file_check", True))
@@ -434,9 +424,11 @@ def main() -> int:
 
     # 输出各阶段启动耗时，便于性能分析和优化
     total = t4 - t0
-    print(f"[启动计时] QApplication: {t1-t0:.3f}s | 样式: {t2-t1:.3f}s | "
-          f"Controller(轻量): {t3-t2:.3f}s | 播放器: {t3b-t3:.3f}s | "
-          f"MainWindow+show: {t4-t3b:.3f}s | 窗口出现: {total:.3f}s")
+    print(
+        f"[启动计时] QApplication: {t1 - t0:.3f}s | 样式: {t2 - t1:.3f}s | "
+        f"Controller(轻量): {t3 - t2:.3f}s | 播放器: {t3b - t3:.3f}s | "
+        f"MainWindow+show: {t4 - t3b:.3f}s | 窗口出现: {total:.3f}s"
+    )
 
     return app.exec()  # 进入Qt事件循环，返回应用程序退出码
 

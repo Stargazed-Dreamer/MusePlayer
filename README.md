@@ -1,16 +1,31 @@
-# MusePlayer
+<p align="center">
+  <img src="assets/图标改.png" width="160" alt="MusePlayer Logo" />
+</p>
+
+<h1 align="center">MusePlayer</h1>
+
+<p align="center">
+  基于 PySide6 + PyAV 的本地音乐播放器桌面应用<br/>
+  内置 <b>TCP JSON Lines 远程控制协议</b>，可被外部程序、脚本、自动化系统、AI Agent 完全控制
+</p>
+
+<p align="center">
+  <img alt="License" src="https://img.shields.io/badge/license-GPL--3.0-blue.svg" />
+  <img alt="Python" src="https://img.shields.io/badge/python-3.12%2B-blue.svg" />
+  <img alt="PySide6" src="https://img.shields.io/badge/PySide6-6.7%2B-green.svg" />
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg" />
+</p>
+
+---
 
 <!-- screenshot: 主界面日间主题 -->
 <!-- screenshot: 主界面夜间主题 -->
-
-> 基于 PySide6 + PyAV 的本地音乐播放器桌面应用，内置 **TCP JSON Lines 远程控制协议**，
-> 可被外部程序、脚本、自动化系统、AI Agent 完全控制。
 
 MusePlayer 使用 PyAV 作为底层音频解码内核，sounddevice 作为音频输出后端，通过四层分离架构（Domain / Service / Runtime / UI）实现高内聚低耦合。除常规播放器功能外，MusePlayer 的核心特色是**完整的运行时控制协议**——播放器的几乎所有能力都可通过 TCP 接口由外部程序驱动，适合有自动化、集成、二次开发需求的用户。
 
 ## 特色功能
 
-### 远程控制协议（核心）
+### 远程控制协议
 
 MusePlayer 在本地 TCP 端口（默认 `127.0.0.1:43121`，可配置）暴露 JSON Lines 控制端点，**程序、脚本、自动化系统、AI Agent 都可完全控制播放器**。
 
@@ -35,9 +50,12 @@ python -c "import socket,json;s=socket.socket();s.connect(('127.0.0.1',43121));s
 
 基于 SHA256 种子的确定性乱序算法（[app/services/random_order.py](app/services/random_order.py)），相同种子下顺序可复现。重启不丢随机上下文，便于会话恢复与外部程序对齐播放顺序。
 
-### 懒加载窗口解码
+### 双解码模式
 
-对前 6.2 秒按需解码的窗口读取策略，超过阈值后自动提升为完整读取，并在后台预读取后续数据。兼顾首响速度与续播平滑，避免长曲目的启动延迟。
+提供两种解码策略，均实现"边读边播"以避免起播卡顿：
+
+- **窗口解码（默认）**：以 6.2 秒为一块按需解码，后台预读取下一窗口实现无缝衔接。本质是分块边读边播，内存占用低，适合长曲目。
+- **完整读取**：顺序流式解码整文件到内存，首块就绪即起播；解码完成后转为纯内存模式，可任意位置瞬时拖动。读取未完成时拖动进度条，则从目标位置重新开始流式解码。
 
 ### PyAV 跨解码器统一内核
 
@@ -68,9 +86,9 @@ python -c "import socket,json;s=socket.socket();s.connect(('127.0.0.1',43121));s
 
 **便携包（推荐，解压即用，无需安装 Python）**：
 
-1. 从 [Releases](https://github.com/Stargazed-Dreamer/MusePlayer/releases) 下载 `MusePlayer_v1.0.0_windows.zip`
+1. 从 [Releases](https://github.com/Stargazed-Dreamer/MusePlayer/releases) 下载
 2. 解压到任意目录
-3. 运行 `start.bat`（内部调用便携版 `.\python\python.exe main.py`）
+3. 运行 `start.bat`（内部调用便携版 `.\python\python.exe main.py`）。您可以为此文件创建快捷方式并绑定icon文件。
 
 便携包使用嵌入式 Python + 裁剪后的 PySide6 构建，体积小、自包含、版本可控。构建原理见下方[构建便携包](#构建便携包)章节。
 
@@ -121,7 +139,7 @@ python main.py
 
 ## 快速使用
 
-1. 启动应用后，点击"导入"按钮或拖拽音频文件到窗口导入音乐
+1. 启动应用后，在歌单界面点击"导入"按钮或拖拽音频文件到窗口导入音乐
 2. 双击曲目开始播放
 3. 在设置中可调整：TCP 控制端口、播放模式、主题、快捷键等
 4. 远程控制示例见下方
@@ -243,4 +261,4 @@ mypy app/ core/
 
 ## 许可证
 
-[MIT License](LICENSE) © 2025-2026 MusePlayer Contributors
+[GNU General Public License v3.0](LICENSE)

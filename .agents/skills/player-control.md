@@ -28,6 +28,7 @@ description: >
 ```python
 import socket, json
 
+
 def send_command(cmd: dict, host="127.0.0.1", port=43121) -> dict:
     """发送命令到 MusePlayer 控制接口。"""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

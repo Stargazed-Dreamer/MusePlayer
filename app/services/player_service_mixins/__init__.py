@@ -5,7 +5,7 @@
 - PlayerServiceLazyDecodeMixin: 音频懒加载和预读取功能
 """
 
-from .stats_mixin import PlayerServiceStatsMixin
 from .lazy_decode_mixin import PlayerServiceLazyDecodeMixin
+from .stats_mixin import PlayerServiceStatsMixin
 
 __all__ = ["PlayerServiceStatsMixin", "PlayerServiceLazyDecodeMixin"]

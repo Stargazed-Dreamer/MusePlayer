@@ -38,7 +38,7 @@ start.bat        # Windows
 
 - **绝不直接操作 core/ 模块**：所有播放操作必须通过 `PlayerService` 进行，`PyAVPlayerCore` 是线程安全的底层内核，UI 层绝不直接调用
 - **sounddevice 回调中绝不阻塞**：音频输出回调在实时线程中运行，任何阻塞操作会导致音频卡顿
-- **窗口读取阈值 6.2 秒**：`LazyDecodeMixin` 对前 6.2 秒按需解码，超过后自动提升为完整读取，修改此阈值需同步更新 `PlayerService` 和 `LazyDecodeMixin`
+- **窗口读取阈值 6.2 秒**：`LazyDecodeMixin` 的窗口模式以 6.2 秒为一块按需解码并后台预读下一块，整曲持续滑动窗口（并不存在"超过阈值后提升为完整读取"）。`PlayerService` 的 `full` 策略走 `PyAVPlayerCore` 的流式解码路径。修改窗口阈值需同步更新 `PlayerService` 和 `LazyDecodeMixin`
 
 ### Qt 线程安全
 
@@ -113,7 +113,7 @@ MusePlayer/
 ├── requirements.txt          # 依赖清单（pip install -r）
 ├── pyproject.toml            # 项目元数据 + ruff/mypy 配置
 ├── .pre-commit-config.yaml   # 预提交钩子（ruff + ruff-format）
-├── LICENSE                   # MIT 许可证
+├── LICENSE                   # GNU GPL v3 许可证
 ├── README.md                 # 项目说明（面向用户/贡献者）
 ├── CHANGELOG.md              # 版本变更日志
 ├── CONTRIBUTING.md           # 贡献指南
@@ -142,6 +142,7 @@ MusePlayer/
 │   │   ├── main_window_impl.py # 主窗口核心实现
 │   │   ├── main_window_helpers.py # 辅助组件
 │   │   ├── main_window_mixins/ # 播放交互 + 窗口行为混入
+│   │   ├── about_dialog.py   # 关于对话框（版本/作者/仓库信息）
 │   │   ├── playlist_dialog.py # 歌单管理对话框
 │   │   ├── settings_dialog.py # 设置对话框
 │   │   ├── shortcut_settings_dialog.py # 快捷键设置对话框
@@ -150,7 +151,7 @@ MusePlayer/
 │   │   └── theme.py          # QSS 主题（日间/夜间）
 │   ├── utils/                # 工具
 │   │   └── logging_setup.py  # 日志配置（文件轮转、会话复用）
-│   └── version.py            # 版本号
+│   └── version.py            # 版本号 + 元数据（APP/DATA_FORMAT/PROTOCOL_VERSION、AUTHOR、REPO_URL）
 ├── tests/                    # 自动化测试（pytest）
 │   ├── conftest.py           # 测试 fixtures
 │   ├── test_random_order.py  # 随机播放算法测试

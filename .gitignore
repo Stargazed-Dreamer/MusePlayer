@@ -39,3 +39,6 @@ todo.txt
 
 # 临时工作文档
 release_plan_draft.md
+
+# 本地素材/图标（不入库，公开仓库不包含本地图片资源）
+assets/

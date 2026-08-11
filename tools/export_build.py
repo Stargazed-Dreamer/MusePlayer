@@ -72,7 +72,9 @@ def clean_dir(path: Path) -> None:
     """
     if path.exists():
         shutil.rmtree(path)  # 检查目录是否存在，如果存在则递归删除
-    path.mkdir(parents=True, exist_ok=True)  # 创建目录，parents=True表示创建多层目录，exist_ok=True表示目录已存在时不报错
+    path.mkdir(
+        parents=True, exist_ok=True
+    )  # 创建目录，parents=True表示创建多层目录，exist_ok=True表示目录已存在时不报错
 
 
 def copy_code_bundle(dst_case_dir: Path) -> Path:
@@ -137,7 +139,9 @@ def write_bat_ansi(path: Path, content: str) -> None:
     None: 无返回值。
     """
     normalized = content.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")  # 标准化换行符为Windows格式
-    path.write_bytes(normalized.encode(_ansi_encoding(), errors="replace"))  # 使用ANSI编码写入文件，遇到无法编码的字符时替换
+    path.write_bytes(
+        normalized.encode(_ansi_encoding(), errors="replace")
+    )  # 使用ANSI编码写入文件，遇到无法编码的字符时替换
 
 
 def write_source_launcher(bundle_root: Path) -> None:
@@ -169,18 +173,18 @@ def write_source_launcher(bundle_root: Path) -> None:
 def write_runtime_launcher(bundle_root: Path) -> None:
     """
     生成Windows批处理启动器脚本，用于启动Python应用程序
-    
+
     功能：在指定目录下创建两个批处理文件
         1. start.bat - 常规启动器（静默运行）
         2. start_debug.bat - 调试启动器（显示控制台）
-    
+
     参数：
         bundle_root (Path): 应用程序包的根目录路径
-    
+
     返回值：
         None: 该函数不返回任何值，但会在文件系统中创建两个批处理文件
     """
-    
+
     # 定义常规启动器脚本内容（静默模式，无控制台窗口）
     launcher = textwrap.dedent("""\
         @echo off
@@ -199,10 +203,10 @@ def write_runtime_launcher(bundle_root: Path) -> None:
         echo Embedded python executable not found.  # 提示未找到Python解释器
         exit /b 1  # 错误退出码
     """)
-    
+
     # 写入常规启动器批处理文件
     write_bat_ansi(bundle_root / "start.bat", launcher)
-    
+
     # 定义调试启动器脚本内容（显示控制台窗口，便于查看输出）
     debug_launcher = textwrap.dedent("""\
         @echo off
@@ -218,7 +222,7 @@ def write_runtime_launcher(bundle_root: Path) -> None:
         pause  # 暂停等待用户按键
         exit /b 1  # 错误退出码
     """)
-    
+
     # 写入调试启动器批处理文件
     write_bat_ansi(bundle_root / "start_debug.bat", debug_launcher)
 
@@ -290,6 +294,7 @@ def download(url: str, target_file: Path, *, force: bool = False) -> Path:
 
 # ======================== NEW: runtime cache helpers ========================
 
+
 def _requirements_hash() -> str:
     """Return a short hash of requirements.txt content for cache key."""
     req_path = PROJECT_ROOT / "requirements.txt"
@@ -340,12 +345,8 @@ def _prepare_configured_runtime(
 
     # ---- cache miss: full bootstrap ----
     embed_zip_name = f"python-{runtime_python}-embed-amd64.zip"
-    embed_url = (
-        f"https://www.python.org/ftp/python/{runtime_python}/{embed_zip_name}"
-    )
-    embed_zip_path = download(
-        embed_url, CACHE_DIR / embed_zip_name, force=force
-    )
+    embed_url = f"https://www.python.org/ftp/python/{runtime_python}/{embed_zip_name}"
+    embed_zip_path = download(embed_url, CACHE_DIR / embed_zip_name, force=force)
 
     with zipfile.ZipFile(embed_zip_path, "r") as zf:
         zf.extractall(runtime_python_dir)
@@ -371,9 +372,15 @@ def _prepare_configured_runtime(
     )
     run(
         [
-            str(python_exe), "-m", "pip", "install",
-            "--prefer-binary", "--only-binary", ":all:",
-            "-r", str(PROJECT_ROOT / "requirements.txt"),
+            str(python_exe),
+            "-m",
+            "pip",
+            "install",
+            "--prefer-binary",
+            "--only-binary",
+            ":all:",
+            "-r",
+            str(PROJECT_ROOT / "requirements.txt"),
         ],
         cwd=runtime_python_dir,
     )
@@ -389,7 +396,7 @@ def _prepare_configured_runtime(
 
 
 def configure_embedded_python(python_dir: Path) -> None:
-    """配置嵌入式Python运行时的路径文件（._pth）。
+    r"""配置嵌入式Python运行时的路径文件（._pth）。
 
     此函数确保嵌入式Python环境的路径文件包含必要的配置项：
     1. 指向父目录的路径 `..`
@@ -410,10 +417,7 @@ def configure_embedded_python(python_dir: Path) -> None:
     # 取第一个找到的 ._pth 文件进行操作。
     pth_file = pth_files[0]
     # 读取文件内容，并按行分割，同时去除每行末尾的换行符。
-    rows = [
-        line.rstrip("\r\n")
-        for line in pth_file.read_text(encoding="utf-8").splitlines()
-    ]
+    rows = [line.rstrip("\r\n") for line in pth_file.read_text(encoding="utf-8").splitlines()]
     # 创建一个列表，用于存储处理后的新行。
     new_rows: list[str] = []
     # 以下三个布尔标志用于记录是否已存在关键的配置项。
@@ -473,10 +477,10 @@ def configure_embedded_python(python_dir: Path) -> None:
 def build_minimal_code() -> Path:
     """构建最小代码包并返回打包路径。
     此函数执行一系列步骤来生成包含最小可运行代码的包。
-    
+
     Args:
         无参数
-    
+
     Returns:
         Path: 生成的代码包根目录路径
     """
@@ -490,29 +494,29 @@ def build_minimal_code() -> Path:
 
 def build_portable_runtime(runtime_python: str, *, force_download: bool = False) -> Path:
     """构建便携式运行时包。
-    
+
     此函数创建一个自包含的便携式运行时包，主要用于Windows平台。
     它会清理目标目录，复制代码，准备Python运行时环境，并生成必要的启动文件和配置文件。
-    
+
     Args:
         runtime_python (str): 用于构建便携式运行时的Python解释器路径或标识。
         force_download (bool, optional): 是否强制重新下载运行时。默认为False。
-    
+
     Returns:
         Path: 生成的便携式运行时包的根目录路径。
-    
+
     Raises:
         RuntimeError: 如果在非Windows平台调用，或运行时目录中找不到python.exe时抛出。
     """
     # 检查当前平台是否为Windows，因为便携式运行时导出目前仅支持Windows主机
     if not sys.platform.startswith("win"):
         raise RuntimeError("portable runtime export currently supports Windows host only")
-    
+
     print("[STEP] build portable runtime bundle")
-    
+
     # 清理运行时导出目录，为新的构建做准备
     clean_dir(RUNTIME_EXPORT_DIR)
-    
+
     # 复制代码包到导出目录，并获取包的根路径
     bundle_root = copy_code_bundle(RUNTIME_EXPORT_DIR)
 
@@ -522,7 +526,9 @@ def build_portable_runtime(runtime_python: str, *, force_download: bool = False)
 
     # 准备配置好的运行时环境，如果指定则强制重新下载
     _prepare_configured_runtime(
-        runtime_python_dir, runtime_python, force=force_download,
+        runtime_python_dir,
+        runtime_python,
+        force=force_download,
     )
 
     # 定义Python可执行文件路径，并验证其存在性
@@ -536,18 +542,20 @@ def build_portable_runtime(runtime_python: str, *, force_download: bool = False)
     # 获取运行时Python版本信息
     runtime_version = subprocess.check_output(
         [str(python_exe), "-c", "import sys; print(sys.version.replace('\\n', ' '))"],
-        text=True, cwd=str(bundle_root),
+        text=True,
+        cwd=str(bundle_root),
     ).strip()
-    
+
     # 获取运行时已安装包列表
     runtime_freeze = subprocess.check_output(
         [str(python_exe), "-m", "pip", "freeze"],
-        text=True, cwd=str(bundle_root),
+        text=True,
+        cwd=str(bundle_root),
     ).strip()
 
     # 生成运行时启动器脚本
     write_runtime_launcher(bundle_root)
-    
+
     # 写入环境配置文件，包含运行时类型、版本和依赖信息
     write_environments_file(
         bundle_root,
@@ -555,33 +563,58 @@ def build_portable_runtime(runtime_python: str, *, force_download: bool = False)
         runtime_python_version=runtime_version,
         runtime_freeze=runtime_freeze,
     )
-    
+
     # 返回构建完成的便携式运行时包的根目录路径
     return bundle_root
 
 
-_PYSIDE6_TRIM_SKIP_DIRS = frozenset({
-    "__pycache__", "include", "typesystems", "scripts", "glue",
-    "resources", "metatypes", "QtAsyncio", "qml", "translations",
-})
+_PYSIDE6_TRIM_SKIP_DIRS = frozenset(
+    {
+        "__pycache__",
+        "include",
+        "typesystems",
+        "scripts",
+        "glue",
+        "resources",
+        "metatypes",
+        "QtAsyncio",
+        "qml",
+        "translations",
+    }
+)
 
-_PYSIDE6_TRIM_KEEP_PLUGIN_DIRS = frozenset({
-    "platforms", "styles", "imageformats", "iconengines",
-    "multimedia", "networkinformation", "tls", "generic", "sqldrivers",
-})
+_PYSIDE6_TRIM_KEEP_PLUGIN_DIRS = frozenset(
+    {
+        "platforms",
+        "styles",
+        "imageformats",
+        "iconengines",
+        "multimedia",
+        "networkinformation",
+        "tls",
+        "generic",
+        "sqldrivers",
+    }
+)
 
-_PYSIDE6_TRIM_RUNTIME_DEPS = frozenset({
-    "Qt6OpenGL", "Qt6OpenGLWidgets", "Qt6Svg", "Qt6SvgWidgets",
-    "Qt6Sql", "Qt6MultimediaWidgets",
-})
+_PYSIDE6_TRIM_RUNTIME_DEPS = frozenset(
+    {
+        "Qt6OpenGL",
+        "Qt6OpenGLWidgets",
+        "Qt6Svg",
+        "Qt6SvgWidgets",
+        "Qt6Sql",
+        "Qt6MultimediaWidgets",
+    }
+)
 
 
 def _make_pyside6_trim_ignore() -> Callable[[str, list[str]], set[str]]:
     """生成一个用于 PySide6 裁剪的忽略规则函数。
-    
+
     该函数创建一个闭包，用于在构建过程中根据扫描到的导入模块和运行时依赖，
     决定哪些文件和目录应该被忽略。
-    
+
     Returns:
         Callable[[str, list[str]], set[str]]: 一个接受目录路径和内容列表，返回需要忽略的项的集合的函数。
     """
@@ -604,11 +637,11 @@ def _make_pyside6_trim_ignore() -> Callable[[str, list[str]], set[str]]:
 
     def _ignore(directory: str, contents: list[str]) -> set[str]:
         """决定在给定目录下忽略哪些文件和目录。
-        
+
         Args:
             directory: 当前正在处理的目录路径。
             contents: 该目录下的文件和子目录列表。
-        
+
         Returns:
             set[str]: 需要被忽略的文件和目录名的集合。
         """
@@ -653,10 +686,14 @@ def _make_pyside6_trim_ignore() -> Callable[[str, list[str]], set[str]]:
                         break
                 # 检查主干名是否在保留的 DLL 集合或模块名中（也考虑带前缀的变体，如 "QtCore_..."）
                 is_keep = any(stem == k or stem.startswith(k + "_") for k in keep_dlls | keep_modules)
-                # 如果不在保留列表中，且不是 PySide6 或 shiboken 的核心文件，并且以 Qt 相关前缀开头，则忽略
-                if not is_keep and not stem.startswith("pyside6") and not stem.startswith("shiboken"):
-                    if stem.startswith("Qt3D") or stem.startswith("Qt6") or stem.startswith("Qt"):
-                        ignored.add(name)
+                # 如果不在保留列表中、不是核心文件、且以 Qt 相关前缀开头，则忽略
+                if (
+                    not is_keep
+                    and not stem.startswith("pyside6")
+                    and not stem.startswith("shiboken")
+                    and (stem.startswith("Qt3D") or stem.startswith("Qt6") or stem.startswith("Qt"))
+                ):
+                    ignored.add(name)
 
         # 返回需要忽略的项的集合
         return ignored
@@ -737,11 +774,11 @@ def _pyside6_module_dll_names(module_name: str) -> set[str]:
 
 def _trim_pyside6(runtime_python_dir: Path, *, source_dirs: list[Path] | None = None) -> None:
     """精简PySide6库，删除未使用的模块和动态链接库，以减小运行时目录的大小。
-    
+
     Args:
         runtime_python_dir: Path - 运行时Python目录，包含site-packages等。
         source_dirs: list[Path] | None - 源代码目录列表，用于扫描PySide6的导入。如果为None，则使用默认的项目目录。
-    
+
     Returns:
         None
     """
@@ -818,17 +855,20 @@ def _trim_pyside6(runtime_python_dir: Path, *, source_dirs: list[Path] | None = 
                 if stem == keep or stem.startswith(keep + "_"):
                     is_keep = True
                     break
-            # 如果不需要保留，且不是PySide6或Shiboken的核心文件，则尝试删除
-            if not is_keep and not stem.startswith("pyside6") and not stem.startswith("shiboken"):
-                # 仅删除以Qt开头的特定模块的动态库
-                if stem.startswith("Qt3D") or stem.startswith("Qt6") or stem.startswith("Qt"):
-                    try:
-                        size = item.stat().st_size
-                        item.unlink()
-                        removed_count += 1
-                        removed_bytes += size
-                    except OSError:
-                        pass
+            # 如果不需要保留、不是核心文件、且是以Qt开头的特定模块动态库，则删除
+            if (
+                not is_keep
+                and not stem.startswith("pyside6")
+                and not stem.startswith("shiboken")
+                and (stem.startswith("Qt3D") or stem.startswith("Qt6") or stem.startswith("Qt"))
+            ):
+                try:
+                    size = item.stat().st_size
+                    item.unlink()
+                    removed_count += 1
+                    removed_bytes += size
+                except OSError:
+                    pass
 
     # 如果删除了文件，打印节省的空间信息
     if removed_bytes > 0:
@@ -853,22 +893,24 @@ def parse_args() -> argparse.Namespace:
         argparse.Namespace对象，包含解析后的参数值。
     """
     # 创建命令行参数解析器
-    parser = argparse.ArgumentParser(
-        description="Export MusePlayer distributable artifacts"
-    )
+    parser = argparse.ArgumentParser(description="Export MusePlayer distributable artifacts")
     # 添加--mode参数，指定导出模式
     parser.add_argument(
-        "--mode", choices=["all", "code", "runtime"], default="all",
+        "--mode",
+        choices=["all", "code", "runtime"],
+        default="all",
         help="code=minimal code set, runtime=portable runnable package, all=both",
     )
     # 添加--runtime-python参数，指定嵌入式Python版本
     parser.add_argument(
-        "--runtime-python", default="3.11.9",
+        "--runtime-python",
+        default="3.11.9",
         help="embedded Python version for runtime export (e.g. 3.11.9)",
     )
     # 添加--force-download参数，强制重新下载
     parser.add_argument(
-        "--force-download", action="store_true",
+        "--force-download",
+        action="store_true",
         help="ignore cache and re-download embedded Python/get-pip",
     )
     # 解析命令行参数并返回Namespace对象
@@ -889,9 +931,7 @@ def main() -> int:
     if args.mode in {"all", "code"}:  # 如果模式包含"all"或"code"，则构建代码
         built.append(build_minimal_code())
     if args.mode in {"all", "runtime"}:  # 如果模式包含"all"或"runtime"，则构建运行时环境
-        built.append(
-            build_portable_runtime(args.runtime_python, force_download=args.force_download)
-        )
+        built.append(build_portable_runtime(args.runtime_python, force_download=args.force_download))
     print("\n[DONE] exported:")  # 打印完成信息
     for path in built:  # 遍历构建的路径并打印
         print(f" - {path}")

@@ -10,13 +10,14 @@ from app.models.entities import Track, new_id
 
 class MetadataService:
     """音频文件元数据服务。
-    
+
     负责提取音频文件的标签信息、歌词和封面图片。
     使用Mutagen库处理多种音频格式（MP3、FLAC、M4A、OGG等）。
     """
+
     def __init__(self):
         """初始化元数据服务。
-        
+
         创建用于缓存歌词和封面数据的内部存储。
         """
         self._lyrics_cache: dict[str, str] = {}
@@ -24,14 +25,14 @@ class MetadataService:
 
     def extract_track(self, path: Path, track_id: str | None = None) -> Track:
         """从音频文件提取完整的曲目信息。
-        
+
         使用Mutagen库读取音频文件的标签和基本信息，
         创建一个Track实例表示该音频文件。
-        
+
         Args:
             path: 音频文件路径
             track_id: 可选的曲目ID，如果未提供则生成新的
-            
+
         Returns:
             Track: 包含提取的元数据的曲目对象
         """
@@ -82,14 +83,14 @@ class MetadataService:
 
     def read_lyrics(self, path: Path) -> str:
         """读取音频文件的歌词信息。
-        
+
         优先读取同名的.lrc文件，如果不存在则尝试从
         音频文件标签中读取嵌入的歌词。
         结果会被缓存以提高性能。
-        
+
         Args:
             path: 音频文件路径
-            
+
         Returns:
             str: 歌词文本，如果没有歌词则返回空字符串
         """
@@ -107,13 +108,13 @@ class MetadataService:
 
     def read_cover_bytes(self, path: Path) -> bytes | None:
         """读取音频文件内嵌的封面图片。
-        
+
         从多种音频格式中提取嵌入的封面图片数据。
         结果会被缓存以提高性能。
-        
+
         Args:
             path: 音频文件路径
-            
+
         Returns:
             bytes | None: 封面图片数据，如果没有封面则返回None
         """
@@ -127,10 +128,10 @@ class MetadataService:
 
     def _read_lrc_sidecar(self, path: Path) -> str:
         """读取同名的.lrc歌词文件。
-        
+
         Args:
             path: 音频文件路径
-            
+
         Returns:
             str: 歌词文本，如果文件不存在或读取失败则返回空字符串
         """
@@ -149,14 +150,14 @@ class MetadataService:
 
     def _read_tag_lyrics(self, path: Path) -> str:
         """从音频文件标签中读取嵌入的歌词。
-        
+
         支持多种音频格式的歌词标签：
         - ID3格式的USLT标签（MP3）
         - Vorbis/FLAC格式的lyrics标签
-        
+
         Args:
             path: 音频文件路径
-            
+
         Returns:
             str: 歌词文本，如果没有找到则返回空字符串
         """
@@ -188,15 +189,15 @@ class MetadataService:
 
     def _read_embedded_cover(self, path: Path) -> bytes | None:
         """从音频文件标签中读取嵌入的封面图片。
-        
+
         支持多种音频格式的封面：
         - ID3 APIC标签（MP3）
         - FLAC pictures
         - MP4 covr原子
-        
+
         Args:
             path: 音频文件路径
-            
+
         Returns:
             bytes | None: 封面图片数据，如果没有则返回None
         """
@@ -240,11 +241,11 @@ class MetadataService:
     @staticmethod
     def _first_tag(tags: Any, candidates: list[str]) -> str:
         """从标签中按优先级获取第一个存在的值。
-        
+
         Args:
             tags: 标签对象
             candidates: 可能的标签键名列表，按优先级排序
-            
+
         Returns:
             str: 找到的标签值，如果没有则返回空字符串
         """
@@ -265,14 +266,14 @@ class MetadataService:
     @staticmethod
     def _parse_track_no(raw: str) -> int:
         """解析音轨号字符串。
-        
+
         支持多种格式的音轨号：
         - 纯数字："5"
         - 分数形式："3/10"
-        
+
         Args:
             raw: 音轨号字符串
-            
+
         Returns:
             int: 解析后的音轨号，解析失败返回0
         """

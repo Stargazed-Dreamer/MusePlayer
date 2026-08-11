@@ -1,36 +1,43 @@
-
 """
 Windows 任务栏进度条 Demo
 依赖: PySide6, comtypes
 原理: 通过 ITaskbarList3 COM 接口控制任务栏图标上的进度条
 """
 
+import contextlib
 import sys
-import ctypes
-from ctypes import c_void_p, c_int, c_uint, c_ulonglong, HRESULT
-
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSlider, QPushButton, QLabel, QFrame, QButtonGroup, QRadioButton,
-    QProgressBar,
-)
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont
+from ctypes import HRESULT, c_int, c_uint, c_ulonglong, c_void_p
 
 import comtypes
-from comtypes import IUnknown, GUID, COMMETHOD
+from comtypes import COMMETHOD, GUID, IUnknown
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
+    QApplication,
+    QButtonGroup,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QProgressBar,
+    QPushButton,
+    QRadioButton,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
 
 # ═══════════════════════ COM 接口定义 ═══════════════════════
 
 CLSID_TaskbarList = GUID("{56FDF344-FD6D-11d0-958A-006097C9A090}")
-IID_ITaskbarList3  = GUID("{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}")
+IID_ITaskbarList3 = GUID("{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}")
 
 # 进度状态标志
-TBPF_NOPROGRESS    = 0x00000000  # 无进度条
+TBPF_NOPROGRESS = 0x00000000  # 无进度条
 TBPF_INDETERMINATE = 0x00000001  # 不确定（滚动绿色）
-TBPF_NORMAL        = 0x00000002  # 正常（绿色）
-TBPF_ERROR         = 0x00000003  # 错误（红色）
-TBPF_PAUSED        = 0x00000004  # 暂停（黄色）
+TBPF_NORMAL = 0x00000002  # 正常（绿色）
+TBPF_ERROR = 0x00000003  # 错误（红色）
+TBPF_PAUSED = 0x00000004  # 暂停（黄色）
 
 
 class ITaskbarList3(IUnknown):
@@ -39,53 +46,57 @@ class ITaskbarList3(IUnknown):
     继承链: IUnknown -> ITaskbarList(5方法) -> ITaskbarList2(+1方法) -> ITaskbarList3(+12方法)
     所有方法必须按 vtable 顺序完整声明，否则偏移量会错位。
     """
+
     _iid_ = IID_ITaskbarList3
     _methods_ = [
         # ── ITaskbarList ──
         COMMETHOD([], HRESULT, "HrInit"),
-        COMMETHOD([], HRESULT, "AddTab",       (["in"], c_void_p, "hwnd")),
-        COMMETHOD([], HRESULT, "DeleteTab",    (["in"], c_void_p, "hwnd")),
-        COMMETHOD([], HRESULT, "ActivateTab",  (["in"], c_void_p, "hwnd")),
+        COMMETHOD([], HRESULT, "AddTab", (["in"], c_void_p, "hwnd")),
+        COMMETHOD([], HRESULT, "DeleteTab", (["in"], c_void_p, "hwnd")),
+        COMMETHOD([], HRESULT, "ActivateTab", (["in"], c_void_p, "hwnd")),
         COMMETHOD([], HRESULT, "SetActiveAlt", (["in"], c_void_p, "hwnd")),
         # ── ITaskbarList2 ──
-        COMMETHOD([], HRESULT, "MarkFullscreenWindow",
-                  (["in"], c_void_p, "hwnd"), (["in"], c_int, "fFullscreen")),
+        COMMETHOD([], HRESULT, "MarkFullscreenWindow", (["in"], c_void_p, "hwnd"), (["in"], c_int, "fFullscreen")),
         # ── ITaskbarList3（本 demo 仅使用前两个） ──
-        COMMETHOD([], HRESULT, "SetProgressValue",
-                  (["in"], c_void_p, "hwnd"),
-                  (["in"], c_ulonglong, "ullCompleted"),
-                  (["in"], c_ulonglong, "ullTotal")),
-        COMMETHOD([], HRESULT, "SetProgressState",
-                  (["in"], c_void_p, "hwnd"),
-                  (["in"], c_int, "tbpFlags")),
+        COMMETHOD(
+            [],
+            HRESULT,
+            "SetProgressValue",
+            (["in"], c_void_p, "hwnd"),
+            (["in"], c_ulonglong, "ullCompleted"),
+            (["in"], c_ulonglong, "ullTotal"),
+        ),
+        COMMETHOD([], HRESULT, "SetProgressState", (["in"], c_void_p, "hwnd"), (["in"], c_int, "tbpFlags")),
         # ── 以下方法保持 vtable 对齐，demo 中不调用 ──
-        COMMETHOD([], HRESULT, "RegisterTab",
-                  (["in"], c_void_p, "h1"), (["in"], c_void_p, "h2")),
-        COMMETHOD([], HRESULT, "UnregisterTab",       (["in"], c_void_p, "h")),
-        COMMETHOD([], HRESULT, "SetTabOrder",
-                  (["in"], c_void_p, "h1"), (["in"], c_void_p, "h2")),
-        COMMETHOD([], HRESULT, "SetTabActive",
-                  (["in"], c_void_p, "h1"), (["in"], c_void_p, "h2"), (["in"], c_int, "f")),
-        COMMETHOD([], HRESULT, "ThumbBarAddButtons",
-                  (["in"], c_void_p, "h"), (["in"], c_uint, "n"), (["in"], c_void_p, "p")),
-        COMMETHOD([], HRESULT, "ThumbBarUpdateButtons",
-                  (["in"], c_void_p, "h"), (["in"], c_uint, "n"), (["in"], c_void_p, "p")),
-        COMMETHOD([], HRESULT, "ThumbBarSetImageList",
-                  (["in"], c_void_p, "h"), (["in"], c_void_p, "p")),
-        COMMETHOD([], HRESULT, "SetOverlayIcon",
-                  (["in"], c_void_p, "h"), (["in"], c_void_p, "p1"), (["in"], c_void_p, "p2")),
-        COMMETHOD([], HRESULT, "SetThumbnailTooltip",
-                  (["in"], c_void_p, "h"), (["in"], c_void_p, "p")),
-        COMMETHOD([], HRESULT, "SetThumbnailClip",
-                  (["in"], c_void_p, "h"), (["in"], c_void_p, "p")),
+        COMMETHOD([], HRESULT, "RegisterTab", (["in"], c_void_p, "h1"), (["in"], c_void_p, "h2")),
+        COMMETHOD([], HRESULT, "UnregisterTab", (["in"], c_void_p, "h")),
+        COMMETHOD([], HRESULT, "SetTabOrder", (["in"], c_void_p, "h1"), (["in"], c_void_p, "h2")),
+        COMMETHOD(
+            [], HRESULT, "SetTabActive", (["in"], c_void_p, "h1"), (["in"], c_void_p, "h2"), (["in"], c_int, "f")
+        ),
+        COMMETHOD(
+            [], HRESULT, "ThumbBarAddButtons", (["in"], c_void_p, "h"), (["in"], c_uint, "n"), (["in"], c_void_p, "p")
+        ),
+        COMMETHOD(
+            [],
+            HRESULT,
+            "ThumbBarUpdateButtons",
+            (["in"], c_void_p, "h"),
+            (["in"], c_uint, "n"),
+            (["in"], c_void_p, "p"),
+        ),
+        COMMETHOD([], HRESULT, "ThumbBarSetImageList", (["in"], c_void_p, "h"), (["in"], c_void_p, "p")),
+        COMMETHOD(
+            [], HRESULT, "SetOverlayIcon", (["in"], c_void_p, "h"), (["in"], c_void_p, "p1"), (["in"], c_void_p, "p2")
+        ),
+        COMMETHOD([], HRESULT, "SetThumbnailTooltip", (["in"], c_void_p, "h"), (["in"], c_void_p, "p")),
+        COMMETHOD([], HRESULT, "SetThumbnailClip", (["in"], c_void_p, "h"), (["in"], c_void_p, "p")),
     ]
 
 
 def create_taskbar() -> ITaskbarList3:
     """创建并初始化 ITaskbarList3 COM 实例"""
-    tb = comtypes.CoCreateInstance(
-        CLSID_TaskbarList, ITaskbarList3, comtypes.CLSCTX_INPROC_SERVER
-    )
+    tb = comtypes.CoCreateInstance(CLSID_TaskbarList, ITaskbarList3, comtypes.CLSCTX_INPROC_SERVER)
     tb.HrInit()
     return tb
 
@@ -93,11 +104,11 @@ def create_taskbar() -> ITaskbarList3:
 # ═══════════════════════ 状态元数据 ═══════════════════════
 
 STATE_META = {
-    TBPF_NOPROGRESS:    {"label": "无进度",   "color": "#8e8e93", "desc": "任务栏不显示进度条"},
-    TBPF_INDETERMINATE: {"label": "不确定",   "color": "#5dade2", "desc": "滚动动画，进度未知"},
-    TBPF_NORMAL:        {"label": "正常",     "color": "#00d4aa", "desc": "绿色进度条"},
-    TBPF_ERROR:         {"label": "错误",     "color": "#ff4757", "desc": "红色进度条"},
-    TBPF_PAUSED:        {"label": "暂停",     "color": "#ffa502", "desc": "黄色进度条"},
+    TBPF_NOPROGRESS: {"label": "无进度", "color": "#8e8e93", "desc": "任务栏不显示进度条"},
+    TBPF_INDETERMINATE: {"label": "不确定", "color": "#5dade2", "desc": "滚动动画，进度未知"},
+    TBPF_NORMAL: {"label": "正常", "color": "#00d4aa", "desc": "绿色进度条"},
+    TBPF_ERROR: {"label": "错误", "color": "#ff4757", "desc": "红色进度条"},
+    TBPF_PAUSED: {"label": "暂停", "color": "#ffa502", "desc": "黄色进度条"},
 }
 
 STATE_ORDER = [TBPF_NOPROGRESS, TBPF_INDETERMINATE, TBPF_NORMAL, TBPF_ERROR, TBPF_PAUSED]
@@ -105,6 +116,7 @@ STATE_TO_INDEX = {s: i for i, s in enumerate(STATE_ORDER)}
 
 
 # ═══════════════════════ 主窗口 ═══════════════════════
+
 
 class TaskbarProgressDemo(QMainWindow):
     def __init__(self):
@@ -324,7 +336,7 @@ class TaskbarProgressDemo(QMainWindow):
     def _sync_colors(self):
         """根据 current_state 同步所有控件颜色"""
         color = STATE_META[self.current_state]["color"]
-        desc  = STATE_META[self.current_state]["desc"]
+        desc = STATE_META[self.current_state]["desc"]
 
         # 数值标签
         self.lbl_value.setText(f"{self.current_value} %")
@@ -335,7 +347,7 @@ class TaskbarProgressDemo(QMainWindow):
 
         # 进度条
         if self.current_state == TBPF_INDETERMINATE:
-            self.bar.setRange(0, 0)       # Qt 不确定模式
+            self.bar.setRange(0, 0)  # Qt 不确定模式
         else:
             self.bar.setRange(0, 100)
             self.bar.setValue(self.current_value)
@@ -474,9 +486,9 @@ class TaskbarProgressDemo(QMainWindow):
         if not self.auto_running:
             return
         demo_seq = [
-            (TBPF_ERROR,         100, 1200),
-            (TBPF_PAUSED,         72, 1200),
-            (TBPF_INDETERMINATE,   0, 2000),
+            (TBPF_ERROR, 100, 1200),
+            (TBPF_PAUSED, 72, 1200),
+            (TBPF_INDETERMINATE, 0, 2000),
         ]
         if step >= len(demo_seq):
             # 一轮结束，重新开始
@@ -499,34 +511,32 @@ class TaskbarProgressDemo(QMainWindow):
 
     def _reset(self):
         """重置任务栏进度条状态到初始值。
-    
+
         该方法会停止自动运行、清空进度值、更新UI控件状态，
         并同步任务栏显示。
-    
+
         Args:
             无
-        
+
         Returns:
             无
         """
         if self.auto_running:  # 检查是否正在自动运行
             self._stop_auto()  # 若正在运行则停止自动模式
-    
+
         self.current_state = TBPF_NORMAL  # 将状态重置为正常模式
         self.current_value = 0  # 将进度值清零
-    
+
         self.slider.setValue(0)  # 更新滑块控件到0位置
         self.radio_group.button(STATE_TO_INDEX[TBPF_NORMAL]).setChecked(True)  # 选中正常状态对应的单选按钮
-    
+
         self._sync_colors()  # 同步颜色主题到界面
         self._push_to_taskbar()  # 将当前状态推送到任务栏显示
 
     def closeEvent(self, event):
         """关闭时清除任务栏进度"""
-        try:
+        with contextlib.suppress(Exception):
             self.taskbar.SetProgressState(self._hwnd(), TBPF_NOPROGRESS)
-        except Exception:
-            pass
         event.accept()
 
 
@@ -534,7 +544,7 @@ class TaskbarProgressDemo(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setStyle("Fusion")          # 使用 Fusion 风格确保跨平台一致性
+    app.setStyle("Fusion")  # 使用 Fusion 风格确保跨平台一致性
     win = TaskbarProgressDemo()
     win.show()
     sys.exit(app.exec())

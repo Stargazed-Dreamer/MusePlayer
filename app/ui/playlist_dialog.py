@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """歌单管理对话框。
 
 提供完整的歌单管理功能：
@@ -21,6 +19,8 @@ from __future__ import annotations
 - 对话框仅负责UI交互，业务逻辑在控制器层
 - 支持实时更新歌单列表和状态反馈
 """
+
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -62,10 +62,10 @@ class PlaylistDialog(QDialog):
     - 支持与主窗口的模态/非模态交互
     - 自动刷新机制保持数据同步
     """
-    
+
     def __init__(self, controller: AppController, parent=None):
         """初始化歌单管理对话框。
-        
+
         Args:
             controller: AppController实例，用于歌单数据操作
             parent: 父级窗口，用于模态对话框显示
@@ -80,7 +80,7 @@ class PlaylistDialog(QDialog):
 
     def _build_ui(self) -> None:
         """构建对话框用户界面。
-        
+
         创建的界面包含以下组件：
         - 顶部：功能描述标签，说明对话框用途
         - 中间：歌单列表，显示所有可用歌单及其曲目数量
@@ -185,7 +185,7 @@ class PlaylistDialog(QDialog):
 
     def _selected_playlist_id(self) -> str | None:
         """获取当前选中的歌单ID。
-        
+
         Returns:
             str | None: 当前选中歌单的ID，如果没有选中则返回None
         """
@@ -196,7 +196,7 @@ class PlaylistDialog(QDialog):
 
     def _create_playlist(self) -> None:
         """创建新歌单。
-        
+
         显示输入对话框获取用户输入的歌单名称，然后调用控制器创建新歌单。
         创建成功后刷新列表显示。
         """
@@ -208,7 +208,7 @@ class PlaylistDialog(QDialog):
 
     def _rename_playlist(self) -> None:
         """重命名当前选中的歌单。
-        
+
         检查选中的歌单是否可重命名（"全部歌曲"不可重命名），
         然后显示输入对话框获取新名称并调用控制器进行重命名。
         """
@@ -227,7 +227,7 @@ class PlaylistDialog(QDialog):
 
     def _delete_playlist(self) -> None:
         """删除当前选中的歌单。
-        
+
         检查选中的歌单是否可删除（"全部歌曲"不可删除），
         显示确认对话框获取用户确认，然后调用控制器删除歌单。
         """
@@ -247,7 +247,7 @@ class PlaylistDialog(QDialog):
 
     def _copy_playlist(self) -> None:
         """复制当前选中的歌单。
-        
+
         获取选中歌单信息并设置为默认名称（歌单名 - 副本），
         显示输入对话框获取新名称，调用控制器复制歌单。
         复制失败时显示错误信息。
@@ -270,7 +270,7 @@ class PlaylistDialog(QDialog):
 
     def _merge_playlist(self) -> None:
         """合并歌单操作。
-        
+
         将当前选中的歌单合并到其他歌单中，显示可选目标歌单列表，
         选择合适的歌单后进行合并操作并显示合并结果。
         """
@@ -306,7 +306,7 @@ class PlaylistDialog(QDialog):
 
     def _set_active(self) -> None:
         """将选中的歌单设置为当前播放歌单。
-        
+
         调用播放器服务设置当前歌单，并触发库更改信号，
         然后刷新显示以更新当前歌单标识。
         """
@@ -319,7 +319,7 @@ class PlaylistDialog(QDialog):
 
     def _import_folder(self) -> None:
         """从文件夹导入音乐文件。
-        
+
         显示文件夹选择对话框，将选定文件夹中的所有音频文件
         导入到当前选中的歌单中（或活跃歌单，如果在"全部歌曲"）。
         导入过程异常时会显示错误信息。
@@ -377,7 +377,7 @@ class PlaylistDialog(QDialog):
 
     def _import_playlist_file(self) -> None:
         """导入外部歌单文件。
-        
+
         显示文件选择对话框选择.muse_playlist.json或.json格式的歌单文件，
         调用控制器导入歌单数据，导入异常时显示错误信息。
         """

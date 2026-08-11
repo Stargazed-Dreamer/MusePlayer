@@ -79,9 +79,9 @@ for track_id, item in stats_svc._entries.items():
 ```python
 import hashlib, json
 
-content_hash = hashlib.sha256(
-    json.dumps(tracks_list, sort_keys=True, ensure_ascii=False).encode("utf-8")
-).hexdigest()[:16]
+content_hash = hashlib.sha256(json.dumps(tracks_list, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[
+    :16
+]
 playlist_hash = f"museplayer_stats_{content_hash}"
 ```
 

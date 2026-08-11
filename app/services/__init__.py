@@ -9,8 +9,8 @@
 - AppController: 应用控制器，协调各服务组件
 """
 
+from .app_controller import AppController
 from .library_service import LibraryService
 from .player_service import PlayerService, PlayMode
-from .app_controller import AppController
 
 __all__ = ["LibraryService", "PlayerService", "PlayMode", "AppController"]
