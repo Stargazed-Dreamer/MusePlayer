@@ -85,7 +85,7 @@ python -c "import socket,json;s=socket.socket();s.connect(('127.0.0.1',43121));s
 
 **便携包（推荐，解压即用，无需安装 Python）**：
 
-1. 从 [Releases](https://github.com/Stargazed-Dreamer/MusePlayer/releases) 下载
+1. 从本仓库 [Releases](./releases) 页面下载
 2. 解压到任意目录
 3. 运行 `start.bat`（内部调用便携版 `.\python\python.exe main.py`）。您可以为此文件创建快捷方式并绑定icon文件。
 
