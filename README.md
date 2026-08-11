@@ -85,11 +85,11 @@ python -c "import socket,json;s=socket.socket();s.connect(('127.0.0.1',43121));s
 
 **便携包（推荐，解压即用，无需安装 Python）**：
 
-1. 从本仓库 [Releases](./releases) 页面下载
+1. 从本仓库 [Release](https://github.com/Stargazed-Dreamer/MusePlayer/releases) 页面下载
 2. 解压到任意目录
 3. 运行 `start.bat`（内部调用便携版 `.\python\python.exe main.py`）。您可以为此文件创建快捷方式并绑定icon文件。
 
-便携包使用嵌入式 Python + 裁剪后的 PySide6 构建，体积小、自包含、版本可控。构建原理见下方[构建便携包](#构建便携包)章节。
+便携包使用嵌入式 Python + 裁剪后的 PySide6 构建，体积小、自包含、版本可控。
 
 **自构建（从源码运行）**：
 
@@ -191,16 +191,6 @@ MusePlayer 的核心特色是运行时控制协议。所有播放器能力都可
 - **主题**：日间 / 夜间
 - **定时自动保存**：可配置间隔
 - **Windows 全局快捷键**：可自定义
-
-## 构建便携包
-
-便携包（仅 Windows）使用 [tools/export_build.py](tools/export_build.py) 构建，原理：
-
-1. 下载 Windows 嵌入式 Python（`python-3.x.x-embed-amd64.zip`）
-2. 安装 pip + 装入项目依赖
-3. 裁剪 PySide6 未用模块（QtWebEngine、Qt3D 等），减小体积
-4. 复制项目代码，生成 `start.bat` / `start_debug.bat` 启动器
-5. 产出便携式运行时包，解压即用
 
 ## 贡献
 
