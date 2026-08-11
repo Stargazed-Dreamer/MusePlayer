@@ -54,11 +54,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: 安装 Linux 系统依赖（PortAudio）
+      - name: 安装 Linux 系统依赖（PortAudio / PulseAudio）
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libportaudio2
+          sudo apt-get install -y libportaudio2 libpulse0
 
       - name: 安装依赖
         run: |
@@ -89,11 +89,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: 安装 Linux 系统依赖（PortAudio）
+      - name: 安装 Linux 系统依赖（PortAudio / PulseAudio）
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libportaudio2
+          sudo apt-get install -y libportaudio2 libpulse0
 
       - name: 安装依赖
         run: |

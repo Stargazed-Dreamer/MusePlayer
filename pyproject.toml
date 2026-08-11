@@ -48,8 +48,8 @@ dev = [
 "Bug Tracker" = "https://github.com/Stargazed-Dreamer/MusePlayer/issues"
 
 [tool.setuptools]
-# 项目非标准布局，使用 py_modules 和 packages 显式指定
-# 实际上本项目不通过 pip install 分发，pyproject.toml 主要用于工具配置
+[tool.setuptools.packages.find]
+include = ["app*", "core*"]
 
 [tool.ruff]
 line-length = 120
