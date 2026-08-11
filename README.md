@@ -1,11 +1,12 @@
 
 <p align="center">
-<img width="2048" height="2048" alt="图标改" src="https://github.com/user-attachments/assets/1065dd9e-1c74-4492-8785-897359249c39" />
+<p align="center"><img width="267" height="267" alt="图标改" src="https://github.com/user-attachments/assets/f23a8f9d-e805-4c1d-9546-18bac762d6d8" />
 </p>
 
 <h1 align="center">MusePlayer</h1>
 
-<p align="center">
+
+
   基于 PySide6 + PyAV 的本地音乐播放器桌面应用<br/>
   内置 <b>TCP JSON Lines 远程控制协议</b>，可被外部程序、脚本、自动化系统、AI Agent 完全控制
 </p>
