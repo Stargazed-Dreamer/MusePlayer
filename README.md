@@ -1,5 +1,6 @@
+
 <p align="center">
-  <img src="assets/图标改.png" width="160" alt="MusePlayer Logo" />
+<img width="2048" height="2048" alt="图标改" src="https://github.com/user-attachments/assets/1065dd9e-1c74-4492-8785-897359249c39" />
 </p>
 
 <h1 align="center">MusePlayer</h1>
@@ -18,8 +19,9 @@
 
 ---
 
-<!-- screenshot: 主界面日间主题 -->
-<!-- screenshot: 主界面夜间主题 -->
+<img width="1361" height="1018" alt="museplayer主黑" src="https://github.com/user-attachments/assets/b8f0ff4a-8817-4f5d-ad02-0ad5e53a56cf" />
+<img width="1361" height="1018" alt="museplayer主白" src="https://github.com/user-attachments/assets/5ff00b3c-baba-493d-a597-da49177d2fb5" />
+<img width="865" height="216" alt="museplayer小黑" src="https://github.com/user-attachments/assets/db511771-c072-45e5-b58a-51b255b633d7" />
 
 MusePlayer 使用 PyAV 作为底层音频解码内核，sounddevice 作为音频输出后端，通过四层分离架构（Domain / Service / Runtime / UI）实现高内聚低耦合。除常规播放器功能外，MusePlayer 的核心特色是**完整的运行时控制协议**——播放器的几乎所有能力都可通过 TCP 接口由外部程序驱动，适合有自动化、集成、二次开发需求的用户。
 
@@ -57,13 +59,9 @@ python -c "import socket,json;s=socket.socket();s.connect(('127.0.0.1',43121));s
 - **窗口解码（默认）**：以 6.2 秒为一块按需解码，后台预读取下一窗口实现无缝衔接。本质是分块边读边播，内存占用低，适合长曲目。
 - **完整读取**：顺序流式解码整文件到内存，首块就绪即起播；解码完成后转为纯内存模式，可任意位置瞬时拖动。读取未完成时拖动进度条，则从目标位置重新开始流式解码。
 
-### PyAV 跨解码器统一内核
-
-使用 PyAV 作为底层解码内核，将不同格式（FLAC/MP3/M4A/WAV/OGG/OPUS 等）统一为 48kHz float32 PCM 输出。线程安全内核设计，UI 层通过 `PlayerService` 间接调用，绝不直接操作底层。
-
 ### 6 维度播放统计
 
-不只是简单的播放计数，而是记录 6 个维度的统计：累计播放次数、主动播放计数、早期跳过计数（early_skip）、累计播放秒数、累计播放百分比、峰值会话时长。支持统计数据的导入与导出，便于跨设备同步与外部数据分析。
+记录 6 个维度的统计：累计播放次数、主动播放计数、早期跳过计数（early_skip）、累计播放秒数、累计播放百分比、峰值会话时长。支持统计数据的导入与导出，便于跨设备同步与外部数据分析。
 
 ### QRC 增强歌词
 
@@ -203,61 +201,9 @@ MusePlayer 的核心特色是运行时控制协议。所有播放器能力都可
 4. 复制项目代码，生成 `start.bat` / `start_debug.bat` 启动器
 5. 产出便携式运行时包，解压即用
 
-**本地构建**：
-
-```bash
-# 需 Python 3.12+（用于运行构建脚本）
-python tools/export_build.py
-# 产出在 .build/portable_runtime_v1.0.0/
-```
-
-**CI 自动构建**：打 `v*` tag 时 GitHub Actions 自动构建便携包并上传到 Release。也可在 Actions 页面手动触发（workflow_dispatch）。
-
-> 注：便携包构建仅支持 Windows 主机（嵌入式 Python 是 Windows 专有发行格式）。Linux/macOS 用户请使用 pip install 方式。
-
-## 技术栈
-
-| 类别 | 技术 |
-|------|------|
-| 语言/框架 | Python 3.12、PySide6 6.7+ |
-| 音频解码 | PyAV >= 12.0 |
-| 音频输出 | sounddevice >= 0.4.6 |
-| 数值计算 | numpy >= 1.26 |
-| 元数据 | mutagen >= 1.47 |
-| Windows 集成 | comtypes >= 1.4（仅 Windows，环境标记 `sys_platform == 'win32'`） |
-
-完整依赖见 [requirements.txt](requirements.txt)。
-
-## 开发
-
-```bash
-# 运行测试
-pytest tests/ -v
-
-# 代码检查
-ruff check .
-
-# 格式化检查
-ruff format --check .
-
-# 类型检查
-mypy app/ core/
-```
-
-开发规范、提交流程、项目结构与关键约束见 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [AGENTS.md](AGENTS.md)。
-
-## 架构文档
-
-- [架构设计文档（中文）](docs/architecture_design_cn.md)
-- [架构设计文档（英文）](docs/ARCHITECTURE.md)
-- [运行时控制协议](docs/CONTROL_PROTOCOL.md)
-- [歌单导出格式](docs/playlist_export_format_cn.md)
-- [统计数据导入格式](docs/musearc_stats_import_format_spec.md)
-- [发布检查清单](docs/release_checklist.md)
-
 ## 贡献
 
-欢迎参与贡献，请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+欢迎Pr和Issue！
 
 ## 许可证
 
