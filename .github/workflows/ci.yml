@@ -13,10 +13,10 @@ jobs:
     # 代码风格 / 类型检查只需在单平台跑一次
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 设置 Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -33,8 +33,8 @@ jobs:
         run: ruff format --check .
 
       - name: Mypy 类型检查
-        run: mypy app/ core/
-        continue-on-error: true  # 渐进式：先不阻断 CI
+        # 渐进式：类型检查结果输出到日志，不阻断 CI
+        run: mypy app/ core/ || true
 
   test:
     # 三平台 + 多 Python 版本矩阵，验证跨平台兼容性
@@ -46,10 +46,10 @@ jobs:
         python-version: ["3.12"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 设置 Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -81,10 +81,10 @@ jobs:
         python-version: ["3.12"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 设置 Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -115,10 +115,10 @@ jobs:
       contents: write  # 上传 Release 资源需要写权限
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 设置 Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -143,7 +143,7 @@ jobs:
           Write-Host "Produced: $zipName"
 
       - name: 上传构建产物（artifact）
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: MusePlayer-portable-windows
           path: ${{ env.zip_name }}
@@ -151,7 +151,7 @@ jobs:
 
       - name: 上传到 Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ${{ env.zip_name }}
           generate_release_notes: true
