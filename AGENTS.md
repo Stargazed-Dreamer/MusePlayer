@@ -51,6 +51,13 @@ start.bat        # Windows
 - **绝不跳过 `library_changed.emit()`**：修改曲库数据后必须发射此信号，否则 UI 不会刷新
 - **统计数据必须通过 `PlaybackStatsService`**：直接修改 JSON 文件会导致内存/磁盘不一致
 
+### 服务层边界（2026-09 封装收紧后）
+
+- **曲库内部字典已私有化**：`LibraryService` 的 `_tracks` / `_playlists` 禁止外部直接访问，一律使用公开访问器：`get_track`（单查）、`get_playlist`（缺失时兜底"全部歌曲"，用于播放场景）、`find_playlist`（严格查找，缺失返回 None，用于协议/存在性判断）、`has_track`、`track_ids()`（快照集合）
+- **曲库职责拆分**：清理（`library_cleaner.py`）、Muse 导入（`muse_playlist_importer.py`）、导出（`playlist_exporter.py`）各自成类，组合持有 `LibraryService`；`LibraryService` 保留同名门面方法委托，公开 API 不变
+- **`PlayerService.set_playlist` 与 `set_current_playlist_id` 语义不同**：前者是完整状态迁移（重置预读、记录早期跳过、清理播放核心），后者仅轻量对准歌单 ID，仅供会话恢复预览等库未完整加载的场景使用，不得混用
+- **控制协议命令经注册表分发**：新增命令 = 在 `AppController` 加 `_cmd_<name>(payload) -> dict` 方法并在 `_command_handlers` 注册，响应结构遵循统一 `{"ok", "result", "error"}` 约定
+
 ### 运行时控制协议
 
 - **协议格式**：TCP localhost + JSON Lines，每行一个 JSON 命令，响应也是 JSON Lines
@@ -78,7 +85,7 @@ start.bat        # Windows
 - **运行时数据走 `data/` 目录**：所有运行时生成的状态（session/library/settings/playback_stats/logs/crashlogs）只能落在已被 `.gitignore` 覆盖的 `data/` 目录下，**绝不**在项目根目录或其他位置生成数据文件
 - **崩溃/日志文件名固定**：`crash.txt`、`crashlog.log`、`*.log` 已被 gitignore；新增日志/转储文件必须使用 `.log` 后缀或显式加入 `.gitignore`
 - **开发笔记/对话存档不入库**：`todo.txt`、`对话存档.txt`、`*存档*.txt` 已被 gitignore；新增临时笔记请沿用相似命名或加入 gitignore
-- **测试素材不入库**：`testFile/`、`test*`、`_library_test_*` 已被 gitignore；测试音频/歌词只放这些目录
+- **测试素材不入库**：`testFile/`、`test*`、`_library_test_*` 已被 gitignore；测试音频/歌词只放这些目录。注意 `tests/`（pytest 测试套件）已通过 `!tests/` 显式再包含，**新测试文件必须放 `tests/` 目录**，放别处会被 `test*` 通配静默忽略、无法入库
 - **导出产物及时清理**：根目录下的 `*.muse_stats.json`、`playback_stats.muse_stats.json` 等导出文件已被 gitignore，发布前应物理删除
 - **代码中绝不硬编码本机路径**：所有路径必须基于 `Path(__file__)`、`Settings` 字段或用户选择动态计算；`C:\Users\`、`/home/<user>`、`F:\codex\` 等绝对路径禁止出现在源码中
 - **错误堆栈可能泄露路径**：`crash.txt` / 日志中的 traceback 会暴露本机路径，这些文件必须留在 gitignore 之内
@@ -128,9 +135,13 @@ MusePlayer/
 │   │   ├── session_store.py  # session.json 读写
 │   │   └── settings_store.py # settings.json 读写
 │   ├── services/             # 业务服务层
-│   │   ├── app_controller.py # 核心编排中枢（初始化、命令分发）
+│   │   ├── app_controller.py # 核心编排中枢（初始化、命令注册表分发）
 │   │   ├── player_service.py # 播放器服务（模式、队列、懒加载）
-│   │   ├── library_service.py# 曲库服务（导入、搜索、清理）
+│   │   ├── library_service.py# 曲库门面（歌单 CRUD、搜索、导入导出入口、持久化编排）
+│   │   ├── library_cleaner.py# 曲库清理器（缺失文件/失效歌词/去重/归一化）
+│   │   ├── muse_playlist_importer.py # Muse 歌单导入器（.muse_playlist.json / 运行时 payload）
+│   │   ├── playlist_exporter.py # 歌单导出器（含统计与歌词）
+│   │   ├── lyrics_parser.py  # LRC/QRC/假名注音解析（纯逻辑，零 Qt 依赖）
 │   │   ├── metadata_service.py# 元数据服务（标签、封面、歌词）
 │   │   ├── playback_stats_service.py # 播放统计
 │   │   ├── random_order.py   # SHA256 种子化确定性乱序
@@ -140,8 +151,9 @@ MusePlayer/
 │   ├── ui/                   # PySide6 UI 层
 │   │   ├── main_window.py    # 门面导出
 │   │   ├── main_window_impl.py # 主窗口核心实现
-│   │   ├── main_window_helpers.py # 辅助组件
+│   │   ├── main_window_helpers.py # 辅助组件（含 _render_icon 图标绘制）
 │   │   ├── main_window_mixins/ # 播放交互 + 窗口行为混入
+│   │   ├── file_types.py     # 音频扩展名与文件过滤器常量
 │   │   ├── about_dialog.py   # 关于对话框（版本/作者/仓库信息）
 │   │   ├── playlist_dialog.py # 歌单管理对话框
 │   │   ├── settings_dialog.py # 设置对话框
@@ -152,13 +164,16 @@ MusePlayer/
 │   ├── utils/                # 工具
 │   │   └── logging_setup.py  # 日志配置（文件轮转、会话复用）
 │   └── version.py            # 版本号 + 元数据（APP/DATA_FORMAT/PROTOCOL_VERSION、AUTHOR、REPO_URL）
-├── tests/                    # 自动化测试（pytest）
+├── tests/                    # 自动化测试（pytest，基线 182 用例）
 │   ├── conftest.py           # 测试 fixtures
 │   ├── test_random_order.py  # 随机播放算法测试
 │   ├── test_entities.py      # 数据模型测试
 │   ├── test_stores.py        # 持久化存储测试
 │   ├── test_stats_service.py # 播放统计服务测试
-│   └── test_control_server.py# 控制协议 dispatch 测试
+│   ├── test_control_server.py# 控制协议 dispatch（命令注册表）测试
+│   ├── test_library_service.py # 曲库服务特征测试（清理/去重/CRUD/导出）
+│   ├── test_muse_import.py   # Muse 歌单导入路径测试
+│   └── test_player_core.py   # 播放内核并发回归测试（异步关流/seek 竞态守卫）
 ├── data/                     # 运行时数据（JSON 持久化，gitignore）
 ├── docs/                     # 架构文档、协议文档、格式规范
 ├── tools/                    # 构建脚本
@@ -191,9 +206,9 @@ pytest tests/ -v
 python -c "import socket,json;s=socket.socket();s.connect(('127.0.0.1',43121));s.sendall(json.dumps({'cmd':'ping'}).encode()+b'\n');print(s.recv(1024).decode())"
 ```
 
-- **单元测试**：`tests/` 目录下覆盖数据模型、持久化存储、随机播放算法、播放统计、控制协议分发
+- **单元测试**：`tests/` 目录下覆盖数据模型、持久化存储、随机播放算法、播放统计、控制协议分发（命令注册表）、曲库服务（清理/去重/CRUD/导出）、Muse 歌单导入、播放内核并发回归，基线 182 用例
 - **运行时验证**：启动应用后通过 TCP 控制接口发送 `ping` 命令验证服务可用性
-- **CI**：`.github/workflows/ci.yml` 自动执行 ruff 检查 + pytest
+- **CI**：`.github/workflows/ci.yml` 自动执行 ruff 检查 + ruff 格式检查 + mypy（仅输出）+ 三平台 pytest + 冒烟测试；打 tag（`v*`）额外触发 Windows 便携包构建
 
 ## 功能变更检查清单
 

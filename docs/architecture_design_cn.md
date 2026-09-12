@@ -45,15 +45,31 @@ flowchart LR
   - 点击即跳转滑条 `ClickJumpSlider`
   - 歌词/歌单委托绘制
   - Windows 任务栏进度桥接
-  - 图标绘制与歌词时间解析工具
+  - 图标绘制（`_render_icon` 高阶辅助统一画布样板）
 
 `app/ui/main_window_mixins/`
-- `playback_mixin.py`：播放、歌词、歌单列表、菜单动作等"业务交互"方法。
-- `windowing_mixin.py`：无边框缩放、吸附、拖拽、侧边栏与几何恢复等"窗口行为"方法。
+- `playback_mixin.py`：播放、歌词、歌单列表、菜单动作、文件导入等"业务交互"方法。
+- `windowing_mixin.py`：无边框缩放、吸附、拖拽、简洁模式、置顶/锁定、侧边栏与几何恢复等"窗口行为"方法。
+
+`app/ui/file_types.py`
+- 音频扩展名与文件对话框过滤器常量（UI 层共用，避免魔法集合散落）。
 
 `app/services/player_service_mixins/`
 - `stats_mixin.py`：播放统计开关、早期跳过判定、进度增量统计。
 - `lazy_decode_mixin.py`：窗口读取、预读取调度、续播衔接、输出增益策略。
+
+`app/services/library_service.py`（约 2026-09 拆分后）
+- 曲库门面：歌单 CRUD、搜索、导入导出入口、持久化编排；内部字典 `_tracks`/`_playlists`
+  已私有化，外部一律经由 `get_track` / `get_playlist` / `find_playlist` / `has_track` /
+  `track_ids` 等公开访问器读写。
+- 职责拆分到同族协作类（组合持有 `LibraryService`）：
+  - `library_cleaner.py`：缺失文件/失效歌词清理、去重、歌单归一化。
+  - `muse_playlist_importer.py`：`.muse_playlist.json` 与运行时 payload 的解析导入。
+  - `playlist_exporter.py`：歌单导出（含统计与歌词）。
+
+`app/services/lyrics_parser.py`
+- LRC/QRC/假名注音歌词解析与时间格式化（纯逻辑，零 Qt 依赖），UI 经
+  `main_window_helpers` 再导出使用。
 
 ---
 
@@ -299,22 +315,33 @@ flowchart LR
 
 ---
 
-## 10. 回写到数据库歌单格式
+## 10. 与数据库歌单格式的统计关系
 
-在 `save_session()/定时保存/手动保存` 时，`sync_muse_playlist_stats(...)` 会回写：
-- 每首歌：`play_count / manual_play_count / play_seconds / early_skip_count`
-- 汇总字段：总播放次数、总主动播放次数、总早期跳过次数等
+> **1.1.0 变更**：导入后持续回写源文件统计的功能已停用并移除
+> （原 `sync_muse_playlist_stats`，曾长期以 `return 0` 短路，死代码已于 1.1.0 清理）。
+> 导入后的歌单按内部数据管理；需要带走统计时走**导出**而不是回写。
 
-回写原则：
-- 仅更新可匹配曲目
-- 本地无统计时不覆盖文件已有统计值
+- 导出入口：`LibraryService.export_playlist_file(...)`（实现见 `playlist_exporter.py`），
+  生成新的 `.muse_playlist.json`，其中包含每首歌的
+  `play_count / manual_play_count / play_seconds / early_skip_count` 与汇总字段。
+- 导入入口：`import_muse_playlist` / `import_muse_playlist_payload`
+  （实现见 `muse_playlist_importer.py`）。运行时 payload 无 `playlist_hash` 时
+  以内容 SHA1 作为有效哈希参与查重，重复导入复用同一歌单。
 
 ---
 
-## 11. 后续重构建议
+## 11. 后续重构建议（2026-09 更新）
 
+> 2026-09 可维护性改造已完成：曲库服务拆分（清理器/Muse 导入器/导出器）、
+> 歌词解析下沉、`dispatch_command` 命令注册表、UI 混入职责归位、防御性属性访问清零、
+> 曲库字典私有化 + 访问器。详见 `docs/refactor_batches.md`。
+
+仍然有效的建议：
 1. 为控制协议补充版本号与 schema 校验，增强兼容性。
 2. 补充自动化测试：
    - 随机序恢复一致性
    - early skip 判定边界
-   - DB 歌单导入/回写回归测试
+3. `QCoreApplication.processEvents()` 反模式与 `nativeEvent` 双定义（MRO 透传），
+   涉及事件时序与无边框行为，需人工评估后处理。
+4. 音频回调变速率路径持锁插值（S3）：**仅在收到实际变速播放卡顿反馈时再做**，
+   方向为锁内拷贝缓冲、锁外插值；无问题不启动。
