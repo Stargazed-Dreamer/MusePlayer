@@ -36,6 +36,7 @@ from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent, QGuiApplication
 from PySide6.QtWidgets import QComboBox, QLineEdit, QListWidget, QListWidgetItem, QSlider, QToolButton
 
+from app.ui.file_types import AUDIO_EXTENSIONS
 from app.ui.main_window_helpers import (
     TrackItemDelegate,
     _make_compact_icon,
@@ -239,6 +240,69 @@ class MainWindowWindowingMixin:
         self._ensure_window_inside_screen()
         self.statusBar().showMessage("已退出简洁模式", 3000)
 
+    def _on_opacity_changed(self, value: int) -> None:
+        """
+        处理窗口透明度变化事件。
+
+        根据输入的透明度值（0-100的整数）计算最终透明度并更新窗口显示，
+        同时在状态栏显示当前透明度百分比信息。
+
+        参数:
+            value (int): 用户输入的透明度百分比值，范围0-100。
+
+        返回值:
+            None: 此方法不返回任何值。
+        """
+        # 计算alpha值：将百分比值转换为0.0-1.0的浮点数，并限制在0.35-1.0的安全范围内
+        alpha = max(0.35, min(1.0, int(value) / 100.0))
+        # 设置窗口透明度
+        self.setWindowOpacity(alpha)
+        # 在状态栏显示透明度百分比，四舍五入后取整，显示1500毫秒
+        self.statusBar().showMessage(f"窗口透明度：{int(round(alpha * 100))}%", 1500)
+
+    def _toggle_compact_lock(self) -> None:
+        """切换窗口紧凑模式下的锁定状态。
+
+        功能：翻转内部锁定标志，当锁定时清除拖拽偏移量，
+             刷新界面按钮，并通过状态栏提示用户当前锁定状态。
+        参数：无
+        返回值：无
+        """
+        # 将锁定状态取反：如果原来是锁定则解锁，反之亦然
+        self._compact_locked = not self._compact_locked
+
+        # 如果当前为锁定状态，则清除拖拽偏移量（因为锁定后不应允许拖动）
+        if self._compact_locked:
+            self._drag_offset = None
+
+        # 根据新的锁定状态刷新紧凑模式顶部的控制按钮
+        self._refresh_compact_top_buttons()
+
+        # 在状态栏显示当前状态消息，持续2000毫秒
+        # 根据锁定状态选择对应的消息文本
+        self.statusBar().showMessage("窗口位置已锁定" if self._compact_locked else "窗口位置已解锁", 2000)
+
+    def _toggle_always_on_top(self) -> None:
+        """切换当前窗口的置顶状态。
+
+        此方法会反转内部的置顶标志，更新窗口属性以使其置顶或取消置顶，
+        同时同步更新界面元素（如按钮）的状态，并在状态栏给出提示。
+
+        Args:
+            无。
+
+        Returns:
+            None。
+        """
+        # 切换置顶状态的标志变量
+        self._always_on_top = not self._always_on_top
+        # 刷新窗口标志以应用置顶设置
+        self._refresh_window_flags()
+        # 刷新顶部按钮的视觉状态，以反映当前置顶状态
+        self._refresh_compact_top_buttons()
+        # 在状态栏显示操作反馈消息，持续2秒
+        self.statusBar().showMessage("已开启窗口置顶" if self._always_on_top else "已关闭窗口置顶", 2000)
+
     def _exit_compact_mode(self) -> None:
         """退出简洁模式，切换到富模式界面。
 
@@ -321,7 +385,7 @@ class MainWindowWindowingMixin:
 
         返回值：无。
         """
-        if not hasattr(self, "rich_min_btn"):  # 检查 rich_min_btn 属性是否存在
+        if self.rich_min_btn is None:  # 检查 rich_min_btn 属性是否存在
             return  # 如果不存在则直接返回
         color = self._control_icon_color()  # 获取控制图标颜色
         self.rich_min_btn.setIcon(_make_rich_title_icon("min", color=color))  # 设置最小化按钮图标
@@ -399,7 +463,7 @@ class MainWindowWindowingMixin:
             None: 此方法不返回任何值，仅执行布局调整操作。
         """
         # 检查对象是否具有 compact_top_bar 属性，如果没有则直接返回
-        if not hasattr(self, "compact_top_bar"):
+        if self.compact_top_bar is None:
             return
         # 如果紧凑顶部栏当前不可见，则直接返回，无需进行布局计算
         if not self.compact_top_bar.isVisible():
@@ -437,7 +501,7 @@ class MainWindowWindowingMixin:
             无
         """
         # 检查必要的控件是否已初始化
-        if not hasattr(self, "mute_btn") or not hasattr(self, "volume_value_label"):
+        if self.mute_btn is None or self.volume_value_label is None:
             return
         # 如果音量面板不可见，则隐藏音量值标签并返回
         if not self.volume_panel.isVisible():
@@ -639,7 +703,7 @@ class MainWindowWindowingMixin:
         )
 
     def _reposition_sidebar_toggle(self) -> None:
-        if not hasattr(self, "sidebar_toggle_btn"):
+        if self.sidebar_toggle_btn is None:
             return
         if not self.sidebar_toggle_btn.isVisible():
             return
@@ -840,12 +904,12 @@ class MainWindowWindowingMixin:
         Returns:
             True表示事件已被处理，False交由父类处理
         """
-        track_view = self.track_list.viewport() if hasattr(self, "track_list") else None
-        lyric_view = self.lyrics_list.viewport() if hasattr(self, "lyrics_list") else None
-        rich_title_targets = {getattr(self, "rich_title_bar", None), getattr(self, "rich_title_label", None)}
+        track_view = self.track_list.viewport() if self.track_list is not None else None
+        lyric_view = self.lyrics_list.viewport() if self.lyrics_list is not None else None
+        rich_title_targets = {self.rich_title_bar, self.rich_title_label}
 
         if watched in rich_title_targets and watched is not None:
-            if not bool(getattr(self, "_use_custom_titlebar", False)):
+            if not self._use_custom_titlebar:
                 return False
             if self._compact_mode:
                 return False
@@ -874,7 +938,7 @@ class MainWindowWindowingMixin:
                     self._rich_drag_offset = gpos - self.frameGeometry().topLeft()
                 return True
 
-        if watched is getattr(self, "compact_top_bar", None) and self._compact_mode:
+        if watched is self.compact_top_bar and self._compact_mode:
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                 if not self._compact_locked and not self._is_interactive_widget_at(
                     watched.mapToParent(event.position().toPoint())
@@ -894,8 +958,8 @@ class MainWindowWindowingMixin:
                 return True
 
         # 简洁模式下菜单栏支持拖动窗口（避开菜单项和角部提示控件中的交互子控件）
-        menu_bar = self.menuBar() if hasattr(self, "menuBar") else None
-        hint_widget = getattr(self, "menu_hint_widget", None)
+        menu_bar = self.menuBar()
+        hint_widget = self.menu_hint_widget
         if (
             self._compact_mode
             and (watched is menu_bar or watched is hint_widget)
@@ -927,7 +991,7 @@ class MainWindowWindowingMixin:
                         self._drag_offset = None
                         return True
 
-        if watched is getattr(self, "search_edit", None) and event.type() == QEvent.Type.Resize:
+        if watched is self.search_edit and event.type() == QEvent.Type.Resize:
             self._position_search_clear_button()
             return False
 
@@ -946,7 +1010,7 @@ class MainWindowWindowingMixin:
                     if TrackItemDelegate.remove_rect(row_rect).contains(event.pos()):
                         item = self.track_list.item(idx.row())
                         if item is not None:
-                            track_id = item.data(0x0100)
+                            track_id = item.data(Qt.ItemDataRole.UserRole)
                             if track_id:
                                 self._on_remove_track_clicked(str(track_id))
                                 return True
@@ -1121,7 +1185,6 @@ class MainWindowWindowingMixin:
             return
 
         lyrics_name_suffixes = ("_qm.qrc.txt", "_qmRoma.qrc.txt", "_qmts.qrc.txt")
-        audio_exts = {".mp3", ".flac", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".wma"}
 
         def _is_lyrics_file(p: Path) -> bool:
             if p.suffix.lower() == ".lrc":
@@ -1131,7 +1194,7 @@ class MainWindowWindowingMixin:
             return p.suffix.lower() == ".txt" and p.name.endswith(lyrics_name_suffixes)
 
         def _is_audio_file(p: Path) -> bool:
-            return p.suffix.lower() in audio_exts
+            return p.suffix.lower() in AUDIO_EXTENSIONS
 
         all_lyrics = all(_is_lyrics_file(p) for p in local_paths if p.is_file())
         has_folder = any(p.is_dir() for p in local_paths)
@@ -1173,66 +1236,6 @@ class MainWindowWindowingMixin:
             self.statusBar().showMessage(f"跳过 {skipped} 个不支持的文件", 3000)
         event.acceptProposedAction()
 
-    def _import_folder_as_playlist(self, folder: Path) -> None:
-        audio_exts = {".mp3", ".flac", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".wma"}
-        audio_files: list[Path] = []
-        for f in sorted(folder.rglob("*")):
-            if f.is_file() and f.suffix.lower() in audio_exts:
-                audio_files.append(f)
-        if not audio_files:
-            self.statusBar().showMessage(f"文件夹中未找到音频文件: {folder.name}", 3000)
-            return
-        playlist = self.controller.library_service.create_playlist(folder.name)
-        track_ids: list[str] = []
-        for af in audio_files:
-            try:
-                track = self.controller.library_service.import_file(af, playlist_id=playlist.id)
-                track_ids.append(track.id)
-            except Exception:
-                pass
-        self.player.queue_changed.emit()
-        count = len(track_ids)
-        self.statusBar().showMessage(f"已创建歌单「{folder.name}」，导入 {count} 首歌曲", 3000)
-
-    def _attach_lyrics_to_current_track(self, lyrics_path: Path) -> None:
-        """
-        将歌词文件附加到当前播放的曲目。
-
-        参数:
-            lyrics_path (Path): 歌词文件的路径。
-
-        返回:
-            None
-        """
-        # 获取当前播放的曲目
-        track = self.player.current_track()
-        # 如果没有当前曲目，则直接返回
-        if track is None:
-            return
-        # 获取主歌词路径，处理为字符串并去除空白
-        main_lyrics = str(track.source_lyrics_path or "").strip()
-        # 如果主歌词路径为空，则设置为新路径并显示关联消息
-        if not main_lyrics:
-            track.source_lyrics_path = str(lyrics_path)
-            self.statusBar().showMessage(f"歌词已关联: {lyrics_path.name}", 3000)
-        else:
-            # 获取额外歌词路径属性，如果不存在则默认空字符串，并处理为列表
-            existing = str(getattr(track, "extra_lyrics_paths", "") or "").strip()
-            existing_list = [p for p in existing.split("|") if p.strip()] if existing else []
-            # 将新歌词路径转换为字符串
-            new_path = str(lyrics_path)
-            # 如果新路径不在现有列表中且不等于主歌词，则添加到列表
-            if new_path not in existing_list and new_path != main_lyrics:
-                existing_list.append(new_path)
-                track.extra_lyrics_paths = "|".join(existing_list)
-                self.statusBar().showMessage(f"额外歌词已添加: {lyrics_path.name}", 3000)
-            else:
-                # 否则，显示歌词已关联消息
-                self.statusBar().showMessage("该歌词已关联", 3000)
-        # 保存库服务并重新加载当前歌词
-        self.controller.library_service.save()
-        self._reload_current_lyrics()
-
     def _is_interactive_widget_at(self, pos: QPoint) -> bool:
         """检查指定位置是否在交互控件上。
 
@@ -1265,11 +1268,11 @@ class MainWindowWindowingMixin:
         Args:
             event: 窗口大小调整事件
         """
-        old_sizes = self.main_splitter.sizes() if hasattr(self, "main_splitter") else []
+        old_sizes = self.main_splitter.sizes() if self.main_splitter is not None else []
         old_total = old_sizes[0] + old_sizes[1] if len(old_sizes) == 2 else 0
         old_sidebar_width = old_sizes[1] if len(old_sizes) == 2 else None
         super().resizeEvent(event)
-        new_sizes = self.main_splitter.sizes() if hasattr(self, "main_splitter") else []
+        new_sizes = self.main_splitter.sizes() if self.main_splitter is not None else []
         new_total = new_sizes[0] + new_sizes[1] if len(new_sizes) == 2 else 0
         if old_total > 0 and new_total > 0:
             delta_width = int(new_total - old_total)
@@ -1317,7 +1320,7 @@ class MainWindowWindowingMixin:
             event: 状态改变事件
         """
         super().changeEvent(event)
-        if event.type() == QEvent.Type.WindowStateChange and hasattr(self, "rich_max_btn"):
+        if event.type() == QEvent.Type.WindowStateChange and self.rich_max_btn is not None:
             if self.isMaximized():
                 self._snap_docked = False
             self._refresh_rich_title_icons()
@@ -1338,7 +1341,7 @@ class MainWindowWindowingMixin:
 
         将按钮放置在播放列表视图的右下角，确保按钮始终可见。
         """
-        if not hasattr(self, "locate_current_btn"):
+        if self.locate_current_btn is None:
             return
         vp = self.track_list.viewport()
         x = max(2, vp.width() - self.locate_current_btn.width() - 4)
@@ -1357,7 +1360,7 @@ class MainWindowWindowingMixin:
             return -1
         for row in range(self.track_list.count()):
             item = self.track_list.item(row)
-            if item is not None and item.data(0x0100) == current_id:
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == current_id:
                 return row
         return -1
 
@@ -1386,7 +1389,7 @@ class MainWindowWindowingMixin:
 
         只有当当前播放的歌曲不在可视区域内时才显示按钮。
         """
-        if not hasattr(self, "locate_current_btn"):
+        if self.locate_current_btn is None:
             return
         row = self._find_current_track_row()
         should_show = row >= 0 and not self._is_track_row_visible(row)
@@ -1461,7 +1464,7 @@ class MainWindowWindowingMixin:
             event: 窗口关闭事件
         """
         try:
-            if hasattr(self, "_global_hotkey_manager"):
+            if self._global_hotkey_manager is not None:
                 self._global_hotkey_manager.unregister_all()
             self._persist_window_geometry()
             self._taskbar_progress.clear()

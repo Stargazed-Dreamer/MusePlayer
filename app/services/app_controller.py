@@ -68,6 +68,34 @@ class AppController(QObject):
         self._services_initialized = False
         self._library_loaded = False
 
+        # 运行时控制命令注册表（dispatch_command 查表分发）
+        # 处理器为 _cmd_<name> 方法，签名统一为 (payload: dict) -> dict
+        self._command_handlers: dict[str, Callable[[dict], dict]] = {
+            "ping": self._cmd_ping,
+            "state": self._cmd_state,
+            "play": self._cmd_play,
+            "pause": self._cmd_pause,
+            "toggle": self._cmd_toggle,
+            "seek": self._cmd_seek,
+            "set_volume": self._cmd_set_volume,
+            "next": self._cmd_next,
+            "previous": self._cmd_previous,
+            "set_mode": self._cmd_set_mode,
+            "import_folder": self._cmd_import_folder,
+            "import_playlist_file": self._cmd_import_playlist_file,
+            "import_playlist_data": self._cmd_import_playlist_data,
+            "play_file": self._cmd_play_file,
+            "load_playlist": self._cmd_load_playlist,
+            "play_playlist": self._cmd_play_playlist,
+            "play_track": self._cmd_play_track,
+            "create_playlist": self._cmd_create_playlist,
+            "current_track": self._cmd_current_track,
+            "current_playlist": self._cmd_current_playlist,
+            "get_playlist": self._cmd_get_playlist,
+            "add_track_to_playlist": self._cmd_add_track_to_playlist,
+            "remove_track_from_playlist": self._cmd_remove_track_from_playlist,
+        }
+
     def initialize_services(self) -> None:
         """初始化库服务、播放器、控制服务器等重服务。
 
@@ -112,7 +140,7 @@ class AppController(QObject):
         self.player_service.error_occurred.connect(self.error_occurred)
         self.error_occurred.connect(self._record_runtime_error)
         _t1 = _time.perf_counter()
-        print(f"[Services计时] 播放器初始化: {_t1 - _t0:.3f}s")
+        self.logger.debug("播放器初始化耗时: %.3fs", _t1 - _t0)
 
     def restore_session_preview(self, state: SessionState) -> bool:
         if self.library_service is None or self.player_service is None:
@@ -205,7 +233,9 @@ class AppController(QObject):
             self.runtime_status_changed.emit(False, self.settings.control_host, self.settings.control_port)
 
         _t2 = _time.perf_counter()
-        print(f"[Services计时] 库加载: {_t1 - _t0:.3f}s | 服务: {_t2 - _t1:.3f}s | 总计: {_t2 - _t0:.3f}s")
+        self.logger.debug(
+            "启动耗时: 库加载=%.3fs 服务=%.3fs 总计=%.3fs", _t1 - _t0, _t2 - _t1, _t2 - _t0
+        )
 
     def restore_session(self) -> None:
         """恢复上次播放会话（在窗口显示后调用以加速启动）。"""
@@ -383,10 +413,12 @@ class AppController(QObject):
                 except UnicodeDecodeError:
                     try:
                         return lyric_path.read_text(encoding="gbk")
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
+                    except Exception as exc:
+                        # GBK 回退仍失败，转而读取内嵌歌词
+                        self.logger.warning("读取歌词文件 GBK 回退失败 %s: %s", lyric_path, exc)
+                except Exception as exc:
+                    # utf-8 读取出现非解码异常（如 IO 错误），转而读取内嵌歌词
+                    self.logger.warning("读取歌词文件失败 %s: %s", lyric_path, exc)
         return self.metadata_service.read_lyrics(Path(track.path))
 
     def get_current_lyrics_extra_files(self) -> list[tuple[str, str]]:
@@ -409,9 +441,13 @@ class AppController(QObject):
             except UnicodeDecodeError:
                 try:
                     content = lyric_path.read_text(encoding="gbk")
-                except Exception:
+                except Exception as exc:
+                    # 附加歌词为可选项，失败跳过；逐文件路径用 debug 避免噪音
+                    self.logger.debug("读取附加歌词 GBK 回退失败 %s: %s", lyric_path, exc)
                     continue
-            except Exception:
+            except Exception as exc:
+                # 附加歌词为可选项，失败跳过
+                self.logger.debug("读取附加歌词文件失败 %s: %s", lyric_path, exc)
                 continue
             result.append((content, lyric_path.name))
         return result
@@ -487,6 +523,16 @@ class AppController(QObject):
         # 返回新导入播放列表的ID
         return playlist.id
 
+    def list_output_devices(self) -> list:
+        """列出可用的音频输出设备。
+
+        UI 层通过本方法间接访问 core.output，避免 UI 直接依赖 core 模块。
+        函数内延迟导入以保持启动轻量。
+        """
+        from core.output import list_output_devices as _list_output_devices
+
+        return _list_output_devices()
+
     def import_files(self, files: list[Path], playlist_id: str | None = None) -> int:
         """
         将指定文件列表导入媒体库。
@@ -510,8 +556,9 @@ class AppController(QObject):
                 # 尝试调用核心服务方法导入单个文件，并临时跳过保存操作
                 self.library_service.import_file(path, playlist_id=playlist_id, skip_save=True)
                 imported += 1  # 导入成功，计数器加1
-            except Exception:
-                # 捕获并忽略任何异常，跳过当前文件，继续处理下一个
+            except Exception as exc:
+                # 单个文件失败不中断整体导入，但必须记录原因，否则用户无从得知哪些文件被跳过
+                self.logger.warning("导入文件失败 %s: %s", path, exc)
                 continue
         if imported > 0:  # 如果至少有一个文件被成功导入
             self.library_service.save()  # 一次性保存所有成功的导入结果到持久化存储
@@ -771,203 +818,211 @@ class AppController(QObject):
         if not cmd:
             return {"ok": False, "error": "missing cmd"}
 
-        if cmd == "ping":
-            return {"ok": True, "result": "pong"}
+        handler = self._command_handlers.get(cmd)
+        if handler is None:
+            return {"ok": False, "error": f"unknown cmd: {cmd}"}
+        return handler(payload)
 
-        if cmd == "state":
-            return {
-                "ok": True,
-                "result": {
-                    "player": self.player_service.state_snapshot(),
-                    "playlists": [
-                        {"id": pl.id, "name": pl.name, "count": len(pl.track_ids)}
-                        for pl in self.library_service.list_playlists()
-                    ],
-                },
-            }
+    # ============================================================================
+    # 运行时控制命令处理器（由 dispatch_command 注册表分发）
+    # 每个处理器签名为 (payload: dict) -> dict，响应结构与原 if 分支逐字一致
+    # ============================================================================
 
-        if cmd == "play":
-            self.player_service.play()
-            return {"ok": True}
+    def _cmd_ping(self, payload: dict) -> dict:
+        return {"ok": True, "result": "pong"}
 
-        if cmd == "pause":
-            self.player_service.pause()
-            return {"ok": True}
+    def _cmd_state(self, payload: dict) -> dict:
+        return {
+            "ok": True,
+            "result": {
+                "player": self.player_service.state_snapshot(),
+                "playlists": [
+                    {"id": pl.id, "name": pl.name, "count": len(pl.track_ids)}
+                    for pl in self.library_service.list_playlists()
+                ],
+            },
+        }
 
-        if cmd == "toggle":
-            self.player_service.toggle_play_pause()
-            return {"ok": True}
+    def _cmd_play(self, payload: dict) -> dict:
+        self.player_service.play()
+        return {"ok": True}
 
-        if cmd == "seek":
-            position = float(payload.get("position_sec", payload.get("position", 0.0)))
-            self.player_service.seek(position)
-            return {"ok": True}
+    def _cmd_pause(self, payload: dict) -> dict:
+        self.player_service.pause()
+        return {"ok": True}
 
-        if cmd == "set_volume":
-            volume = float(payload.get("volume", 1.0))
-            self.player_service.set_volume(volume)
-            return {"ok": True, "result": {"volume": self.player_service.volume()}}
+    def _cmd_toggle(self, payload: dict) -> dict:
+        self.player_service.toggle_play_pause()
+        return {"ok": True}
 
-        if cmd == "next":
-            ok = self.player_service.next_track(user_triggered=True)
-            return {"ok": ok}
+    def _cmd_seek(self, payload: dict) -> dict:
+        position = float(payload.get("position_sec", payload.get("position", 0.0)))
+        self.player_service.seek(position)
+        return {"ok": True}
 
-        if cmd == "previous":
-            ok = self.player_service.previous_track()
-            return {"ok": ok}
+    def _cmd_set_volume(self, payload: dict) -> dict:
+        volume = float(payload.get("volume", 1.0))
+        self.player_service.set_volume(volume)
+        return {"ok": True, "result": {"volume": self.player_service.volume()}}
 
-        if cmd == "set_mode":
-            mode = str(payload.get("mode", "single_loop"))
-            self.player_service.set_mode(mode)
-            return {"ok": True, "result": {"mode": self.player_service.mode.value}}
+    def _cmd_next(self, payload: dict) -> dict:
+        ok = self.player_service.next_track(user_triggered=True)
+        return {"ok": ok}
 
-        if cmd == "import_folder":
-            path = payload.get("path")
-            if not path:
-                return {"ok": False, "error": "missing path"}
-            playlist_id = payload.get("playlist_id")
-            count = self.import_folder(Path(path), playlist_id=playlist_id)
-            return {"ok": True, "result": {"imported": count}}
+    def _cmd_previous(self, payload: dict) -> dict:
+        ok = self.player_service.previous_track()
+        return {"ok": ok}
 
-        if cmd == "import_playlist_file":
-            path = payload.get("path")
-            if not path:
-                return {"ok": False, "error": "missing path"}
-            playlist_id = self.import_muse_playlist(Path(path))
-            return {"ok": True, "result": {"playlist_id": playlist_id}}
+    def _cmd_set_mode(self, payload: dict) -> dict:
+        mode = str(payload.get("mode", "single_loop"))
+        self.player_service.set_mode(mode)
+        return {"ok": True, "result": {"mode": self.player_service.mode.value}}
 
-        if cmd == "import_playlist_data":
-            raw = payload.get("playlist")
-            if raw is None:
-                raw = payload.get("data")
-            if raw is None:
-                raw = payload.get("content")
-            if raw is None:
-                return {"ok": False, "error": "missing playlist data"}
-            source_hint = str(payload.get("source_hint", "runtime_payload"))
-            playlist_id = self.import_muse_playlist_data(raw, source_hint=source_hint)
-            return {"ok": True, "result": {"playlist_id": playlist_id}}
+    def _cmd_import_folder(self, payload: dict) -> dict:
+        path = payload.get("path")
+        if not path:
+            return {"ok": False, "error": "missing path"}
+        playlist_id = payload.get("playlist_id")
+        count = self.import_folder(Path(path), playlist_id=playlist_id)
+        return {"ok": True, "result": {"imported": count}}
 
-        if cmd == "play_file":
-            path = payload.get("path")
-            if not path:
-                return {"ok": False, "error": "missing path"}
-            ok = self.player_service.play_file(Path(path), active_request=True)
-            self.library_changed.emit()
-            return {"ok": ok}
+    def _cmd_import_playlist_file(self, payload: dict) -> dict:
+        path = payload.get("path")
+        if not path:
+            return {"ok": False, "error": "missing path"}
+        playlist_id = self.import_muse_playlist(Path(path))
+        return {"ok": True, "result": {"playlist_id": playlist_id}}
 
-        if cmd == "load_playlist":
-            playlist_id = payload.get("playlist_id")
-            if not playlist_id:
-                return {"ok": False, "error": "missing playlist_id"}
-            self.player_service.set_playlist(str(playlist_id))
-            self.library_changed.emit()
-            return {"ok": True}
+    def _cmd_import_playlist_data(self, payload: dict) -> dict:
+        raw = payload.get("playlist")
+        if raw is None:
+            raw = payload.get("data")
+        if raw is None:
+            raw = payload.get("content")
+        if raw is None:
+            return {"ok": False, "error": "missing playlist data"}
+        source_hint = str(payload.get("source_hint", "runtime_payload"))
+        playlist_id = self.import_muse_playlist_data(raw, source_hint=source_hint)
+        return {"ok": True, "result": {"playlist_id": playlist_id}}
 
-        if cmd == "play_playlist":
-            playlist_id = payload.get("playlist_id")
-            if not playlist_id:
-                return {"ok": False, "error": "missing playlist_id"}
-            self.player_service.set_playlist(str(playlist_id))
-            track_id = payload.get("track_id")
-            if track_id:
-                ok = self.player_service.play_track(
-                    str(track_id),
-                    auto_play=True,
-                    manual_select=True,
-                    active_request=False,
-                )
-                self.library_changed.emit()
-                return {"ok": ok}
-            self.player_service.play()
-            self.library_changed.emit()
-            return {"ok": True}
+    def _cmd_play_file(self, payload: dict) -> dict:
+        path = payload.get("path")
+        if not path:
+            return {"ok": False, "error": "missing path"}
+        ok = self.player_service.play_file(Path(path), active_request=True)
+        self.library_changed.emit()
+        return {"ok": ok}
 
-        if cmd == "play_track":
-            track_id = payload.get("track_id")
-            if not track_id:
-                return {"ok": False, "error": "missing track_id"}
+    def _cmd_load_playlist(self, payload: dict) -> dict:
+        playlist_id = payload.get("playlist_id")
+        if not playlist_id:
+            return {"ok": False, "error": "missing playlist_id"}
+        self.player_service.set_playlist(str(playlist_id))
+        self.library_changed.emit()
+        return {"ok": True}
+
+    def _cmd_play_playlist(self, payload: dict) -> dict:
+        playlist_id = payload.get("playlist_id")
+        if not playlist_id:
+            return {"ok": False, "error": "missing playlist_id"}
+        self.player_service.set_playlist(str(playlist_id))
+        track_id = payload.get("track_id")
+        if track_id:
             ok = self.player_service.play_track(
                 str(track_id),
                 auto_play=True,
                 manual_select=True,
                 active_request=False,
             )
+            self.library_changed.emit()
             return {"ok": ok}
+        self.player_service.play()
+        self.library_changed.emit()
+        return {"ok": True}
 
-        if cmd == "create_playlist":
-            name = str(payload.get("name", "新建歌单"))
-            playlist_id = self.create_playlist(name)
-            return {"ok": True, "result": {"playlist_id": playlist_id}}
+    def _cmd_play_track(self, payload: dict) -> dict:
+        track_id = payload.get("track_id")
+        if not track_id:
+            return {"ok": False, "error": "missing track_id"}
+        ok = self.player_service.play_track(
+            str(track_id),
+            auto_play=True,
+            manual_select=True,
+            active_request=False,
+        )
+        return {"ok": ok}
 
-        if cmd == "current_track":
-            track = self.player_service.current_track()
-            if track is None:
-                return {"ok": True, "result": None}
-            result = track.to_dict()
-            stats = self.playback_stats_service.export_stats_for_track(track.id)
-            if stats:
-                result["stats"] = stats
-            is_fav = self.library_service.is_favorite(track.id)
-            result["is_favorite"] = is_fav
-            return {"ok": True, "result": result}
+    def _cmd_create_playlist(self, payload: dict) -> dict:
+        name = str(payload.get("name", "新建歌单"))
+        playlist_id = self.create_playlist(name)
+        return {"ok": True, "result": {"playlist_id": playlist_id}}
 
-        if cmd == "current_playlist":
-            playlist_id = self.player_service.current_playlist_id
-            if not playlist_id:
-                return {"ok": True, "result": None}
-            playlist = self.library_service.playlists.get(playlist_id)
-            if playlist is None:
-                return {"ok": True, "result": None}
-            result = playlist.to_dict()
-            tracks_info = []
-            for tid in playlist.track_ids:
-                t = self.library_service.tracks.get(tid)
-                if t is not None:
-                    tracks_info.append(
-                        {"id": t.id, "title": t.title, "artist": t.artist, "duration_sec": float(t.duration_sec)}
-                    )
-            result["tracks"] = tracks_info
-            return {"ok": True, "result": result}
+    def _cmd_current_track(self, payload: dict) -> dict:
+        track = self.player_service.current_track()
+        if track is None:
+            return {"ok": True, "result": None}
+        result = track.to_dict()
+        stats = self.playback_stats_service.export_stats_for_track(track.id)
+        if stats:
+            result["stats"] = stats
+        is_fav = self.library_service.is_favorite(track.id)
+        result["is_favorite"] = is_fav
+        return {"ok": True, "result": result}
 
-        if cmd == "get_playlist":
-            playlist_id = payload.get("playlist_id")
-            if not playlist_id:
-                return {"ok": False, "error": "missing playlist_id"}
-            playlist = self.library_service.playlists.get(str(playlist_id))
-            if playlist is None:
-                return {"ok": True, "result": None}
-            result = playlist.to_dict()
-            tracks_info = []
-            for tid in playlist.track_ids:
-                t = self.library_service.tracks.get(tid)
-                if t is not None:
-                    info = {"id": t.id, "title": t.title, "artist": t.artist, "duration_sec": float(t.duration_sec)}
-                    if t.source_sha256:
-                        info["source_sha256"] = t.source_sha256
-                    tracks_info.append(info)
-            result["tracks"] = tracks_info
-            return {"ok": True, "result": result}
+    def _cmd_current_playlist(self, payload: dict) -> dict:
+        playlist_id = self.player_service.current_playlist_id
+        if not playlist_id:
+            return {"ok": True, "result": None}
+        playlist = self.library_service.playlists.get(playlist_id)
+        if playlist is None:
+            return {"ok": True, "result": None}
+        result = playlist.to_dict()
+        tracks_info = []
+        for tid in playlist.track_ids:
+            t = self.library_service.tracks.get(tid)
+            if t is not None:
+                tracks_info.append(
+                    {"id": t.id, "title": t.title, "artist": t.artist, "duration_sec": float(t.duration_sec)}
+                )
+        result["tracks"] = tracks_info
+        return {"ok": True, "result": result}
 
-        if cmd == "add_track_to_playlist":
-            track_id = payload.get("track_id")
-            playlist_id = payload.get("playlist_id")
-            if not track_id or not playlist_id:
-                return {"ok": False, "error": "missing track_id or playlist_id"}
-            self.library_service.add_track_ids_to_playlist(str(playlist_id), [str(track_id)])
-            self.library_changed.emit()
-            return {"ok": True}
+    def _cmd_get_playlist(self, payload: dict) -> dict:
+        playlist_id = payload.get("playlist_id")
+        if not playlist_id:
+            return {"ok": False, "error": "missing playlist_id"}
+        playlist = self.library_service.playlists.get(str(playlist_id))
+        if playlist is None:
+            return {"ok": True, "result": None}
+        result = playlist.to_dict()
+        tracks_info = []
+        for tid in playlist.track_ids:
+            t = self.library_service.tracks.get(tid)
+            if t is not None:
+                info = {"id": t.id, "title": t.title, "artist": t.artist, "duration_sec": float(t.duration_sec)}
+                if t.source_sha256:
+                    info["source_sha256"] = t.source_sha256
+                tracks_info.append(info)
+        result["tracks"] = tracks_info
+        return {"ok": True, "result": result}
 
-        if cmd == "remove_track_from_playlist":
-            track_id = payload.get("track_id")
-            playlist_id = payload.get("playlist_id")
-            if not track_id or not playlist_id:
-                return {"ok": False, "error": "missing track_id or playlist_id"}
-            removed_globally = self.library_service.remove_track_from_playlist(str(playlist_id), str(track_id))
-            self.library_changed.emit()
-            return {"ok": True, "result": {"removed_globally": list(removed_globally)}}
+    def _cmd_add_track_to_playlist(self, payload: dict) -> dict:
+        track_id = payload.get("track_id")
+        playlist_id = payload.get("playlist_id")
+        if not track_id or not playlist_id:
+            return {"ok": False, "error": "missing track_id or playlist_id"}
+        self.library_service.add_track_ids_to_playlist(str(playlist_id), [str(track_id)])
+        self.library_changed.emit()
+        return {"ok": True}
 
-        return {"ok": False, "error": f"unknown cmd: {cmd}"}
+    def _cmd_remove_track_from_playlist(self, payload: dict) -> dict:
+        track_id = payload.get("track_id")
+        playlist_id = payload.get("playlist_id")
+        if not track_id or not playlist_id:
+            return {"ok": False, "error": "missing track_id or playlist_id"}
+        removed_globally = self.library_service.remove_track_from_playlist(str(playlist_id), str(track_id))
+        self.library_changed.emit()
+        return {"ok": True, "result": {"removed_globally": list(removed_globally)}}
 
     def export_session_for_ui(self) -> SessionState:
         return self.player_service.export_session()

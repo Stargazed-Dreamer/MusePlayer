@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -16,6 +18,8 @@ import contextlib
 
 from .output import AudioOutputBackend, NullOutputBackend, SoundDeviceOutputBackend
 from .types import AudioMeta, PlaybackWindow, PlayerCoreError
+
+logger = logging.getLogger("museplayer.core")
 
 
 class PyAVPlayerCore:
@@ -84,7 +88,8 @@ class PyAVPlayerCore:
             import sounddevice  # noqa: F401  # 尝试导入sounddevice库，忽略未使用警告（仅检查可用性）
 
             return SoundDeviceOutputBackend()  # 成功导入则使用SoundDeviceOutputBackend
-        except Exception:  # 捕获导入或其他任何异常
+        except Exception as exc:  # 捕获导入或其他任何异常
+            logger.warning("sounddevice 不可用，降级为静音输出后端: %s", exc)
             return NullOutputBackend()  # 失败时返回空输出后端
 
     def load(self, source: Path, *, start_sec: float = 0.0, window_sec: float | None = None) -> AudioMeta:
@@ -108,7 +113,14 @@ class PyAVPlayerCore:
             self._try_reuse_or_reopen_stream()
             return self.meta()
 
-    def load_streaming(self, source: Path, *, start_sec: float = 0.0, total_duration_sec: float = 0.0) -> AudioMeta:
+    def load_streaming(
+        self,
+        source: Path,
+        *,
+        start_sec: float = 0.0,
+        total_duration_sec: float = 0.0,
+        expected_source: Path | None = None,
+    ) -> AudioMeta | None:
         """流式加载：边解码边播放，解码完成后整文件驻留内存可任意拖动。
 
         预分配整文件缓冲，后台线程分块解码写入：
@@ -118,21 +130,28 @@ class PyAVPlayerCore:
         Args:
             source: 音频文件路径
             start_sec: 起始播放位置（秒），播放从此处开始，正向解码也从此处开始
-            total_duration_sec: 整文件总时长（秒），用于预分配缓冲。为 0 或无法确定时回退到阻塞 load
+            total_duration_sec: 整文件总时长（秒），用于预分配缓冲。为 0 或无法确定时回退到阻塞 load（保留 start_sec）
+            expected_source: 内部竞态守卫。调用方在锁外做出"重启流式"决策后传入决策时刻的
+                源路径；若加锁时当前源已不是它（期间发生了换曲/卸载），则放弃本次重启并返回 None
         """
         source = Path(source).resolve()
         if not source.exists():
             raise FileNotFoundError(source)
         start_sec = max(0.0, float(start_sec))
         total_duration_sec = max(0.0, float(total_duration_sec))
-        # 时长未知则回退到阻塞完整加载
+        # 时长未知则回退到阻塞完整加载（透传 start_sec，不丢失请求起点；
+        # 在加锁前执行，避免整曲解码持锁阻塞音频回调；此路径不校验 expected_source，
+        # 现有传 expected_source 的调用方 seek() 保证 total_duration_sec > 0）
         if total_duration_sec <= 0.0:
-            return self.load(source, start_sec=0.0)
+            return self.load(source, start_sec=start_sec)
         total_frames = int(round(total_duration_sec * self._target_sample_rate))
         if total_frames <= 0:
-            return self.load(source, start_sec=0.0)
+            return self.load(source, start_sec=start_sec)
         start_frame = min(int(round(start_sec * self._target_sample_rate)), total_frames)
         with self._lock:
+            if expected_source is not None and self._source_path != expected_source:
+                # 决策与执行之间发生了换曲/卸载，本次重启已过期，不覆盖新状态
+                return None
             self._stop_streaming_locked()
             self._source_path = source
             self._buffer = np.zeros((total_frames, self._target_channels), dtype=np.float32)
@@ -464,17 +483,21 @@ class PyAVPlayerCore:
                     # 若已到达或越过预设的片段结束点，则停止播放
                     self._playing = False
                 return
-        # 释放锁后重启流式解码（load_streaming 内部会获取锁）
+        # 释放锁后重启流式解码（load_streaming 内部会获取锁，并用 expected_source
+        # 守卫"决策与执行之间发生了换曲/卸载"的竞态，过期则安全放弃）
         if restart_source is not None and restart_duration_sec > 0.0:
             self.load_streaming(
                 restart_source,
                 start_sec=max(0.0, float(position_sec)),
                 total_duration_sec=restart_duration_sec,
+                expected_source=restart_source,
             )
             if restart_was_playing:
                 with self._lock:
-                    self._playing = True
-                    self._ensure_stream_started()
+                    # 仅在源未变化时恢复播放，避免误启动换曲后的新曲目
+                    if self._source_path == restart_source:
+                        self._playing = True
+                        self._ensure_stream_started()
 
     def set_volume(self, volume: float) -> None:
         """设置音量，将音量值限制在0.0到5.0之间。
@@ -705,7 +728,9 @@ class PyAVPlayerCore:
     def _async_close_stream(self) -> None:
         """异步关闭流。
 
-        检查流是否已打开，如果打开则停止旧输出，设置流为关闭状态，并在后台线程中关闭输出。
+        检查流是否已打开，如果打开则停止旧输出，设置流为关闭状态，并在后台线程中
+        关闭调度时捕获的那一个流句柄。后台关闭按句柄而非按"当前流"操作，
+        避免竞态窗口内重新打开的新流被误关（表现为切歌后无声）。
 
         参数：
             无（除self外）
@@ -715,23 +740,27 @@ class PyAVPlayerCore:
         """
         if not self._stream_open:  # 如果流未打开，则直接返回
             return
-        old_output = self._output  # 保存旧输出引用
+        old_backend = self._output  # 保存旧输出引用
+        old_handle = old_backend.capture_stream()  # 捕获调度时刻的具体流句柄
         self._stream_open = False  # 设置流为关闭状态
         with contextlib.suppress(Exception):  # 忽略任何异常
-            old_output.stop()  # 尝试停止旧输出
+            old_backend.stop()  # 尝试停止旧输出
         threading.Thread(
-            target=self._close_output_in_background, args=(old_output,), daemon=True
-        ).start()  # 启动后台线程关闭输出
+            target=self._close_output_in_background, args=(old_backend, old_handle), daemon=True
+        ).start()  # 启动后台线程关闭该句柄对应的流
 
     @staticmethod
-    def _close_output_in_background(backend: AudioOutputBackend) -> None:
-        """在后台安全关闭音频输出后端。
+    def _close_output_in_background(backend: AudioOutputBackend, handle: Any) -> None:
+        """在后台安全关闭指定的音频输出流句柄。
 
-        此方法旨在异步或后台环境中执行关闭操作，避免阻塞主线程。
-        它会先等待一小段时间，然后尝试关闭后端，并优雅地处理可能出现的异常。
+        此方法旨在异步或后台环境中执行关闭操作，避免阻塞主线程
+        （close 会等待音频回调退出，持锁调用会死锁）。
+        它会先等待一小段时间让锁释放，然后仅当 handle 仍是后端当前流时才关闭它；
+        若后端已重新 open 了新流，则旧流已被 open 顺带关闭，这里安全跳过。
 
         Args:
-            backend (AudioOutputBackend): 需要关闭的音频输出后端实例。
+            backend: 需要执行关闭操作的后端实例。
+            handle: 调度时通过 capture_stream() 捕获的具体流句柄。
 
         Returns:
             None: 此方法没有返回值。
@@ -739,11 +768,11 @@ class PyAVPlayerCore:
         try:
             # 短暂休眠，给可能进行中的操作一个缓冲时间
             time.sleep(0.05)
-            # 执行后端关闭操作
-            backend.close()
-        except Exception:
-            # 捕获所有异常并静默忽略，确保后台任务不因关闭错误而中断
-            pass
+            # 仅关闭调度时捕获的那个流，绝不误杀之后新开的流
+            backend.release_stream(handle)
+        except Exception as exc:
+            # 后台清理任务，失败不阻断主流程；记录原因便于排查流泄漏
+            logger.debug("后台关闭音频流失败: %s", exc)
 
     def _audio_callback(self, outdata, frames, _time_info, _status) -> None:
         try:
@@ -836,7 +865,9 @@ class PyAVPlayerCore:
                 if stream is None:
                     raise PlayerCoreError(f"No audio stream found in {source}")
 
-                if decode_window is not None and start_sec > 0.0:
+                if start_sec > 0.0:
+                    # 从 start_sec 前 10ms 的关键帧起解，随后按首帧时间裁剪到精确起点；
+                    # 无窗口（window_sec=None）时同样生效，保证整文件解码也尊重请求起点
                     seek_target = max(0.0, start_sec - 0.01)
                     try:
                         if stream.time_base is not None and float(stream.time_base) > 0.0:
@@ -845,8 +876,9 @@ class PyAVPlayerCore:
                             seek_ts = int(seek_target * av.time_base)
                         container.seek(max(0, seek_ts), stream=stream, backward=True)
                         seek_used = True
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        # seek 退化：回退到顺序解码，仍可正常播放但起点精度下降
+                        logger.debug("PyAV seek 失败，回退顺序解码: %s", exc)
 
                 resampler = av.audio.resampler.AudioResampler(
                     format="flt",
@@ -860,8 +892,9 @@ class PyAVPlayerCore:
                         continue
                     try:
                         decoded = packet.decode()
-                    except Exception:
-                        # Some files contain sporadic broken packets; skip and continue decoding.
+                    except Exception as exc:
+                        # 损坏 packet 是高频预期路径，跳过继续解码；仅 debug 记录便于排查
+                        logger.debug("跳过损坏的音频 packet: %s", exc)
                         continue
                     for frame in decoded:
                         if frame.time is not None:
@@ -897,16 +930,17 @@ class PyAVPlayerCore:
             return np.zeros((0, channels), dtype=np.float32), sample_rate, channels
         pcm = np.concatenate(chunks, axis=0)
 
+        if start_sec > 0.0:
+            # 裁掉 seek 起点到 start_sec 之间的多余前导（窗口与整文件解码统一适用）
+            trim_sec = 0.0
+            if "first_frame_time" in locals() and first_frame_time is not None:
+                trim_sec = max(0.0, start_sec - first_frame_time)
+            elif seek_used:
+                trim_sec = max(0.0, start_sec - seek_target)
+            trim_frames = int(round(trim_sec * sample_rate))
+            if 0 < trim_frames < pcm.shape[0]:
+                pcm = pcm[trim_frames:]
         if decode_window is not None:
-            if start_sec > 0.0:
-                trim_sec = 0.0
-                if "first_frame_time" in locals() and first_frame_time is not None:
-                    trim_sec = max(0.0, start_sec - first_frame_time)
-                elif seek_used:
-                    trim_sec = max(0.0, start_sec - seek_target)
-                trim_frames = int(round(trim_sec * sample_rate))
-                if 0 < trim_frames < pcm.shape[0]:
-                    pcm = pcm[trim_frames:]
             limit_frames = int(round(decode_window * sample_rate))
             if limit_frames > 0 and pcm.shape[0] > limit_frames:
                 pcm = pcm[:limit_frames]

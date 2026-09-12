@@ -26,12 +26,10 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
-import html
-import re
 import sys
 import time
+from collections.abc import Callable
 from ctypes import HRESULT, c_int, c_uint, c_ulonglong, c_void_p
-from dataclasses import dataclass, field
 
 from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap
@@ -63,8 +61,25 @@ except Exception:
     GUID = None
     IUnknown = object
 
-_LRC_RE = re.compile(r"\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]")
-_KANA_RE = re.compile(r"^\[kana:(.*)\]$", re.MULTILINE)
+from app.services.lyrics_parser import (  # noqa: F401  兼容再导出：现有 UI 导入路径不变
+    FuriganaAnnotation,
+    LyricEntry,
+    LyricWord,
+    _assign_furigana_to_entries,
+    _detect_lyrics_format,
+    _detect_lyrics_lang,
+    _extract_kana_content,
+    _format_lrc_time,
+    _format_time,
+    _parse_kana_timed,
+    _parse_kana_to_furigana_list,
+    _parse_lrc_entries,
+    _parse_lyrics_entries,
+    _parse_qrc_entries,
+    _parse_qrc_structured,
+    _parse_qrc_words,
+    build_structured_lyrics,
+)
 
 
 class AdaptiveInfoLabel(QLabel):
@@ -136,100 +151,6 @@ class AdaptiveInfoLabel(QLabel):
             elif right_count > 0:
                 right_count -= 1
         return marker.strip()
-
-
-@dataclass(slots=True)
-class FuriganaAnnotation:
-    char_index: int
-    text: str
-
-
-@dataclass(slots=True)
-class LyricWord:
-    text: str
-    start_ms: int
-    duration_ms: int
-
-
-@dataclass(slots=True)
-class LyricEntry:
-    timestamp: float
-    original: str = ""
-    romaji: str = ""
-    translation: str = ""
-    original_words: list[LyricWord] = field(default_factory=list)
-    romaji_words: list[LyricWord] = field(default_factory=list)
-    furigana: list[FuriganaAnnotation] = field(default_factory=list)
-
-    def line_count(self, *, show_japanese: bool = True, show_romaji: bool = True) -> int:
-        """计算需要显示的文本行数。
-
-        此方法根据传入的参数以及对象自身存储的内容，
-        计算最终输出时需要占用的行数。计算结果确保至少为一行。
-        例如，可以选择是否包含日文原文及其注音、罗马字转写和翻译。
-
-        Args:
-            show_japanese (bool): 是否在计算中包含日文原文行。默认为 True。
-            show_romaji (bool): 是否在计算中包含罗马字转写行。默认为 True。
-
-        Returns:
-            int: 计算得出的显示行数，最小值为 1。
-        """
-        count = 0
-        # 如果需要显示日文，且原始日文内容存在，则需要一行来显示
-        if show_japanese and self.original:
-            count += 1
-            # 如果日文内容有注音（furigana），则需要额外一行来显示注音
-            if self.furigana:
-                count += 1
-        # 如果需要显示罗马字，且罗马字内容存在，则需要一行来显示
-        if show_romaji and self.romaji:
-            count += 1
-        # 如果翻译内容存在，则需要一行来显示翻译
-        if self.translation:
-            count += 1
-        # 确保最终返回的行数至少为 1
-        return max(1, count)
-
-    def display_text(self, *, show_japanese: bool = True, show_romaji: bool = True) -> str:
-        """
-        功能：显示文本，包括日语、罗马音和翻译。根据参数决定显示哪些内容，如果没有内容则返回默认值或"♪"。
-        参数：
-            show_japanese (bool): 是否显示日文原文，默认为True。
-            show_romaji (bool): 是否显示罗马音，默认为True。
-        返回值：
-            str: 显示的文本，由换行符连接各部分；如果没有内容，则返回第一个可用文本或"♪"。
-        """
-        parts: list[str] = []  # 初始化一个空列表，用于存储要显示的文本部分
-        if show_japanese and self.original:  # 如果需要显示日语且存在日文原文
-            parts.append(self.original)  # 将日文原文添加到列表
-        if show_romaji and self.romaji:  # 如果需要显示罗马音且存在罗马音
-            parts.append(self.romaji)  # 将罗马音添加到列表
-        if self.translation:  # 如果存在翻译
-            parts.append(self.translation)  # 将翻译添加到列表
-        if not parts:  # 如果列表为空（即没有添加任何文本部分）
-            return self.original or self.romaji or self.translation or "♪"  # 返回第一个可用的文本，如果都没有则返回"♪"
-        return "\n".join(parts)  # 用换行符连接所有文本部分并返回
-
-    def compact_text(self, *, show_japanese: bool = True, show_romaji: bool = True) -> str:
-        """
-        功能：根据参数和对象属性返回压缩后的文本。
-        参数：
-            show_japanese (bool): 是否显示日文，默认为True。
-            show_romaji (bool): 是否显示罗马音，默认为True。
-        返回值：str，返回原文、罗马音、翻译或默认符号"♪"。
-        """
-        if show_japanese and self.original:
-            # 如果启用日文且原文存在，返回原文
-            return self.original
-        if show_romaji and self.romaji:
-            # 如果启用罗马音且罗马音存在，返回罗马音
-            return self.romaji
-        if self.translation:
-            # 如果翻译存在，返回翻译
-            return self.translation
-        # 回退选项：尝试返回原文、罗马音、翻译或默认符号
-        return self.original or self.romaji or self.translation or "♪"
 
 
 TBPF_NOPROGRESS = 0x00000000
@@ -1263,601 +1184,45 @@ class _WindowsTaskbarProgress:
                 comtypes.CoUninitialize()
 
 
-def _format_time(sec: float) -> str:
-    """格式化时间为MM:SS或HH:MM:SS格式.
+def _render_icon(
+    color: QColor | str,
+    pen_width: float,
+    draw: Callable[[QPainter], None],
+    *,
+    brush: QColor | Qt.BrushStyle = Qt.BrushStyle.NoBrush,
+) -> QIcon:
+    """按统一画布规格渲染矢量图标。
+
+    创建 24x24 透明画布，启用抗锯齿并配置画笔/画刷后，
+    把 painter 交给 draw 回调写入具体绘图指令。资源生命周期由本函数管理。
 
     Args:
-        sec: 秒数。
+        color: 画笔颜色（QColor 或可被 QColor 解析的字符串）。
+        pen_width: 画笔线宽。
+        draw: 接收 QPainter 的回调，在其中写具体的绘图指令。
+            回调内可按需再次 setPen/setBrush 覆盖默认配置。
+        brush: 画刷，默认 NoBrush；可传 QColor 以填充。
 
     Returns:
-        str: 格式化后的时间字符串。
+        绘制完成的 QIcon。
     """
-    total = max(0, int(sec))
-    m, s = divmod(total, 60)
-    h, m = divmod(m, 60)
-    if h > 0:
-        return f"{h:02d}:{m:02d}:{s:02d}"
-    return f"{m:02d}:{s:02d}"
-
-
-def _format_lrc_time(sec: float) -> str:
-    """格式化LRC歌词时间戳为MM:SS格式.
-
-    Args:
-        sec: 秒数。
-
-    Returns:
-        str: 格式化后的时间字符串（MM:SS格式）。
-    """
-    safe = max(0.0, float(sec))
-    total = int(safe)
-    minutes = total // 60
-    seconds = total % 60
-    return f"{minutes:02d}:{seconds:02d}"
-
-
-def _parse_lrc_entries(raw: str) -> list[tuple[float, str]]:
-    """解析LRC歌词文件内容.
-
-    从LRC格式的文本中提取时间戳和歌词文本。
-
-    Args:
-        raw: LRC格式的原始文本内容。
-
-    Returns:
-        list[tuple[float, str]]: 包含（时间戳（秒），歌词文本）的列表，按时间顺序排序。
-    """
-    result: list[tuple[float, str]] = []
-    for raw_line in raw.split("\n"):
-        line = raw_line.strip()
-        if not line:
-            continue
-
-        matches = list(_LRC_RE.finditer(line))
-        if not matches:
-            continue
-
-        text = html.unescape(_LRC_RE.sub("", line).strip())
-        for m in matches:
-            mm = int(m.group(1))
-            ss = int(m.group(2))
-            frac_raw = m.group(3) or "0"
-            if len(frac_raw) == 1:
-                ms = int(frac_raw) * 100
-            elif len(frac_raw) == 2:
-                ms = int(frac_raw) * 10
-            else:
-                ms = int(frac_raw[:3])
-
-            sec = mm * 60 + ss + (ms / 1000.0)
-            result.append((sec, text))
-
-    result.sort(key=lambda x: x[0])
-    return result
-
-
-_QRC_LINE_RE = re.compile(r"\[(\d+),(\d+)\]([^\[]*)")
-_QRC_WORD_RE = re.compile(r"\((\d+),(\d+)\)")
-_QRC_KANA_GROUP_RE = re.compile(r"(\d)(?:(?:\(\d+,\d+\))?[\u3040-\u309f\u30a0-\u30ff]*)*")
-_QRC_FURIGANA_BASE_RE = re.compile(r"[\u4e00-\u9fff\uff10-\uff19\uff21-\uff5a\u3005]")
-
-
-def _parse_qrc_words(text_raw: str) -> list[LyricWord]:
-    """解析QRC格式的原始歌词文本，提取其中的歌词词组。
-
-    该函数利用预定义的正则表达式从给定的原始字符串中匹配所有歌词词组，
-    并将它们转换为`LyricWord`对象组成的列表。
-
-    Args:
-        text_raw (str): 包含QRC格式歌词信息的原始字符串。
-
-    Returns:
-        list[LyricWord]: 一个列表，其中每个元素都是一个`LyricWord`对象，
-        包含了词组的文本内容、开始时间（毫秒）和持续时间（毫秒）。
-    """
-    words: list[LyricWord] = []  # 初始化一个空列表，用于存储解析出的歌词词组
-    # 使用预定义的正则表达式对象在原始文本中迭代查找所有匹配项
-    text_start = 0
-    for m in _QRC_WORD_RE.finditer(text_raw):
-        # 将每个匹配到的子组（词组文本、开始时间、持续时间）转换为 LyricWord 对象
-        # 并添加到列表中。注意：时间值从字符串转换为整数。
-        text = text_raw[text_start : m.start()]
-        if text:
-            words.append(LyricWord(text=text, start_ms=int(m.group(1)), duration_ms=int(m.group(2))))
-        text_start = m.end()
-    return words  # 返回解析完成的歌词词组列表
-
-
-def _parse_qrc_entries(raw: str) -> list[tuple[float, str]]:
-    """解析 QRC 格式的歌词原始文本，提取时间戳和对应的歌词内容。
-
-    Args:
-        raw (str): QRC 格式的歌词原始文本，可能是纯文本或 XML 格式。
-
-    Returns:
-        list[tuple[float, str]]: 解析后的歌词列表，每个元素是一个元组，
-            包含歌词时间戳（秒，浮点数）和对应的歌词文本（字符串），
-            列表按时间戳升序排序。
-    """
-    content = raw.strip()
-    # 检查内容是否为 XML 格式（以特定标签开头）
-    if content.startswith("<?xml") or content.startswith("<QrcInfos"):
-        import xml.etree.ElementTree as ET
-
-        try:
-            root = ET.fromstring(content)
-            # 遍历 XML 树，查找包含 LyricContent 属性的元素
-            for lyric_elem in root.iter():
-                lc = lyric_elem.get("LyricContent", "")
-                if lc:
-                    content = lc  # 将 content 替换为提取到的歌词内容
-                    break
-        except Exception:
-            pass  # 如果 XML 解析失败，则忽略并继续使用原始 content
-
-    result: list[tuple[float, str]] = []
-    # 使用正则表达式匹配 QRC 歌词行（时间戳和歌词内容）
-    for m in _QRC_LINE_RE.finditer(content):
-        start_ms = int(m.group(1))  # 提取起始时间（毫秒）
-        text_raw = m.group(3)  # 提取原始歌词文本
-        # 移除歌词中的逐字标记（通过正则替换），并去除首尾空格
-        text = _QRC_WORD_RE.sub("", text_raw).strip()
-        if not text:
-            continue  # 跳过空歌词行
-        sec = start_ms / 1000.0  # 将毫秒转换为秒
-        result.append((sec, text))
-    result.sort(key=lambda x: x[0])  # 按时间戳升序排序
-    return result
-
-
-def _parse_qrc_structured(raw: str, *, is_romaji: bool = False) -> list[tuple[float, str, list[LyricWord]]]:
-    """解析QRC格式歌词字符串，返回结构化的歌词数据列表。
-
-    将原始QRC歌词字符串解析为按时间排序的元组列表，每个元组包含：
-    - 起始时间（秒，浮点数）
-    - 歌词文本（去除时间标签后的纯文本）
-    - 歌词单词列表（由LyricWord对象组成）
-
-    如果输入是XML格式的QRC数据，会先提取其中的LyricContent字段。
-
-    Args:
-        raw (str): 原始QRC格式歌词字符串。
-        is_romaji (bool): 是否为罗马音歌词（此参数在当前实现中未使用）。
-
-    Returns:
-        list[tuple[float, str, list[LyricWord]]]: 结构化歌词列表，
-        按时间顺序排列，每个元素为(时间秒数, 歌词文本, 单词列表)的元组。
-    """
-    # 移除字符串首尾空白字符
-    content = raw.strip()
-
-    # 检查是否为XML格式的QRC数据
-    if content.startswith("<?xml") or content.startswith("<QrcInfos"):
-        # 导入XML解析库
-        import xml.etree.ElementTree as ET
-
-        try:
-            # 解析XML内容
-            root = ET.fromstring(content)
-            # 遍历XML树寻找包含歌词内容的元素
-            for lyric_elem in root.iter():
-                # 获取LyricContent属性
-                lc = lyric_elem.get("LyricContent", "")
-                if lc:
-                    # 找到歌词内容，替换content变量
-                    content = lc
-                    break
-        except Exception:
-            # XML解析失败，保持原content不变
-            pass
-
-    # 初始化结果列表，类型注解为包含(浮点数, 字符串, LyricWord列表)的元组列表
-    result: list[tuple[float, str, list[LyricWord]]] = []
-
-    # 使用正则表达式匹配所有歌词行
-    for m in _QRC_LINE_RE.finditer(content):
-        # 提取起始时间（毫秒）
-        start_ms = int(m.group(1))
-        # 提取原始文本内容（包含时间标签和歌词）
-        text_raw = m.group(3)
-        # 移除文本中的时间标签并清理空白
-        text = _QRC_WORD_RE.sub("", text_raw).strip()
-
-        # 跳过空文本行
-        if not text:
-            continue
-
-        # 解析歌词单词
-        words = _parse_qrc_words(text_raw)
-        # 将毫秒转换为秒
-        sec = start_ms / 1000.0
-        # 将解析结果添加到结果列表
-        result.append((sec, text, words))
-
-    # 按时间顺序排序结果
-    result.sort(key=lambda x: x[0])
-    return result
-
-
-def _detect_lyrics_format(raw: str) -> str:
-    """检测歌词文本的格式类型。
-
-    通过分析原始字符串的内容特征，判断歌词格式是QRC格式还是LRC格式。
-
-    参数:
-        raw (str): 原始歌词文本字符串
-
-    返回值:
-        str: 格式标识字符串，"qrc" 或 "lrc"
-    """
-    # 移除字符串首尾的空白字符
-    stripped = raw.strip()
-
-    # 检查是否以XML声明或QrcInfos标签开头（QRC格式特征）
-    if stripped.startswith("<?xml") or stripped.startswith("<QrcInfos"):
-        return "qrc"
-
-    # 检查原始字符串中是否包含QRC文件扩展名特征
-    if "_qm.qrc" in raw or "_qmRoma.qrc" in raw or "_qmts.qrc" in raw:
-        return "qrc"
-
-    # 使用预定义的正则表达式检查前500个字符是否符合QRC行格式
-    if _QRC_LINE_RE.search(stripped[:500]):
-        return "qrc"
-
-    # 默认返回LRC格式
-    return "lrc"
-
-
-def _parse_lyrics_entries(raw: str) -> list[tuple[float, str]]:
-    """解析歌词条目，根据检测的格式调用相应的解析函数。
-
-    参数：
-    raw (str): 原始歌词文本。
-
-    返回值：
-    list[tuple[float, str]]: 解析后的歌词条目列表，每个条目是一个包含时间戳和歌词文本的元组。
-    """
-    fmt = _detect_lyrics_format(raw)  # 检测歌词格式
-    if fmt == "qrc":  # 检查是否为QRC格式
-        return _parse_qrc_entries(raw)  # 如果是QRC格式，调用QRC解析函数
-    return _parse_lrc_entries(raw)  # 否则，调用LRC解析函数
-
-
-def _detect_lyrics_lang(filename: str) -> str:
-    """功能：检测歌词文件的语言类型，基于文件名中的特定后缀或子串进行判断。
-    参数：filename (str): 文件名字符串，可能为None。
-    返回值：str: 检测到的语言类型，如'romaji'（罗马字）、'translation'（翻译）、'japanese'（日语）或'original'（原始）。
-    """
-    name = (filename or "").lower()  # 将文件名转换为小写，确保大小写不敏感；如果filename为None则使用空字符串
-    if (
-        name.endswith("_qmroma.qrc.txt") or "_qmroma." in name
-    ):  # 检查文件名是否以"_qmroma.qrc.txt"结尾或包含"_qmroma."，以识别罗马字歌词
-        return "romaji"
-    if (
-        name.endswith("_qmts.qrc.txt") or "_qmts." in name
-    ):  # 检查文件名是否以"_qmts.qrc.txt"结尾或包含"_qmts."，以识别翻译歌词
-        return "translation"
-    if name.endswith("_qm.qrc.txt") or "_qm." in name:  # 检查文件名是否以"_qm.qrc.txt"结尾或包含"_qm."，以识别日语歌词
-        return "japanese"
-    return "original"  # 如果以上条件都不匹配，则默认返回原始歌词类型
-
-
-def _extract_kana_content(raw: str) -> str:
-    """从输入的字符串中提取假名内容。
-
-    Args:
-        raw (str): 原始字符串。
-
-    Returns:
-        str: 提取到的假名内容，如果没有匹配则返回空字符串。
-    """
-    # 使用预定义的正则表达式对象_KANA_RE在raw字符串中搜索假名内容
-    m = _KANA_RE.search(raw)
-    # 如果搜索到匹配，则返回匹配的第一个分组（即假名内容）
-    if m:
-        return m.group(1)
-    # 如果没有匹配，则返回空字符串
-    return ""
-
-
-def _parse_kana_to_furigana_list(kana_content: str) -> list[str | None]:
-    """
-    将假名内容解析为振假名列表。
-
-    参数:
-        kana_content (str): 假名内容字符串。
-
-    返回:
-        list[str | None]: 振假名列表，其中None表示该位置没有振假名。
-    """
-    # 使用正则表达式清理输入字符串，移除_QRC_WORD_RE匹配的部分
-    groups = list(_QRC_KANA_GROUP_RE.finditer(kana_content))
-    # 初始化结果列表
-    result: list[str | None] = []
-    if groups:
-        for match in groups:
-            count = int(match.group(1))
-            reading = _QRC_WORD_RE.sub("", match.group(0)[1:]) or None
-            result.append(reading)
-            result.extend([None] * (count - 1))
-        return result
-    cleaned = _QRC_WORD_RE.sub("", kana_content)
-    i = 0
-    # 遍历清理后的字符串
-    while i < len(cleaned):
-        ch = cleaned[i]
-        if ch == "1":  # "1"作为标记，表示该位置没有振假名
-            result.append(None)  # 追加None到结果
-            i += 1  # 移动到下一个字符
-        else:
-            # 收集假名字符直到遇到"1"或字符串结束
-            reading_chars: list[str] = []
-            while i < len(cleaned) and cleaned[i] != "1":
-                reading_chars.append(cleaned[i])
-                i += 1
-            # 将收集的字符连接成字符串并追加到结果
-            result.append("".join(reading_chars))
-    return result
-
-
-def _parse_kana_timed(kana_content: str) -> list[tuple[str | None, int]]:
-    """解析QRC格式的假名内容，提取文本和时间信息。
-
-    该函数遍历输入的假名字符串，根据特定字符（如'1'和'('）识别时间节点，
-    并将非节点字符收集为文本。最终返回一个列表，其中每个元素是一个元组，
-    包含可选的文本和对应的开始时间（毫秒）。
-
-    Args:
-        kana_content: 包含QRC格式假名和时间标记的字符串。
-
-    Returns:
-        一个列表，列表中的每个元素是 (文本, 开始时间毫秒) 的元组。
-        文本可能为 None，表示该时间节点前没有文本。
-    """
-    # 初始化结果列表，用于存储解析出的(文本, 时间)元组
-    result: list[tuple[str | None, int]] = []
-    i = 0
-    n = len(kana_content)
-    # 主循环，遍历整个输入字符串
-    while i < n:
-        ch = kana_content[i]
-        # 情况1：遇到字符'1'，这通常表示一个换行或段落开始标记
-        if ch == "1":
-            start_ms = 0
-            j = i + 1
-            # 检查紧接着'1'后面是否有'('，可能包含时间信息
-            if j < n and kana_content[j] == "(":
-                # 使用预定义的正则表达式匹配时间模式
-                m = _QRC_WORD_RE.match(kana_content, j)
-                if m:
-                    # 成功匹配，提取捕获组1中的毫秒时间
-                    start_ms = int(m.group(1))
-                    # 将索引j移动到匹配结束位置
-                    j = m.end()
-            # 将节点信息（文本为None）添加到结果
-            result.append((None, start_ms))
-            # 更新主索引i，跳过已处理的部分
-            i = j
-        # 情况2：单独遇到'('字符（前面没有文本或'1'标记）
-        elif ch == "(":
-            # 尝试匹配时间模式
-            m = _QRC_WORD_RE.match(kana_content, i)
-            if m:
-                # 匹配成功，则移动索引到匹配结束，跳过这个时间节点
-                i = m.end()
-            else:
-                # 匹配失败（格式不符），则仅跳过这个'('字符
-                i += 1
-        # 情况3：普通文本字符
-        else:
-            # 初始化一个列表，用于收集当前文本片段的所有字符
-            reading_chars: list[str] = []
-            start_ms = 0
-            # 循环收集字符，直到遇到下一个节点标记（'1'或'('）或字符串结束
-            while i < n and kana_content[i] not in ("1", "("):
-                reading_chars.append(kana_content[i])
-                i += 1
-            # 将收集到的字符列表合并成一个字符串
-            reading = "".join(reading_chars)
-            # 检查当前索引位置是否是一个时间节点'('（即文本后面跟着时间）
-            if i < n and kana_content[i] == "(":
-                # 尝试匹配时间模式
-                m = _QRC_WORD_RE.match(kana_content, i)
-                if m:
-                    # 匹配成功，提取开始时间毫秒
-                    start_ms = int(m.group(1))
-                    # 移动索引到匹配结束
-                    i = m.end()
-            # 将解析结果添加到列表，如果收集到的文本为空则记为None
-            result.append((reading if reading else None, start_ms))
-    # 返回最终解析结果
-    return result
-
-
-def _assign_furigana_to_entries(entries: list[LyricEntry], kana_content: str) -> None:
-    """将注音内容分配到歌词条目中。
-
-    解析注音字符串并分配给对应的歌词条目，为每个字符添加注音标注。
-
-    参数:
-        entries (list[LyricEntry]): 歌词条目列表，包含原始文本和需要添加的注音信息
-        kana_content (str): 包含注音信息的字符串，格式为特定解析器能识别的格式
-
-    返回:
-        None: 该函数直接修改传入的entries列表，为每个条目添加注音信息
-    """
-    # 如果注音内容为空，直接返回不做处理
-    if not kana_content:
-        return
-
-    # 解析注音字符串为注音列表
-    furigana_list = _parse_kana_to_furigana_list(kana_content)
-
-    # 如果解析结果为空，直接返回
-    if not furigana_list:
-        return
-
-    # 当前处理到的注音索引
-    kana_idx = 0
-
-    # 遍历每个歌词条目
-    for entry in entries:
-        # 跳过原始文本为空的条目
-        if not entry.original:
-            continue
-
-        # 计算当前条目中非空格字符的数量
-        base_indexes = [index for index, char in enumerate(entry.original) if _QRC_FURIGANA_BASE_RE.fullmatch(char)]
-        char_count = len(base_indexes)
-
-        # 检查剩余注音数量是否足够分配给当前条目
-        if kana_idx + char_count > len(furigana_list):
-            break
-
-        # 当前字符在原始文本中的索引
-
-        # 初始化当前条目的注音列表
-        entry.furigana = []
-
-        # 遍历当前条目的每个字符
-        for char_idx in base_indexes:
-            # 跳过空格字符（全角和半角空格）
-
-            # 检查注音索引是否超出范围
-            if kana_idx >= len(furigana_list):
-                break
-
-            # 获取当前注音
-            furi = furigana_list[kana_idx]
-
-            # 如果当前注音不为空，则创建注音标注并添加到条目中
-            if furi is not None:
-                entry.furigana.append(FuriganaAnnotation(char_index=char_idx, text=furi))
-
-            # 更新注音索引和字符索引
-            kana_idx += 1
-
-
-def build_structured_lyrics(
-    main_raw: str,
-    main_filename: str = "",
-    extra_files: list[tuple[str, str]] | None = None,
-) -> list[LyricEntry]:
-    """从原始歌词文本构建结构化的歌词条目列表，支持合并多个歌词文件。
-
-    Args:
-        main_raw (str): 主歌词文件的原始文本内容。
-        main_filename (str, optional): 主歌词文件的文件名，用于辅助检测歌词语言。默认为空字符串。
-        extra_files (list[tuple[str, str]] | None, optional): 额外的歌词文件列表，每个元素为 (原始文本, 文件名) 的元组。默认为None。
-
-    Returns:
-        list[LyricEntry]: 按时间戳排序并填充了内容的歌词条目列表。
-    """
-    entries_list: list[LyricEntry] = []  # 用于存储最终所有歌词条目的列表
-    kana_content = ""  # 用于存储提取的假名（振假名）内容
-    _MERGE_TOLERANCE = 0.05  # 合并容差，用于判断两个时间戳是否足够接近以视为同一个歌词条目（单位：秒）
-
-    def _find_or_create(ts: float) -> LyricEntry:
-        """根据时间戳查找现有条目，若未找到则创建一个新条目。
-
-        Args:
-            ts (float): 歌词的时间戳。
-
-        Returns:
-            LyricEntry: 找到的或新创建的歌词条目。
-        """
-        # 遍历现有条目，检查是否有时间戳足够接近的条目
-        for e in entries_list:
-            if abs(e.timestamp - ts) < _MERGE_TOLERANCE:  # 使用容差进行比较
-                return e
-        # 未找到匹配条目，则创建新条目并加入列表
-        e = LyricEntry(timestamp=ts)
-        entries_list.append(e)
-        return e
-
-    def _extract_kana(raw: str) -> None:
-        """从原始歌词文本中提取假名（振假名）内容，并更新到外部变量 kana_content。
-
-        Args:
-            raw (str): 原始歌词文本。
-        """
-        nonlocal kana_content  # 声明使用外部函数的 kana_content 变量
-        kana = _extract_kana_content(raw)  # 调用外部函数提取假名内容
-        # 如果成功提取到假名，并且新提取的内容比已存储的更长，则更新
-        if kana and len(kana) > len(kana_content):
-            kana_content = kana
-
-    def _merge_lrc(raw: str, lang: str) -> None:
-        """合并 LRC 格式歌词。
-
-        Args:
-            raw (str): LRC 格式的原始歌词文本。
-            lang (str): 歌词的语言类型（如 "translation", "romaji" 等）。
-        """
-        # 遍历解析出的时间戳和歌词文本对
-        for sec, text in _parse_lrc_entries(raw):
-            e = _find_or_create(sec)  # 查找或创建对应时间戳的条目
-            # 根据语言类型，将文本填充到条目的不同字段
-            if lang == "translation":
-                e.translation = text
-            elif lang == "romaji":
-                e.romaji = text
-            else:  # 默认情况或其他语言（如原语言）
-                e.original = text
-
-    def _merge_qrc(raw: str, lang: str) -> None:
-        """合并 QRC 格式歌词（QRC 格式包含逐词时间信息）。
-
-        Args:
-            raw (str): QRC 格式的原始歌词文本。
-            lang (str): 歌词的语言类型。
-        """
-        # 遍历解析出的时间戳、歌词文本和单词时间信息
-        for sec, text, words in _parse_qrc_structured(raw):
-            e = _find_or_create(sec)  # 查找或创建对应时间戳的条目
-            # 根据语言类型，将文本和单词时间信息填充到条目的对应字段
-            if lang == "romaji":
-                e.romaji = text
-                e.romaji_words = words  # 逐词罗马音时间信息
-            elif lang == "japanese":
-                e.original = text
-                e.original_words = words  # 逐词原文时间信息
-            else:  # 默认情况
-                e.original = text
-                e.original_words = words
-
-    def _merge(raw: str, filename: str) -> None:
-        """合并单个歌词文件的核心逻辑。
-
-        Args:
-            raw (str): 歌词文件的原始文本内容。
-            filename (str): 歌词文件的文件名，用于辅助检测语言和格式。
-        """
-        lang = _detect_lyrics_lang(filename)  # 检测歌词语言类型
-        fmt = _detect_lyrics_format(raw)  # 检测歌词格式（LRC 或 QRC 等）
-        _extract_kana(raw)  # 尝试提取假名内容
-        # 根据检测到的格式，调用相应的合并函数
-        if fmt == "qrc":
-            _merge_qrc(raw, lang)
-        else:  # 默认处理为 LRC 格式
-            _merge_lrc(raw, lang)
-
-    # 处理主歌词文件
-    _merge(main_raw, main_filename)
-
-    # 如果存在额外歌词文件，则逐一处理
-    if extra_files:
-        for raw, filename in extra_files:
-            _merge(raw, filename)
-
-    # 将所有条目按时间戳排序
-    entries_list.sort(key=lambda e: e.timestamp)
-
-    # 如果提取到了假名内容，则为所有条目分配振假名
-    if kana_content:
-        _assign_furigana_to_entries(entries_list, kana_content)
-    return entries_list
+    pix = QPixmap(24, 24)
+    pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
+    painter.setPen(
+        QPen(
+            QColor(color),
+            pen_width,
+            Qt.PenStyle.SolidLine,
+            Qt.PenCapStyle.RoundCap,
+            Qt.PenJoinStyle.RoundJoin,
+        )
+    )
+    painter.setBrush(brush)
+    draw(painter)
+    painter.end()
+    return QIcon(pix)
 
 
 def _make_mode_icon(mode: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
@@ -1870,38 +1235,30 @@ def _make_mode_icon(mode: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
     Returns:
         QIcon: 对应播放模式的图标。
     """
-    pix = QPixmap(24, 24)
-    pix.fill(Qt.GlobalColor.transparent)
 
-    painter = QPainter(pix)
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    icon_color = QColor(color)
-    pen = QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
+    def _draw(p: QPainter) -> None:
+        if mode == PlayMode.PLAYLIST_LOOP.value:
+            p.drawArc(4, 4, 14, 14, 40 * 16, 290 * 16)
+            p.drawLine(14, 4, 18, 4)
+            p.drawLine(18, 4, 16, 8)
+        elif mode == PlayMode.SINGLE_LOOP.value:
+            p.drawArc(4, 4, 14, 14, 40 * 16, 290 * 16)
+            p.drawLine(14, 4, 18, 4)
+            p.drawLine(18, 4, 16, 8)
+            font = QFont("Segoe UI", 8, QFont.Weight.Bold)
+            p.setFont(font)
+            p.drawText(QRectF(12.5, 11.0, 7.0, 8.0), "1")
+        else:
+            p.drawLine(4, 7, 18, 17)
+            p.drawLine(15, 17, 18, 17)
+            p.drawLine(16, 14, 18, 17)
 
-    if mode == PlayMode.PLAYLIST_LOOP.value:
-        painter.drawArc(4, 4, 14, 14, 40 * 16, 290 * 16)
-        painter.drawLine(14, 4, 18, 4)
-        painter.drawLine(18, 4, 16, 8)
-    elif mode == PlayMode.SINGLE_LOOP.value:
-        painter.drawArc(4, 4, 14, 14, 40 * 16, 290 * 16)
-        painter.drawLine(14, 4, 18, 4)
-        painter.drawLine(18, 4, 16, 8)
-        font = QFont("Segoe UI", 8, QFont.Weight.Bold)
-        painter.setFont(font)
-        painter.drawText(QRectF(12.5, 11.0, 7.0, 8.0), "1")
-    else:
-        painter.drawLine(4, 7, 18, 17)
-        painter.drawLine(15, 17, 18, 17)
-        painter.drawLine(16, 14, 18, 17)
+            p.drawLine(4, 17, 9, 12)
+            p.drawLine(9, 12, 18, 7)
+            p.drawLine(15, 7, 18, 7)
+            p.drawLine(16, 10, 18, 7)
 
-        painter.drawLine(4, 17, 9, 12)
-        painter.drawLine(9, 12, 18, 7)
-        painter.drawLine(15, 7, 18, 7)
-        painter.drawLine(16, 10, 18, 7)
-
-    painter.end()
-    return QIcon(pix)
+    return _render_icon(color, 1.8, _draw)
 
 
 def _make_plus_minus_icon(is_plus: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
@@ -1914,20 +1271,13 @@ def _make_plus_minus_icon(is_plus: bool, *, color: QColor | str = "#f4f4f4") -> 
     Returns:
         QIcon: 加减图标。
     """
-    pix = QPixmap(24, 24)
-    pix.fill(Qt.GlobalColor.transparent)
 
-    painter = QPainter(pix)
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor(color), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-    painter.setPen(pen)
+    def _draw(p: QPainter) -> None:
+        p.drawLine(6, 12, 18, 12)
+        if is_plus:
+            p.drawLine(12, 6, 12, 18)
 
-    painter.drawLine(6, 12, 18, 12)
-    if is_plus:
-        painter.drawLine(12, 6, 12, 18)
-
-    painter.end()
-    return QIcon(pix)
+    return _render_icon(color, 2.0, _draw)
 
 
 def _make_compact_icon(is_compact: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
@@ -1940,34 +1290,16 @@ def _make_compact_icon(is_compact: bool, *, color: QColor | str = "#f4f4f4") -> 
     Returns:
         QIcon: 根据指定尺寸和颜色创建的图标对象。
     """
-    # 创建一个24x24像素的透明画布
-    pix = QPixmap(24, 24)
-    pix.fill(Qt.GlobalColor.transparent)
 
-    # 初始化画笔，设置抗锯齿渲染
-    painter = QPainter(pix)
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
+    def _draw(p: QPainter) -> None:
+        if is_compact:
+            # 紧凑模式：在(2,4)位置绘制20x16的圆角矩形，圆角半径2像素
+            p.drawRoundedRect(2, 4, 20, 16, 2, 2)
+        else:
+            # 非紧凑模式：在(4,7)位置绘制16x10的圆角矩形，圆角半径2像素
+            p.drawRoundedRect(4, 7, 16, 10, 2, 2)
 
-    # 创建画笔对象：设置颜色、线宽1.6、实线、圆头笔、圆角连接
-    pen = QPen(QColor(color), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-
-    # 设置画刷为完全透明（不填充）
-    painter.setBrush(QColor(0, 0, 0, 0))
-
-    # 根据is_compact参数绘制不同尺寸的圆角矩形
-    if is_compact:
-        # 紧凑模式：在(2,4)位置绘制20x16的圆角矩形，圆角半径2像素
-        painter.drawRoundedRect(2, 4, 20, 16, 2, 2)
-    else:
-        # 非紧凑模式：在(4,7)位置绘制16x10的圆角矩形，圆角半径2像素
-        painter.drawRoundedRect(4, 7, 16, 10, 2, 2)
-
-    # 结束绘画操作
-    painter.end()
-
-    # 将绘制好的像素图转换为图标并返回
-    return QIcon(pix)
+    return _render_icon(color, 1.6, _draw, brush=QColor(0, 0, 0, 0))
 
 
 def _make_plus_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
@@ -1979,26 +1311,14 @@ def _make_plus_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
     返回值：
         QIcon: 包含绘制完成的加号图标的 QIcon 对象。
     """
-    # 创建一个24x24像素的QPixmap画布
-    pix = QPixmap(24, 24)
-    # 用完全透明的颜色填充画布背景
-    pix.fill(Qt.GlobalColor.transparent)
-    # 初始化画家对象，用于在QPixmap上绘制
-    painter = QPainter(pix)
-    # 设置渲染提示，启用抗锯齿使线条更平滑
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    # 创建画笔：指定颜色、线宽(2.0)、实线样式、圆角笔帽
-    pen = QPen(QColor(color), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-    # 将画笔设置给画家
-    painter.setPen(pen)
-    # 绘制加号的水平线段 (从点(6,12)到点(18,12))
-    painter.drawLine(6, 12, 18, 12)
-    # 绘制加号的垂直线段 (从点(12,6)到点(12,18))
-    painter.drawLine(12, 6, 12, 18)
-    # 结束绘图操作，释放相关资源
-    painter.end()
-    # 将绘制好的QPixmap转换为QIcon并返回
-    return QIcon(pix)
+
+    def _draw(p: QPainter) -> None:
+        # 加号的水平线段
+        p.drawLine(6, 12, 18, 12)
+        # 加号的垂直线段
+        p.drawLine(12, 6, 12, 18)
+
+    return _render_icon(color, 2.0, _draw)
 
 
 def _make_crosshair_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
@@ -2010,20 +1330,15 @@ def _make_crosshair_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
     Returns:
         QIcon: 十字准星图标。
     """
-    pix = QPixmap(24, 24)
-    pix.fill(Qt.GlobalColor.transparent)
 
-    painter = QPainter(pix)
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor(color), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.drawEllipse(QRectF(6, 6, 12, 12))
-    painter.drawLine(12, 4, 12, 8)
-    painter.drawLine(12, 16, 12, 20)
-    painter.drawLine(4, 12, 8, 12)
-    painter.drawLine(16, 12, 20, 12)
-    painter.end()
-    return QIcon(pix)
+    def _draw(p: QPainter) -> None:
+        p.drawEllipse(QRectF(6, 6, 12, 12))
+        p.drawLine(12, 4, 12, 8)
+        p.drawLine(12, 16, 12, 20)
+        p.drawLine(4, 12, 8, 12)
+        p.drawLine(16, 12, 20, 12)
+
+    return _render_icon(color, 1.6, _draw)
 
 
 def _make_media_icon(kind: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
@@ -2036,31 +1351,25 @@ def _make_media_icon(kind: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
     Returns:
         QIcon: 媒体控制图标。
     """
-    pix = QPixmap(24, 24)
-    pix.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pix)
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
     icon_color = QColor(color)
-    pen = QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.setBrush(icon_color)
 
-    k = (kind or "").strip().lower()
-    if k == "play":
-        painter.drawPolygon([QPoint(8, 6), QPoint(18, 12), QPoint(8, 18)])
-    elif k == "pause":
-        painter.drawRoundedRect(QRectF(7, 6, 3, 12), 1, 1)
-        painter.drawRoundedRect(QRectF(13, 6, 3, 12), 1, 1)
-    elif k == "next":
-        painter.drawPolygon([QPoint(6, 7), QPoint(12, 12), QPoint(6, 17)])
-        painter.drawPolygon([QPoint(12, 7), QPoint(18, 12), QPoint(12, 17)])
-        painter.drawRect(QRectF(19, 7, 1.8, 10))
-    elif k == "prev":
-        painter.drawPolygon([QPoint(18, 7), QPoint(12, 12), QPoint(18, 17)])
-        painter.drawPolygon([QPoint(12, 7), QPoint(6, 12), QPoint(12, 17)])
-        painter.drawRect(QRectF(4.2, 7, 1.8, 10))
-    painter.end()
-    return QIcon(pix)
+    def _draw(p: QPainter) -> None:
+        k = (kind or "").strip().lower()
+        if k == "play":
+            p.drawPolygon([QPoint(8, 6), QPoint(18, 12), QPoint(8, 18)])
+        elif k == "pause":
+            p.drawRoundedRect(QRectF(7, 6, 3, 12), 1, 1)
+            p.drawRoundedRect(QRectF(13, 6, 3, 12), 1, 1)
+        elif k == "next":
+            p.drawPolygon([QPoint(6, 7), QPoint(12, 12), QPoint(6, 17)])
+            p.drawPolygon([QPoint(12, 7), QPoint(18, 12), QPoint(12, 17)])
+            p.drawRect(QRectF(19, 7, 1.8, 10))
+        elif k == "prev":
+            p.drawPolygon([QPoint(18, 7), QPoint(12, 12), QPoint(18, 17)])
+            p.drawPolygon([QPoint(12, 7), QPoint(6, 12), QPoint(12, 17)])
+            p.drawRect(QRectF(4.2, 7, 1.8, 10))
+
+    return _render_icon(icon_color, 1.8, _draw, brush=icon_color)
 
 
 def _make_volume_icon(*, muted: bool, color: QColor | str = "#f4f4f4") -> QIcon:
@@ -2073,24 +1382,19 @@ def _make_volume_icon(*, muted: bool, color: QColor | str = "#f4f4f4") -> QIcon:
     Returns:
         QIcon: 音量图标。
     """
-    pix = QPixmap(24, 24)
-    pix.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pix)
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
     icon_color = QColor(color)
-    pen = QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.setBrush(icon_color)
-    painter.drawPolygon([QPoint(6, 10), QPoint(9, 10), QPoint(13, 6), QPoint(13, 18), QPoint(9, 14), QPoint(6, 14)])
-    if muted:
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawLine(QPoint(15, 9), QPoint(20, 15))
-        painter.drawLine(QPoint(20, 9), QPoint(15, 15))
-    else:
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawArc(13, 7, 8, 10, -45 * 16, 90 * 16)
-    painter.end()
-    return QIcon(pix)
+
+    def _draw(p: QPainter) -> None:
+        p.drawPolygon([QPoint(6, 10), QPoint(9, 10), QPoint(13, 6), QPoint(13, 18), QPoint(9, 14), QPoint(6, 14)])
+        if muted:
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawLine(QPoint(15, 9), QPoint(20, 15))
+            p.drawLine(QPoint(20, 9), QPoint(15, 15))
+        else:
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawArc(13, 7, 8, 10, -45 * 16, 90 * 16)
+
+    return _render_icon(icon_color, 1.8, _draw, brush=icon_color)
 
 
 def _make_folder_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
@@ -2102,44 +1406,32 @@ def _make_folder_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
     Returns:
         QIcon: 文件夹图标。
     """
-    pix = QPixmap(24, 24)
-    pix.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pix)
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor(color), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.drawRoundedRect(QRectF(4, 8, 16, 11), 2.0, 2.0)
-    painter.drawPolyline([QPoint(5, 8), QPoint(9, 5), QPoint(13, 5), QPoint(15, 8)])
-    painter.end()
-    return QIcon(pix)
+
+    def _draw(p: QPainter) -> None:
+        p.drawRoundedRect(QRectF(4, 8, 16, 11), 2.0, 2.0)
+        p.drawPolyline([QPoint(5, 8), QPoint(9, 5), QPoint(13, 5), QPoint(15, 8)])
+
+    return _render_icon(color, 1.6, _draw)
 
 
 def _make_heart_icon(*, filled: bool, color: QColor | str = "#f4f4f4") -> QIcon:
     """创建喜欢图标（空心/实心）。"""
-    pix = QPixmap(24, 24)
-    pix.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pix)
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-
     pen_color = QColor("#c94141") if filled else QColor(color)
     fill_color = QColor("#e24b4b") if filled else QColor(0, 0, 0, 0)
-    pen = QPen(pen_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.setBrush(fill_color)
 
-    path = QPainterPath()
-    path.moveTo(12.0, 19.4)
-    path.cubicTo(10.7, 18.1, 6.2, 14.3, 4.7, 11.6)
-    path.cubicTo(3.2, 8.9, 4.2, 5.6, 7.0, 4.7)
-    path.cubicTo(8.9, 4.1, 10.8, 4.8, 12.0, 6.3)
-    path.cubicTo(13.2, 4.8, 15.1, 4.1, 17.0, 4.7)
-    path.cubicTo(19.8, 5.6, 20.8, 8.9, 19.3, 11.6)
-    path.cubicTo(17.8, 14.3, 13.3, 18.1, 12.0, 19.4)
-    path.closeSubpath()
-    painter.drawPath(path)
-    painter.end()
-    return QIcon(pix)
+    def _draw(p: QPainter) -> None:
+        path = QPainterPath()
+        path.moveTo(12.0, 19.4)
+        path.cubicTo(10.7, 18.1, 6.2, 14.3, 4.7, 11.6)
+        path.cubicTo(3.2, 8.9, 4.2, 5.6, 7.0, 4.7)
+        path.cubicTo(8.9, 4.1, 10.8, 4.8, 12.0, 6.3)
+        path.cubicTo(13.2, 4.8, 15.1, 4.1, 17.0, 4.7)
+        path.cubicTo(19.8, 5.6, 20.8, 8.9, 19.3, 11.6)
+        path.cubicTo(17.8, 14.3, 13.3, 18.1, 12.0, 19.4)
+        path.closeSubpath()
+        p.drawPath(path)
+
+    return _render_icon(pen_color, 1.8, _draw, brush=fill_color)
 
 
 def _make_rich_title_icon(kind: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
@@ -2152,32 +1444,24 @@ def _make_rich_title_icon(kind: str, *, color: QColor | str = "#f4f4f4") -> QIco
     Returns:
         QIcon: 标题栏图标。
     """
-    pix = QPixmap(24, 24)
-    pix.fill(Qt.GlobalColor.transparent)
 
-    painter = QPainter(pix)
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor(color), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
+    def _draw(p: QPainter) -> None:
+        k = (kind or "").strip().lower()
+        if k == "min":
+            # 80% of previous visual length
+            p.drawLine(QPoint(8, 16), QPoint(16, 16))
+        elif k == "restore":
+            p.drawRect(QRectF(7.2, 8.2, 9.2, 9.2))
+            p.drawRect(QRectF(9.8, 5.8, 9.2, 9.2))
+        elif k == "close":
+            # 150% visual size
+            p.drawLine(QPoint(6, 6), QPoint(18, 18))
+            p.drawLine(QPoint(18, 6), QPoint(6, 18))
+        else:
+            # 160% visual size for maximize square
+            p.drawRect(QRectF(6.4, 6.4, 11.2, 11.2))
 
-    k = (kind or "").strip().lower()
-    if k == "min":
-        # 80% of previous visual length
-        painter.drawLine(QPoint(8, 16), QPoint(16, 16))
-    elif k == "restore":
-        painter.drawRect(QRectF(7.2, 8.2, 9.2, 9.2))
-        painter.drawRect(QRectF(9.8, 5.8, 9.2, 9.2))
-    elif k == "close":
-        # 150% visual size
-        painter.drawLine(QPoint(6, 6), QPoint(18, 18))
-        painter.drawLine(QPoint(18, 6), QPoint(6, 18))
-    else:
-        # 160% visual size for maximize square
-        painter.drawRect(QRectF(6.4, 6.4, 11.2, 11.2))
-
-    painter.end()
-    return QIcon(pix)
+    return _render_icon(color, 1.8, _draw)
 
 
 def _make_moon_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
@@ -2189,19 +1473,13 @@ def _make_moon_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
     Returns:
         QIcon: 月亮图标。
     """
-    pix = QPixmap(24, 24)
-    pix.fill(Qt.GlobalColor.transparent)
 
-    painter = QPainter(pix)
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor(color), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    # Crescent arc pair (simple curved moon)
-    painter.drawArc(5, 4, 13, 16, 65 * 16, 230 * 16)
-    painter.drawArc(9, 5, 10, 14, 110 * 16, 190 * 16)
-    painter.end()
-    return QIcon(pix)
+    def _draw(p: QPainter) -> None:
+        # Crescent arc pair (simple curved moon)
+        p.drawArc(5, 4, 13, 16, 65 * 16, 230 * 16)
+        p.drawArc(9, 5, 10, 14, 110 * 16, 190 * 16)
+
+    return _render_icon(color, 1.8, _draw)
 
 
 def _make_sun_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
@@ -2213,28 +1491,22 @@ def _make_sun_icon(*, color: QColor | str = "#f4f4f4") -> QIcon:
     Returns:
         QIcon: 太阳图标。
     """
-    pix = QPixmap(24, 24)
-    pix.fill(Qt.GlobalColor.transparent)
 
-    painter = QPainter(pix)
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor(color), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.drawEllipse(QRectF(8, 8, 8, 8))
-    for x1, y1, x2, y2 in (
-        (12, 2.5, 12, 5.2),
-        (12, 18.8, 12, 21.5),
-        (2.5, 12, 5.2, 12),
-        (18.8, 12, 21.5, 12),
-        (5.1, 5.1, 6.9, 6.9),
-        (17.1, 17.1, 18.9, 18.9),
-        (5.1, 18.9, 6.9, 17.1),
-        (17.1, 6.9, 18.9, 5.1),
-    ):
-        painter.drawLine(QPoint(int(round(x1)), int(round(y1))), QPoint(int(round(x2)), int(round(y2))))
-    painter.end()
-    return QIcon(pix)
+    def _draw(p: QPainter) -> None:
+        p.drawEllipse(QRectF(8, 8, 8, 8))
+        for x1, y1, x2, y2 in (
+            (12, 2.5, 12, 5.2),
+            (12, 18.8, 12, 21.5),
+            (2.5, 12, 5.2, 12),
+            (18.8, 12, 21.5, 12),
+            (5.1, 5.1, 6.9, 6.9),
+            (17.1, 17.1, 18.9, 18.9),
+            (5.1, 18.9, 6.9, 17.1),
+            (17.1, 6.9, 18.9, 5.1),
+        ):
+            p.drawLine(QPoint(int(round(x1)), int(round(y1))), QPoint(int(round(x2)), int(round(y2))))
+
+    return _render_icon(color, 1.8, _draw)
 
 
 def _make_sidebar_toggle_icon(*, collapsed: bool, color: QColor | str = "#f4f4f4") -> QIcon:
@@ -2247,20 +1519,16 @@ def _make_sidebar_toggle_icon(*, collapsed: bool, color: QColor | str = "#f4f4f4
     Returns:
         QIcon: 侧边栏切换图标。
     """
-    pix = QPixmap(24, 24)
-    pix.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pix)
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor(color), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    # Show next action direction:
-    # expanded -> ">" (collapse), collapsed -> "<" (expand)
-    if collapsed:
-        painter.drawPolyline([QPoint(15, 7), QPoint(9, 12), QPoint(15, 17)])
-    else:
-        painter.drawPolyline([QPoint(9, 7), QPoint(15, 12), QPoint(9, 17)])
-    painter.end()
-    return QIcon(pix)
+
+    def _draw(p: QPainter) -> None:
+        # Show next action direction:
+        # expanded -> ">" (collapse), collapsed -> "<" (expand)
+        if collapsed:
+            p.drawPolyline([QPoint(15, 7), QPoint(9, 12), QPoint(15, 17)])
+        else:
+            p.drawPolyline([QPoint(9, 7), QPoint(15, 12), QPoint(9, 17)])
+
+    return _render_icon(color, 2.0, _draw)
 
 
 def _make_lock_icon(locked: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
@@ -2276,42 +1544,37 @@ def _make_lock_icon(locked: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
     Returns:
         QIcon: 锁头图标。
     """
-    pix = QPixmap(24, 24)
-    pix.fill(Qt.GlobalColor.transparent)
-
-    painter = QPainter(pix)
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
     icon_color = QColor("#81e98b") if locked else QColor(color)
-    pen = QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
 
-    # 锁体（圆角矩形）
-    painter.drawRoundedRect(QRectF(6.0, 11.0, 12.0, 8.5), 2.5, 2.5)
+    def _draw(p: QPainter) -> None:
+        # 锁体（圆角矩形）
+        p.drawRoundedRect(QRectF(6.0, 11.0, 12.0, 8.5), 2.5, 2.5)
 
-    # 锁扣（U 形弧）：拉长弧线，两端正好嵌在锁体顶部
-    shackle = QRectF(7.5, 5.0, 9.0, 12.0)
-    if locked:
-        # 闭合：上半弧形成穹顶
-        painter.drawArc(shackle, 0, 180 * 16)
-        # 锁孔（圆点 + 短竖线）强化"已锁"语义
-        painter.setBrush(icon_color)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(QRectF(10.9, 13.0, 2.2, 2.2))
-        painter.setPen(pen)
-        painter.drawLine(12.0, 15.0, 12.0, 17.0)
-        painter.setBrush(QColor(0, 0, 0, 0))
-    else:
-        # 张开：以左端为轴抬起 28°，右臂轻微抬起，呈现"已开锁"姿态
-        pivot = shackle.bottomLeft()
-        painter.save()
-        painter.translate(pivot.x(), pivot.y())
-        painter.rotate(-28)
-        painter.translate(-pivot.x(), -pivot.y())
-        painter.drawArc(shackle, 0, 180 * 16)
-        painter.restore()
+        # 锁扣（U 形弧）：拉长弧线，两端正好嵌在锁体顶部
+        shackle = QRectF(7.5, 5.0, 9.0, 12.0)
+        if locked:
+            # 闭合：上半弧形成穹顶
+            p.drawArc(shackle, 0, 180 * 16)
+            # 锁孔（圆点 + 短竖线）强化"已锁"语义
+            p.setBrush(icon_color)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(QRectF(10.9, 13.0, 2.2, 2.2))
+            p.setPen(
+                QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            )
+            p.drawLine(12.0, 15.0, 12.0, 17.0)
+            p.setBrush(QColor(0, 0, 0, 0))
+        else:
+            # 张开：以左端为轴抬起 28°，右臂轻微抬起，呈现"已开锁"姿态
+            pivot = shackle.bottomLeft()
+            p.save()
+            p.translate(pivot.x(), pivot.y())
+            p.rotate(-28)
+            p.translate(-pivot.x(), -pivot.y())
+            p.drawArc(shackle, 0, 180 * 16)
+            p.restore()
 
-    painter.end()
-    return QIcon(pix)
+    return _render_icon(icon_color, 1.8, _draw)
 
 
 def _make_pin_icon(pinned: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
@@ -2327,33 +1590,28 @@ def _make_pin_icon(pinned: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
     Returns:
         QIcon: 图钉图标。
     """
-    pix = QPixmap(24, 24)
-    pix.fill(Qt.GlobalColor.transparent)
-
-    painter = QPainter(pix)
-    painter.setRenderHints(QPainter.RenderHint.Antialiasing)
     icon_color = QColor("#81e98b") if pinned else QColor(color)
-    pen = QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
 
-    # 图钉头部（扁椭圆 thumb pad，实心）
-    painter.setBrush(icon_color)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.drawEllipse(QRectF(5.5, 2.5, 13.0, 5.5))  # 宽 13、高 5.5，明显扁平
+    def _draw(p: QPainter) -> None:
+        # 图钉头部（扁椭圆 thumb pad，实心）
+        p.setBrush(icon_color)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(QRectF(5.5, 2.5, 13.0, 5.5))  # 宽 13、高 5.5，明显扁平
 
-    # 针杆（尖锐三角，向下汇聚到一点）
-    painter.setPen(pen)
-    painter.setBrush(QColor(0, 0, 0, 0))
-    needle = QPainterPath()
-    needle.moveTo(9.8, 7.8)
-    needle.lineTo(14.2, 7.8)
-    needle.lineTo(12.0, 19.5)
-    needle.closeSubpath()
-    painter.drawPath(needle)
+        # 针杆（尖锐三角，向下汇聚到一点）
+        p.setPen(
+            QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+        )
+        p.setBrush(QColor(0, 0, 0, 0))
+        needle = QPainterPath()
+        needle.moveTo(9.8, 7.8)
+        needle.lineTo(14.2, 7.8)
+        needle.lineTo(12.0, 19.5)
+        needle.closeSubpath()
+        p.drawPath(needle)
 
-    if pinned:
-        # 已固定：针尖下方一道短横线，表示"已钉入"表面
-        painter.drawLine(8.0, 20.5, 16.0, 20.5)
+        if pinned:
+            # 已固定：针尖下方一道短横线，表示"已钉入"表面
+            p.drawLine(8.0, 20.5, 16.0, 20.5)
 
-    painter.end()
-    return QIcon(pix)
+    return _render_icon(icon_color, 1.8, _draw)

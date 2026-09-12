@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 from app.models.entities import Track
 from app.services.library_service import ALL_SONGS_ID, FAVORITES_ID
 from app.services.player_service import PlayMode
+from app.ui.file_types import AUDIO_EXTENSIONS, AUDIO_FILE_FILTER
 from app.ui.main_window_helpers import (
     MultiHintStatusBar,
     TrackItemDelegate,
@@ -132,9 +133,12 @@ class MainWindowPlaybackMixin:
             self.statusBar().showMessage(f"保存统计失败：{exc}", 3500)
 
     def _export_stats(self) -> None:
-        """导出统计数据为 MuseArc 兼容格式。"""
-        import hashlib
-        import json
+        """导出统计数据为 MuseArc 兼容格式。
+
+        UI 流程：选路径 → 调 `PlaybackStatsService.export_to_file` → 状态栏提示。
+        业务逻辑（JSON 结构、SHA256、写盘）由服务层负责。
+        """
+        from pathlib import Path
 
         from PySide6.QtWidgets import QFileDialog
 
@@ -144,8 +148,7 @@ class MainWindowPlaybackMixin:
             self.statusBar().showMessage("服务未就绪，无法导出", 2500)
             return
 
-        entries = stats_svc._entries
-        if not entries:
+        if not stats_svc.has_entries:
             self.statusBar().showMessage("没有统计数据可导出", 2500)
             return
 
@@ -159,42 +162,16 @@ class MainWindowPlaybackMixin:
             return
 
         try:
-            tracks_list = []
-            for track_id, item in entries.items():
-                track = library.tracks.get(track_id)
-                entry = {
-                    "track_id": f"trk_{track_id}" if not track_id.startswith("trk_") else track_id,
-                    "stats": {
-                        "play_count": max(0, int(item.play_count)),
-                        "manual_play_count": max(0, int(item.active_play_count)),
-                        "play_seconds": max(0, int(item.played_seconds_total)),
-                        "early_skip_count": max(0, int(item.early_skip_count)),
-                    },
-                }
-                if track:
-                    if track.source_sha256:
-                        entry["source_sha256"] = track.source_sha256
-                    if track.path:
-                        entry["storage_relpath"] = str(track.path)
-                tracks_list.append(entry)
-
-            content_hash = hashlib.sha256(
-                json.dumps(tracks_list, sort_keys=True, ensure_ascii=False).encode("utf-8")
-            ).hexdigest()[:16]
-
-            payload = {
-                "schema": "musearc_playlist_export_v1",
-                "playlist_hash": f"museplayer_stats_{content_hash}",
-                "playlist_name": "MusePlayer 播放统计",
-                "tracks": tracks_list,
-            }
-
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
-
-            self.statusBar().showMessage(f"已导出 {len(tracks_list)} 首歌曲的统计数据", 3000)
+            summary = stats_svc.export_to_file(Path(path), library=library)
         except Exception as exc:
             self.statusBar().showMessage(f"导出失败：{exc}", 3500)
+            return
+
+        track_count = summary.get("track_count", 0)
+        if track_count <= 0:
+            self.statusBar().showMessage("没有统计数据可导出", 2500)
+        else:
+            self.statusBar().showMessage(f"已导出 {track_count} 首歌曲的统计数据", 3000)
 
     def _new_icon_button(self, object_name: str) -> QToolButton:
         """创建新的图标按钮工具。
@@ -284,7 +261,7 @@ class MainWindowPlaybackMixin:
         for idx, track in enumerate(tracks):
             text = f"{track.title}  -  {track.artist}"
             item = QListWidgetItem(text)
-            item.setData(0x0100, track.id)
+            item.setData(Qt.ItemDataRole.UserRole, track.id)
             item.setSizeHint(QSize(0, self._track_item_height_for_text(text)))
             self.track_list.addItem(item)
             if track.id == current_id:
@@ -453,6 +430,65 @@ class MainWindowPlaybackMixin:
         extra_files = self.controller.get_current_lyrics_extra_files()
         self._load_lyrics(raw, main_filename=filename, extra_files=extra_files)
 
+    def _import_folder_as_playlist(self, folder: Path) -> None:
+        audio_files: list[Path] = []
+        for f in sorted(folder.rglob("*")):
+            if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS:
+                audio_files.append(f)
+        if not audio_files:
+            self.statusBar().showMessage(f"文件夹中未找到音频文件: {folder.name}", 3000)
+            return
+        playlist = self.controller.library_service.create_playlist(folder.name)
+        track_ids: list[str] = []
+        for af in audio_files:
+            try:
+                track = self.controller.library_service.import_file(af, playlist_id=playlist.id)
+                track_ids.append(track.id)
+            except Exception:
+                pass
+        self.player.queue_changed.emit()
+        count = len(track_ids)
+        self.statusBar().showMessage(f"已创建歌单「{folder.name}」，导入 {count} 首歌曲", 3000)
+
+    def _attach_lyrics_to_current_track(self, lyrics_path: Path) -> None:
+        """
+        将歌词文件附加到当前播放的曲目。
+
+        参数:
+            lyrics_path (Path): 歌词文件的路径。
+
+        返回:
+            None
+        """
+        # 获取当前播放的曲目
+        track = self.player.current_track()
+        # 如果没有当前曲目，则直接返回
+        if track is None:
+            return
+        # 获取主歌词路径，处理为字符串并去除空白
+        main_lyrics = str(track.source_lyrics_path or "").strip()
+        # 如果主歌词路径为空，则设置为新路径并显示关联消息
+        if not main_lyrics:
+            track.source_lyrics_path = str(lyrics_path)
+            self.statusBar().showMessage(f"歌词已关联: {lyrics_path.name}", 3000)
+        else:
+            # 获取额外歌词路径属性，如果不存在则默认空字符串，并处理为列表
+            existing = str(getattr(track, "extra_lyrics_paths", "") or "").strip()
+            existing_list = [p for p in existing.split("|") if p.strip()] if existing else []
+            # 将新歌词路径转换为字符串
+            new_path = str(lyrics_path)
+            # 如果新路径不在现有列表中且不等于主歌词，则添加到列表
+            if new_path not in existing_list and new_path != main_lyrics:
+                existing_list.append(new_path)
+                track.extra_lyrics_paths = "|".join(existing_list)
+                self.statusBar().showMessage(f"额外歌词已添加: {lyrics_path.name}", 3000)
+            else:
+                # 否则，显示歌词已关联消息
+                self.statusBar().showMessage("该歌词已关联", 3000)
+        # 保存库服务并重新加载当前歌词
+        self.controller.library_service.save()
+        self._reload_current_lyrics()
+
     def _load_lyrics(
         self, raw_lyrics: str, *, main_filename: str = "", extra_files: list[tuple[str, str]] | None = None
     ) -> None:
@@ -611,7 +647,7 @@ class MainWindowPlaybackMixin:
         compact_center = not has_cover and not has_lyrics
 
         # 如果存在媒体信息行组件，则根据是否有封面或歌词来决定其可见性
-        if hasattr(self, "info_media_row_widget"):
+        if self.info_media_row_widget is not None:
             self.info_media_row_widget.setVisible(has_cover or has_lyrics)
 
         # 根据是否启用紧凑居中布局，设置标签的对齐方式和上下间距策略
@@ -965,7 +1001,7 @@ class MainWindowPlaybackMixin:
             self.statusBar().showMessage(f"已添加到「{pl_name}」", 2200)
 
     def _refresh_favorite_button(self, track_id: str | None) -> None:
-        if not hasattr(self, "favorite_btn"):
+        if self.favorite_btn is None:
             return
         if not track_id:
             self.favorite_btn.setEnabled(False)
@@ -1026,7 +1062,7 @@ class MainWindowPlaybackMixin:
             None
         """
         # 检查主题按钮是否已经被创建，若不存在则直接返回
-        if not hasattr(self, "theme_btn"):
+        if self.theme_btn is None:
             return
         # 获取当前主题对应的图标颜色
         color = self._control_icon_color()
@@ -1066,7 +1102,7 @@ class MainWindowPlaybackMixin:
             None: 该方法不返回任何值，直接在界面更新图标。
         """
         # 检查播放按钮是否存在，如果不存在则直接返回，避免后续操作出错
-        if not hasattr(self, "play_btn"):
+        if self.play_btn is None:
             return
         # 获取当前控制图标颜色，确保所有图标使用统一颜色方案
         color = self._control_icon_color()
@@ -1131,7 +1167,7 @@ class MainWindowPlaybackMixin:
         if (
             self.player.mode == PlayMode.RANDOM
             and str(getattr(self.controller.settings, "random_display_order", "original")) == "random"
-            and getattr(self, "_last_random_seed", None) is not None
+            and self._last_random_seed is not None
             and seed != self._last_random_seed
         ):
             self._reload_track_list()
@@ -1139,17 +1175,17 @@ class MainWindowPlaybackMixin:
         self._last_random_seed = seed
 
     def _refresh_random_state_hint(self) -> None:
-        if not hasattr(self, "random_state_label"):
+        if self.random_state_label is None:
             return
         if self.player.mode != PlayMode.RANDOM:
             self.random_state_label.setText("")
             self.random_state_label.hide()
-            if hasattr(self, "menu_hint_widget"):
+            if self.menu_hint_widget is not None:
                 self.menu_hint_widget.updateGeometry()
             return
         self.random_state_label.setText(f"seed:{self.player.random_seed} idx:{self.player.random_index}")
         self.random_state_label.show()
-        if hasattr(self, "menu_hint_widget"):
+        if self.menu_hint_widget is not None:
             self.menu_hint_widget.updateGeometry()
         self.menuBar().setCornerWidget(self.menu_hint_widget, Qt.Corner.TopRightCorner)
 
@@ -1157,13 +1193,13 @@ class MainWindowPlaybackMixin:
         title = (self._current_track_title or "").strip()
         if not title or title == "未选择歌曲":
             self.setWindowTitle("MusePlayer")
-            if hasattr(self, "rich_title_label"):
+            if self.rich_title_label is not None:
                 self.rich_title_label.setText("MusePlayer")
             return
         artist = (self._current_track_artist or "").strip() or "未知歌手"
         title_text = f"{title} - {artist}"
         self.setWindowTitle(f"{title_text} - MusePlayer")
-        if hasattr(self, "rich_title_label"):
+        if self.rich_title_label is not None:
             self.rich_title_label.setText(title_text)
 
     def _maybe_show_next_track_preview(self, position: float, duration: float) -> None:
@@ -1265,69 +1301,6 @@ class MainWindowPlaybackMixin:
 
         # 重新定位数值标签（可能因为文本长度变化需要调整位置）
         self._reposition_volume_value_label()
-
-    def _on_opacity_changed(self, value: int) -> None:
-        """
-        处理窗口透明度变化事件。
-
-        根据输入的透明度值（0-100的整数）计算最终透明度并更新窗口显示，
-        同时在状态栏显示当前透明度百分比信息。
-
-        参数:
-            value (int): 用户输入的透明度百分比值，范围0-100。
-
-        返回值:
-            None: 此方法不返回任何值。
-        """
-        # 计算alpha值：将百分比值转换为0.0-1.0的浮点数，并限制在0.35-1.0的安全范围内
-        alpha = max(0.35, min(1.0, int(value) / 100.0))
-        # 设置窗口透明度
-        self.setWindowOpacity(alpha)
-        # 在状态栏显示透明度百分比，四舍五入后取整，显示1500毫秒
-        self.statusBar().showMessage(f"窗口透明度：{int(round(alpha * 100))}%", 1500)
-
-    def _toggle_compact_lock(self) -> None:
-        """切换窗口紧凑模式下的锁定状态。
-
-        功能：翻转内部锁定标志，当锁定时清除拖拽偏移量，
-             刷新界面按钮，并通过状态栏提示用户当前锁定状态。
-        参数：无
-        返回值：无
-        """
-        # 将锁定状态取反：如果原来是锁定则解锁，反之亦然
-        self._compact_locked = not self._compact_locked
-
-        # 如果当前为锁定状态，则清除拖拽偏移量（因为锁定后不应允许拖动）
-        if self._compact_locked:
-            self._drag_offset = None
-
-        # 根据新的锁定状态刷新紧凑模式顶部的控制按钮
-        self._refresh_compact_top_buttons()
-
-        # 在状态栏显示当前状态消息，持续2000毫秒
-        # 根据锁定状态选择对应的消息文本
-        self.statusBar().showMessage("窗口位置已锁定" if self._compact_locked else "窗口位置已解锁", 2000)
-
-    def _toggle_always_on_top(self) -> None:
-        """切换当前窗口的置顶状态。
-
-        此方法会反转内部的置顶标志，更新窗口属性以使其置顶或取消置顶，
-        同时同步更新界面元素（如按钮）的状态，并在状态栏给出提示。
-
-        Args:
-            无。
-
-        Returns:
-            None。
-        """
-        # 切换置顶状态的标志变量
-        self._always_on_top = not self._always_on_top
-        # 刷新窗口标志以应用置顶设置
-        self._refresh_window_flags()
-        # 刷新顶部按钮的视觉状态，以反映当前置顶状态
-        self._refresh_compact_top_buttons()
-        # 在状态栏显示操作反馈消息，持续2秒
-        self.statusBar().showMessage("已开启窗口置顶" if self._always_on_top else "已关闭窗口置顶", 2000)
 
     def _seek_by_seconds(self, delta: float) -> None:
         """根据给定的秒数调整播放进度。
@@ -1464,7 +1437,7 @@ class MainWindowPlaybackMixin:
         """
         try:
             # 尝试从项数据中获取轨道ID和显示文本
-            track_id = item.data(0x0100)
+            track_id = item.data(Qt.ItemDataRole.UserRole)
             display_text = self._track_text_of_item(item)
         except RuntimeError:
             # 如果发生RuntimeError，则直接返回
@@ -1558,8 +1531,7 @@ class MainWindowPlaybackMixin:
         返回值：
         None: 此方法不返回任何值。
         """
-        if hasattr(self, "_bind_shortcuts"):
-            self._bind_shortcuts()
+        self._bind_shortcuts()
         # 设置单曲循环模式，将settings中的属性转换为布尔值，并启用或禁用
         self.player.set_single_loop_mode_enabled(bool(getattr(settings, "enable_single_loop_mode", True)))
         # 设置播放列表循环模式，将settings中的属性转换为布尔值，并启用或禁用
@@ -1575,7 +1547,7 @@ class MainWindowPlaybackMixin:
         # 判断播放模式是否发生变化，以此决定是否需要重新加载曲目
         need_reload = old_mode != new_mode
         # 检查是否设置了跳过下一次设置重新加载的标志（用于避免某些情况下的重复加载）
-        if getattr(self, "_skip_next_settings_reload", False):
+        if self._skip_next_settings_reload:
             # 如果设置了跳过标志，则重置该标志，本次不执行后续的重新加载逻辑
             self._skip_next_settings_reload = False
         else:
@@ -1695,7 +1667,7 @@ class MainWindowPlaybackMixin:
             self,
             "播放文件",
             "",
-            "音频文件 (*.mp3 *.flac *.wav *.m4a *.aac *.ogg *.opus *.wma)",
+            AUDIO_FILE_FILTER,
         )
         # 如果没有选择文件，直接返回
         if not file_path:
@@ -1758,13 +1730,17 @@ class MainWindowPlaybackMixin:
             None（无返回值）。
         """
         self.statusBar().showMessage("打开设置", 1500)  # 在状态栏显示“打开设置”消息，持续1500毫秒
-        dlg = SettingsDialog(self.controller.settings, self)  # 创建设置对话框实例，传入当前设置和父窗口
+        dlg = SettingsDialog(
+            self.controller.settings,
+            self,
+            list_output_devices_fn=self.controller.list_output_devices,
+        )  # 创建设置对话框实例，传入当前设置和父窗口
         if dlg.exec() != dlg.DialogCode.Accepted:  # 如果对话框未被接受（例如用户取消）
             return  # 直接返回，不执行后续操作
 
         new_settings = dlg.output_settings()  # 从对话框获取新的设置
         self.controller.update_settings(new_settings)  # 更新控制器中的设置
-        if hasattr(self, "action_copy_song_info"):
+        if self.action_copy_song_info is not None:
             self.action_copy_song_info.setEnabled(bool(new_settings.copy_song_info_enabled))
         if (
             new_settings.logging_enabled and self.controller.log_file_path is not None

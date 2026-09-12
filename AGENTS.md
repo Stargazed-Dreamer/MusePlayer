@@ -38,7 +38,7 @@ start.bat        # Windows
 
 - **绝不直接操作 core/ 模块**：所有播放操作必须通过 `PlayerService` 进行，`PyAVPlayerCore` 是线程安全的底层内核，UI 层绝不直接调用
 - **sounddevice 回调中绝不阻塞**：音频输出回调在实时线程中运行，任何阻塞操作会导致音频卡顿
-- **窗口读取阈值 6.2 秒**：`LazyDecodeMixin` 的窗口模式以 6.2 秒为一块按需解码并后台预读下一块，整曲持续滑动窗口（并不存在"超过阈值后提升为完整读取"）。`PlayerService` 的 `full` 策略走 `PyAVPlayerCore` 的流式解码路径。修改窗口阈值需同步更新 `PlayerService` 和 `LazyDecodeMixin`
+- **窗口读取阈值 6.2 秒**：`LazyDecodeMixin` 的窗口模式以 6.2 秒为一块按需解码并后台预读下一块，整曲持续滑动窗口（并不存在"超过阈值后提升为完整读取"）。`PlayerService` 的 `full` 策略走 `PyAVPlayerCore` 的流式解码路径。窗口阈值由 `PlayerService._LAZY_WINDOW_SEC` 单一常量定义；`LazyDecodeMixin` 仅通过 `self._LAZY_WINDOW_SEC` 继承该值（无独立常量），修改时只改 `PlayerService` 这一处即可，其余读取点（`player_service.py` 窗口加载分支、`lazy_decode_mixin.py` 的 `_reload_lazy_window` 与 `_schedule_lazy_prefetch`）自动联动。预读重叠 `_LAZY_PREFETCH_OVERLAP_SEC` 必须 ≥ 切换提前量 `_LAZY_SWITCH_AHEAD_SEC`，否则窗口边界会出现前向跳音。
 
 ### Qt 线程安全
 

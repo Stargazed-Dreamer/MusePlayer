@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
-import pytest
 
 from app.models.entities import Playlist, SessionState, Settings, Track
 from app.models.library_store import LibraryStore
 from app.models.session_store import SessionStore
 from app.models.settings_store import SettingsStore
-
 
 # ============ LibraryStore ============
 

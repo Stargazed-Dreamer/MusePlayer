@@ -3,10 +3,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import pytest
-
 from app.models.entities import Playlist, SessionState, Settings, Track, new_id
-
 
 # ---- new_id ----
 

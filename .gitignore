@@ -5,6 +5,10 @@
 # 虚拟环境与构建产物
 .venv
 .build
+*.egg-info/
+
+# 本地 agent 工具状态（不入库）
+.workbuddy/
 
 # 工具缓存
 .ruff_cache/
@@ -15,6 +19,11 @@
 # 测试素材目录（音频文件、歌词等，不纳入版本控制）
 test*
 _library_test_*
+# pytest 测试套件不属素材，显式再包含（否则 tests/ 下新增测试文件会被上面的通配静默忽略）
+!tests/
+!tests/**
+# !tests/** 优先级高于顶部的 **/__pycache__/，此处重新屏蔽字节码缓存
+tests/**/__pycache__/
 
 # 日志文件
 *.log

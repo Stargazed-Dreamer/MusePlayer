@@ -56,8 +56,10 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
     random_state_changed = Signal(int, int)  # 随机播放状态变化：种子, 索引
     playback_rate_changed = Signal(float)  # 播放速率变化
     _LAZY_WINDOW_SEC = 6.2
-    # 保留少量重叠窗口，降低切块边界处的解码震荡。
-    _LAZY_PREFETCH_OVERLAP_SEC = 0.50
+    # 预读重叠：下一窗起点提前 switch_ahead + 0.01s 开始解码，
+    # 使切窗点（next_start - switch_ahead）处精确无缝且留有最小回放余量。
+    # 须满足 overlap >= _LAZY_SWITCH_AHEAD_SEC，否则切窗会前向跳音。
+    _LAZY_PREFETCH_OVERLAP_SEC = 0.13
     # 在窗口尾部提前切换，尽量避免“先停再重载”造成的听感卡顿。
     _LAZY_SWITCH_AHEAD_SEC = 0.12
     _GLOBAL_GAIN_BOOST = 1.35
@@ -407,8 +409,9 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             try:
                 self._core.pause()
                 self._core.unload()
-            except Exception:
-                pass
+            except Exception as exc:
+                # 切到空歌单时尽力清理上一曲，失败不阻断状态迁移
+                logger.warning("切换歌单时 pause/unload 失败: %s", exc)
             self._current_track_id = None
             self._loaded_track_id = None
             self._stats_last_track_id = None

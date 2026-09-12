@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from mutagen import File as MutagenFile
 
 from app.models.entities import Track, new_id
+
+logger = logging.getLogger("museplayer.metadata")
 
 
 class MetadataService:
@@ -176,8 +179,9 @@ class MetadataService:
                 uslt_list = tags.getall("USLT")
                 if uslt_list:
                     return str(getattr(uslt_list[0], "text", ""))
-            except Exception:
-                pass
+            except Exception as exc:
+                # ID3 USLT 访问失败时回退到 Vorbis/FLAC 标签
+                logger.debug("读取 ID3 USLT 歌词失败: %s", exc)
 
         # Vorbis/FLAC
         for key in ("lyrics", "LYRICS", "unsyncedlyrics"):
@@ -216,16 +220,18 @@ class MetadataService:
                 apic = tags.getall("APIC")
                 if apic:
                     return bytes(apic[0].data)
-            except Exception:
-                pass
+            except Exception as exc:
+                # APIC 访问失败时回退到 FLAC/MP4 封面
+                logger.debug("读取 ID3 APIC 封面失败: %s", exc)
 
         # FLAC pictures
         pictures = getattr(audio, "pictures", None)
         if pictures:
             try:
                 return bytes(pictures[0].data)
-            except Exception:
-                pass
+            except Exception as exc:
+                # FLAC picture 转换失败时回退到 MP4 covr
+                logger.debug("读取 FLAC 封面失败: %s", exc)
 
         # MP4 covr
         try:
@@ -233,8 +239,9 @@ class MetadataService:
             if covr:
                 first = covr[0]
                 return bytes(first)
-        except Exception:
-            pass
+        except Exception as exc:
+            # MP4 covr 访问失败则视为无嵌入封面
+            logger.debug("读取 MP4 covr 封面失败: %s", exc)
 
         return None
 
@@ -252,7 +259,9 @@ class MetadataService:
         for key in candidates:
             try:
                 value = tags.get(key)
-            except Exception:
+            except Exception as exc:
+                # 逐键回退，高频预期路径用 debug 避免日志噪音
+                logger.debug("读取标签 %s 失败: %s", key, exc)
                 continue
             if not value:
                 continue

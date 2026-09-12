@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -39,6 +40,7 @@ from PySide6.QtWidgets import (
 
 from app.services.app_controller import AppController
 from app.services.library_service import ALL_SONGS_ID, FAVORITES_ID
+from app.ui.file_types import AUDIO_FILE_FILTER
 
 
 class PlaylistDialog(QDialog):
@@ -177,7 +179,7 @@ class PlaylistDialog(QDialog):
                 label = f"{label}  [当前]"
                 active_row = idx
             item = QListWidgetItem(label)
-            item.setData(0x0100, playlist.id)
+            item.setData(Qt.ItemDataRole.UserRole, playlist.id)
             self.list_widget.addItem(item)
         # 默认选中当前活跃的歌单，避免用户打开对话框后点击按钮无反馈
         if active_row >= 0:
@@ -192,7 +194,7 @@ class PlaylistDialog(QDialog):
         item = self.list_widget.currentItem()
         if item is None:
             return None
-        return item.data(0x0100)
+        return item.data(Qt.ItemDataRole.UserRole)
 
     def _create_playlist(self) -> None:
         """创建新歌单。
@@ -363,7 +365,7 @@ class PlaylistDialog(QDialog):
             self,
             "选择歌曲文件",
             "",
-            "音频文件 (*.mp3 *.flac *.wav *.m4a *.aac *.ogg *.opus *.wma)",
+            AUDIO_FILE_FILTER,
         )
         # 如果用户没有选择任何文件，则直接返回，不执行导入
         if not file_paths:

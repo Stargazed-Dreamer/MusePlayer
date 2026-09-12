@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+import types
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,13 +10,23 @@ pytest.importorskip("PySide6")
 
 from app.services.app_controller import AppController  # noqa: E402
 
+# B9 注册表化后，dispatch_command 通过 _command_handlers 查表分发。
+# 以下 23 个命令名与 AppController._command_handlers 的键完全一致。
+_CMD_NAMES = [
+    "ping", "state", "play", "pause", "toggle", "seek", "set_volume",
+    "next", "previous", "set_mode", "import_folder", "import_playlist_file",
+    "import_playlist_data", "play_file", "load_playlist", "play_playlist",
+    "play_track", "create_playlist", "current_track", "current_playlist",
+    "get_playlist", "add_track_to_playlist", "remove_track_from_playlist",
+]
+
 
 @pytest.fixture
 def mock_controller():
     """构造一个 mock 控制器，绑定真实的 dispatch_command 逻辑。
 
     使用 MagicMock 模拟 AppController 的依赖属性，避免实例化需要 Qt 事件循环
-    与音频设备的真实控制器。
+    与音频设备的真实控制器。B9 注册表化后需额外绑定真实处理器方法到 mock。
     """
     ctrl = MagicMock()
     ctrl.logger = MagicMock()
@@ -39,6 +49,12 @@ def mock_controller():
     ctrl.player_service.previous_track.return_value = True
     ctrl.player_service.play_file.return_value = True
     ctrl.player_service.play_track.return_value = True
+
+    # 绑定真实的 _cmd_<name> 方法到 mock（dispatch_command 注册表分发需要）
+    ctrl._command_handlers = {
+        name: types.MethodType(getattr(AppController, f"_cmd_{name}"), ctrl)
+        for name in _CMD_NAMES
+    }
     return ctrl
 
 
@@ -231,7 +247,7 @@ def _make_qapp():
 
 
 def test_control_server_handle_line_invalid_json():
-    qapp = _make_qapp()
+    _make_qapp()
     from app.runtime.control_server import ControlServer
 
     dispatcher = MagicMock(return_value={"ok": True})
@@ -243,7 +259,7 @@ def test_control_server_handle_line_invalid_json():
 
 
 def test_control_server_handle_line_non_object_payload():
-    qapp = _make_qapp()
+    _make_qapp()
     from app.runtime.control_server import ControlServer
 
     dispatcher = MagicMock(return_value={"ok": True})
@@ -255,7 +271,7 @@ def test_control_server_handle_line_non_object_payload():
 
 
 def test_control_server_handle_line_dispatches_to_dispatcher():
-    qapp = _make_qapp()
+    _make_qapp()
     from app.runtime.control_server import ControlServer
 
     dispatcher = MagicMock(return_value={"ok": True, "result": "pong"})
@@ -266,7 +282,7 @@ def test_control_server_handle_line_dispatches_to_dispatcher():
 
 
 def test_control_server_handle_line_wraps_dict_result_without_ok():
-    qapp = _make_qapp()
+    _make_qapp()
     from app.runtime.control_server import ControlServer
 
     # dispatcher 返回不含 ok 的 dict，应被包装为 {"ok": True, "result": ...}
@@ -277,7 +293,7 @@ def test_control_server_handle_line_wraps_dict_result_without_ok():
 
 
 def test_control_server_handle_line_dispatcher_exception():
-    qapp = _make_qapp()
+    _make_qapp()
     from app.runtime.control_server import ControlServer
 
     dispatcher = MagicMock(side_effect=RuntimeError("boom"))

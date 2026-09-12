@@ -32,6 +32,22 @@ class AudioOutputBackend(ABC):
     def close(self) -> None:
         """Close and release output stream."""
 
+    @abstractmethod
+    def capture_stream(self) -> Any:
+        """Return an opaque handle to the current stream (None if no stream).
+
+        Paired with ``release_stream`` to let callers schedule a close that
+        targets exactly this stream, never a stream opened afterwards.
+        """
+
+    @abstractmethod
+    def release_stream(self, handle: Any) -> None:
+        """Close the captured stream handle only if it is still the current one.
+
+        If the backend already moved on to a newer stream, the handle has been
+        closed elsewhere and this call is a safe no-op.
+        """
+
 
 class NullOutputBackend(AudioOutputBackend):
     """No-op backend used when no audio device backend is available."""
@@ -52,6 +68,12 @@ class NullOutputBackend(AudioOutputBackend):
         return None
 
     def close(self) -> None:
+        return None
+
+    def capture_stream(self) -> Any:
+        return None
+
+    def release_stream(self, handle: Any) -> None:
         return None
 
 
@@ -143,15 +165,28 @@ class SoundDeviceOutputBackend(AudioOutputBackend):
             self._stream.stop()
 
     def close(self) -> None:
-        if self._stream is None:
+        """关闭当前流（若存在）。等价于 release_stream(capture_stream())。"""
+        self.release_stream(self._stream)
+
+    def capture_stream(self) -> Any:
+        """返回当前流的句柄（供 release_stream 精确关闭，不与后续新开的流混淆）。"""
+        return self._stream
+
+    def release_stream(self, handle: Any) -> None:
+        """仅当 handle 仍是当前流时将其停止并关闭。
+
+        若后端已经切换到更新的流（例如竞态窗口内发生了重新 open），
+        该 handle 已在别处被关闭或替换，此处安全跳过，绝不误杀新流。
+        """
+        if handle is None or self._stream is not handle:
             return
         try:
-            if self._stream.active:
-                self._stream.stop()
+            if handle.active:
+                handle.stop()
         except Exception:
             pass
         try:
-            self._stream.close()
+            handle.close()
         except Exception:
             pass
         finally:

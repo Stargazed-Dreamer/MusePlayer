@@ -60,7 +60,10 @@ from app.ui.shortcut_settings import (
     default_interface_shortcuts,
     merge_shortcuts,
 )
+from app.utils.logging_setup import get_logger
 from app.version import APP_VERSION
+
+logger = get_logger("ui")
 
 
 class NoWheelComboBox(QComboBox):
@@ -136,26 +139,6 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self._min_height_before_compact = self.minimumHeight()  # 进入简洁模式前的最小高度
         self._max_height_before_compact = self.maximumHeight()  # 进入简洁模式前的最大高度
 
-        self._dragging_progress = False
-        self._compact_mode = False
-        self._compact_locked = False
-        self._always_on_top = False
-        self._drag_offset: QPoint | None = None
-        self._resize_margin = 7
-        self._sidebar_collapsed = False
-        self._sidebar_was_collapsed_before_compact = False
-        self._sidebar_last_width = 530
-        self._sidebar_min_width = 234
-        self._sidebar_max_width = 936
-        self._last_window_width = 0
-        self._resize_adjusting_splitter = False
-        self._width_before_compact = 0
-        self._height_before_compact = 0
-        self._min_width_before_compact = self.minimumWidth()
-        self._max_width_before_compact = self.maximumWidth()
-        self._min_height_before_compact = self.minimumHeight()
-        self._max_height_before_compact = self.maximumHeight()
-
         # 播放模式相关状态
         self._mode_order: list[str] = []  # 播放模式循环顺序
         self._mode_titles = {  # 播放模式显示名称映射
@@ -210,6 +193,36 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self._geometry_before_snap: QRect | None = None  # 吸附前的窗口几何信息
         # UI组件引用
         self._top_stack_widget: QWidget | None = None  # 标题栏和菜单栏堆叠容器
+        # 以下控件在 _build_ui() / _build_menu() 中创建，此处先声明占位默认值，
+        # 避免 mixin 中的 hasattr/getattr 防御写法
+        self.rich_min_btn = None
+        self.rich_max_btn = None
+        self.rich_title_bar = None
+        self.rich_title_label = None
+        self.compact_top_bar = None
+        self.mute_btn = None
+        self.volume_value_label = None
+        self.sidebar_toggle_btn = None
+        self.track_list = None
+        self.lyrics_list = None
+        self.main_splitter = None
+        self.locate_current_btn = None
+        self.info_media_row_widget = None
+        self.favorite_btn = None
+        self.theme_btn = None
+        self.play_btn = None
+        self.random_state_label = None
+        self.menu_hint_widget = None
+        self.search_edit = None
+        self.title_label = None
+        self.artist_label = None
+        self.album_label = None
+        self.path_label = None
+        self.action_copy_song_info = None
+
+        # 其他状态属性（之前依赖 getattr/hasattr 防御）
+        self._last_random_seed: int | None = None
+        self._skip_next_settings_reload = False
 
         # 歌词自动滚动恢复定时器（用户手动滚动后延迟恢复自动滚动）
         self._lyrics_resume_timer = QTimer(self)
@@ -247,10 +260,12 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self._update_window_title()  # 更新窗口标题
         self._refresh_window_flags()  # 刷新窗口标志
         _t3 = _time.perf_counter()
-
-        print(
-            f"[MainWindow计时] build_ui: {_t1 - _t0:.3f}s | menu/signals: {_t2 - _t1:.3f}s | "
-            f"其余初始化: {_t3 - _t2:.3f}s | 总计: {_t3 - _t0:.3f}s"
+        logger.debug(
+            "MainWindow 构建耗时: build_ui=%.3fs menu/signals=%.3fs 其余初始化=%.3fs 总计=%.3fs",
+            _t1 - _t0,
+            _t2 - _t1,
+            _t3 - _t2,
+            _t3 - _t0,
         )
 
         # 延迟执行的初始化任务

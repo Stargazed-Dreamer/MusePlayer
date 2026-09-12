@@ -3,10 +3,7 @@ from __future__ import annotations
 import hashlib
 import time
 
-import pytest
-
 from app.services.random_order import DeterministicShuffle, ShuffleCursor
-
 
 # ---- ShuffleCursor ----
 
@@ -111,7 +108,7 @@ def test_make_order_matches_sha256_sort_key():
     seed = 777
 
     def expected_key(tid: str) -> str:
-        return hashlib.sha256(f"{seed}:{tid}".encode("utf-8")).hexdigest()
+        return hashlib.sha256(f"{seed}:{tid}".encode()).hexdigest()
 
     expected = sorted(ids, key=expected_key)
     assert DeterministicShuffle.make_order(ids, seed) == expected

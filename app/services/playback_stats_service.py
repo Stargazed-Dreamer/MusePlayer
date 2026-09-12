@@ -294,6 +294,73 @@ class PlaybackStatsService:
             item.updated_at = _now_ts()  # 更新条目的更新时间戳
             self._dirty = True  # 标记数据为已修改
 
+    @property
+    def has_entries(self) -> bool:
+        """是否存有统计数据。
+
+        UI 层用于在弹出导出对话框前预判是否值得操作。
+        """
+        return bool(self._entries)
+
+    def export_to_file(self, dest: Path, *, library: object | None = None) -> dict:
+        """导出统计数据为 MuseArc 兼容格式（业务逻辑）。
+
+        生成 schema=musearc_playlist_export_v1 的 JSON 文件，包含每首曲目的
+        播放次数/主动播放/秒数/早期跳过，以及可选的 source_sha256/storage_relpath
+        元数据（需传入 library 进行曲目查询）。
+
+        Args:
+            dest: 目标 JSON 文件路径
+            library: 可选的 LibraryService，用于查询曲目的 source_sha256/path 字段；
+                为 None 时跳过元数据补全（仅保留 stats 字段）。
+
+        Returns:
+            dict: 导出摘要 ``{"track_count": int, "path": str}``。
+            无条目时返回 ``{"track_count": 0, "path": ""}`` 且不写盘。
+        """
+        import hashlib
+
+        entries = self._entries
+        if not entries:
+            return {"track_count": 0, "path": ""}
+
+        tracks_list: list[dict] = []
+        for track_id, item in entries.items():
+            track = getattr(library, "tracks", {}).get(track_id) if library is not None else None
+            entry = {
+                "track_id": f"trk_{track_id}" if not track_id.startswith("trk_") else track_id,
+                "stats": {
+                    "play_count": max(0, int(item.play_count)),
+                    "manual_play_count": max(0, int(item.active_play_count)),
+                    "play_seconds": max(0, int(item.played_seconds_total)),
+                    "early_skip_count": max(0, int(item.early_skip_count)),
+                },
+            }
+            if track:
+                if track.source_sha256:
+                    entry["source_sha256"] = track.source_sha256
+                if track.path:
+                    entry["storage_relpath"] = str(track.path)
+            tracks_list.append(entry)
+
+        content_hash = hashlib.sha256(
+            json.dumps(tracks_list, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()[:16]
+
+        payload = {
+            "schema": "musearc_playlist_export_v1",
+            "playlist_hash": f"museplayer_stats_{content_hash}",
+            "playlist_name": "MusePlayer 播放统计",
+            "tracks": tracks_list,
+        }
+
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with open(dest, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+        return {"track_count": len(tracks_list), "path": str(dest)}
+
     def export_stats_for_track(self, track_id: str) -> dict[str, int] | None:
         """导出指定曲目的统计数据。
 

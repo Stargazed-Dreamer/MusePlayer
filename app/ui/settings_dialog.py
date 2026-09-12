@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -19,17 +21,24 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.entities import Settings
-from core.output import list_output_devices
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, settings: Settings, parent=None):
+    def __init__(
+        self,
+        settings: Settings,
+        parent=None,
+        *,
+        list_output_devices_fn: Callable[[], list] | None = None,
+    ):
         """
         初始化设置窗口。
 
         参数:
             settings (Settings): 一个Settings对象，用于管理设置。
             parent (QWidget, optional): 父窗口，默认为None。
+            list_output_devices_fn: 可选的输出设备枚举回调，由控制器注入以避免
+                UI 直接依赖 core 模块。为 None 时设备下拉框仅显示"跟随系统"一项。
 
         返回值:
             无
@@ -38,6 +47,7 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("设置")  # 设置窗口标题为"设置"
         self.resize(520, 560)  # 调整窗口大小为520x560像素
         self._settings = settings  # 存储传入的设置对象，供后续使用
+        self._list_output_devices_fn = list_output_devices_fn  # 注入的设备枚举回调
         self._build_ui()  # 调用方法构建用户界面
 
     def _build_ui(self) -> None:
@@ -169,7 +179,7 @@ class SettingsDialog(QDialog):
         self.output_device_combo = QComboBox()
         self.output_device_combo.addItem("跟随系统", "")
         current_device = str(getattr(self._settings, "output_device", "")).strip()
-        for dev_info in list_output_devices():
+        for dev_info in (self._list_output_devices_fn() if self._list_output_devices_fn else []):
             self.output_device_combo.addItem(dev_info["name"], dev_info["name"])
         dev_idx = self.output_device_combo.findData(current_device)
         self.output_device_combo.setCurrentIndex(0 if dev_idx < 0 else dev_idx)
