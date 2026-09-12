@@ -3,7 +3,7 @@
 从 `LibraryService` 拆出，组合持有 `LibraryService` 引用，只调用其公开状态与
 既有辅助方法（`_normalize_relpath` / `_normalize_playlist_name` /
 `_find_orphan_track_ids` / `_remove_track_globally` / `_normalize_playlist_tracks` /
-`save` 等）。原方法逻辑逐字搬移，仅将 `self.tracks` 等改为 `self._library.tracks`。
+`save` 等）。原方法逻辑逐字搬移，仅将 `self.tracks` 等改为 `self._library._tracks`。
 
 拆分动机：`LibraryService` 单类承载清理/导入/导出/搜索多职责，本模块专注
 "Muse 格式歌单的解析与导入"，便于独立测试与未来扩展（如新 schema 版本）。
@@ -73,6 +73,10 @@ class MusePlaylistImporter:
         """
         导入Muse歌单的有效载荷（payload）数据，并生成一个虚拟源文件路径。
 
+        payload 未携带 playlist_hash 时，以 payload 内容的 SHA1 作为有效哈希
+        参与查重与落库（source_playlist_hash），保证同一内容重复导入时复用
+        同一歌单而不是生成 _2、_3 等重复歌单。
+
         参数：
             payload (dict): 包含歌单数据的字典。
             source_hint (str): 来源提示，默认为"runtime_payload"。
@@ -91,9 +95,12 @@ class MusePlaylistImporter:
             raw = json.dumps(
                 payload, ensure_ascii=False, sort_keys=True
             )  # 将payload转换为JSON字符串，确保非ASCII字符保留，按键排序
-            hash_part = hashlib.sha1(raw.encode("utf-8")).hexdigest()[
-                :12
-            ]  # 计算JSON字符串的SHA1哈希，并取前12个十六进制字符
+            digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()  # 计算JSON字符串的SHA1哈希
+            hash_part = digest[:12]  # 取前12个十六进制字符
+            # 无显式哈希时以内容哈希作为有效哈希：落库到 source_playlist_hash，
+            # 使重复导入可按哈希命中既有歌单（否则查重证据在导入后被清空，必然重复建单）
+            playlist_hash = f"runtime-{digest}"
+            payload = {**payload, "playlist_hash": playlist_hash}  # 浅拷贝，不改动调用方数据
         hint_part = hashlib.sha1(str(source_hint or "runtime_payload").encode("utf-8")).hexdigest()[
             :8
         ]  # 基于source_hint计算SHA1哈希，取前8个字符作为提示部分
@@ -159,7 +166,7 @@ class MusePlaylistImporter:
             # 如果找不到匹配的现有歌单，则创建一个新的内部歌单对象
             playlist_id = self._generate_muse_playlist_id(playlist_hash=playlist_hash, source_file=source_file)
             playlist = Playlist(id=playlist_id, name=playlist_name, ordered=playlist_ordered)
-            library.playlists[playlist.id] = playlist
+            library._playlists[playlist.id] = playlist
         else:
             # 如果找到了现有歌单，则更新其名称和排序属性
             playlist.name = playlist_name
@@ -229,7 +236,7 @@ class MusePlaylistImporter:
                         album=album or "未知专辑",
                     )
                 # 将新创建的曲目注册到全局曲目库
-                library.tracks[track.id] = track
+                library._tracks[track.id] = track
 
             # 更新曲目元数据（优先使用导入数据中的字段）
             if title:
@@ -276,7 +283,7 @@ class MusePlaylistImporter:
         library.active_playlist_id = playlist.id
 
         # 将新歌单中的所有曲目同步到“全部歌曲”歌单中
-        all_songs = library.playlists[ALL_SONGS_ID]
+        all_songs = library._playlists[ALL_SONGS_ID]
         all_ids = set(all_songs.track_ids)
         for track_id in new_track_ids:
             if track_id not in all_ids:
@@ -347,8 +354,8 @@ class MusePlaylistImporter:
         idx = 2  # 从2开始编号，避免与无后缀的基础ID重复
 
         # 循环检查候选ID是否已存在于播放列表中
-        while candidate in self._library.playlists:
-            existing = self._library.playlists[candidate]
+        while candidate in self._library._playlists:
+            existing = self._library._playlists[candidate]
 
             # 判断已存在的播放列表是否与当前内容相同（通过哈希值或文件路径比较）
             same_hash = bool(playlist_hash) and existing.source_playlist_hash == playlist_hash
@@ -380,7 +387,7 @@ class MusePlaylistImporter:
         # 将路径对象转换为字符串，便于后续比较
         source_text = str(source_file)
         # 遍历所有现有的播放列表
-        for playlist in self._library.playlists.values():
+        for playlist in self._library._playlists.values():
             # 跳过全局的“所有歌曲”和“收藏”播放列表，它们是特殊的默认列表
             if playlist.id in {ALL_SONGS_ID, FAVORITES_ID}:
                 continue
@@ -432,14 +439,14 @@ class MusePlaylistImporter:
         # 第二优先级：通过source_track_id查找
         if source_track_id:
             # 遍历所有tracks，查找匹配的source_track_id
-            for track in library.tracks.values():
+            for track in library._tracks.values():
                 if track.source_track_id == source_track_id:
                     return track
 
         # 第三优先级：通过标准化后的相对路径查找
         if normalized_relpath:
             # 遍历所有tracks，比较标准化后的相对路径
-            for track in library.tracks.values():
+            for track in library._tracks.values():
                 if library._normalize_relpath(track.source_storage_relpath) == normalized_relpath:
                     return track
 

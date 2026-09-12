@@ -5,6 +5,23 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-13
+
+### 新增
+- `LibraryService` 封装收紧：曲目/歌单内部字典私有化，新增 `find_playlist` / `has_track` / `track_ids` 公开访问器，外部模块（控制器、播放服务、UI）不再直接触碰内部字典。
+- `PlayerService` 新增公开接口 `set_current_playlist_id`（会话恢复预览用的轻量歌单对准）与 `set_initial_track_for_playlist`（原私有方法转正），消除控制器对服务私有成员的直接写入。
+- 曲库服务特征测试 20 例、Muse 歌单导入路径测试 14 例、播放内核并发回归测试 8 例（测试基线 140 → 182）。
+
+### 修复
+- 音频内核：异步关流改为按调度时捕获的流句柄关闭，修复竞态窗口内误杀重开新流导致的"切歌后无声"；`load_streaming` 回退路径透传 `start_sec`，seek 重启流式解码增加换曲竞态守卫。
+- Muse 歌单导入：运行时导入无 `playlist_hash` 的 payload 时，以内容 SHA1 作为有效哈希参与查重，修复同一 payload 重复导入生成重复歌单（`_2`、`_3` 后缀）的问题。
+- `.gitignore`：`test*` 通配误伤 `tests/` 目录导致新增测试文件无法入库，已追加再包含规则；补充清理 `tests/` 此前从未被 lint 扫描到的存量告警。
+- 统计导出：曲目元数据查询改经 `get_track` 访问器，消除曲库私有化后 `getattr` 静默返回空导致元数据无声丢失的隐患。
+
+### 变更
+- 大规模可维护性重构：`LibraryService` 拆分出清理器 / Muse 导入器 / 导出器（公共 API 不变）；歌词解析下沉至 `lyrics_parser`（零 Qt 依赖）；统计导出下沉至 `PlaybackStatsService.export_to_file`；`dispatch_command` 由分支链改为命令注册表（23 个命令，响应结构不变）；UI 混入职责归位、防御性属性访问清零、图标绘制样板收敛；删除死代码与调试残留。
+- 文件夹导入 `import_folder` 两个近重复分支合并，语义不变（保留"根目录无文件不建歌单"行为）。
+
 ## [0.5.5] - 2026-08-06
 
 ### 新增

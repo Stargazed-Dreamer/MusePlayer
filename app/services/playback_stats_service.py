@@ -311,7 +311,8 @@ class PlaybackStatsService:
 
         Args:
             dest: 目标 JSON 文件路径
-            library: 可选的 LibraryService，用于查询曲目的 source_sha256/path 字段；
+            library: 可选的 LibraryService（需提供 get_track(track_id) 访问器），
+                用于查询曲目的 source_sha256/path 字段；
                 为 None 时跳过元数据补全（仅保留 stats 字段）。
 
         Returns:
@@ -326,7 +327,9 @@ class PlaybackStatsService:
 
         tracks_list: list[dict] = []
         for track_id, item in entries.items():
-            track = getattr(library, "tracks", {}).get(track_id) if library is not None else None
+            # 经由公开访问器查询曲目元数据（原先 getattr(library, "tracks") 会在
+            # 曲库私有化后静默返回空字典，导致元数据无声丢失）
+            track = library.get_track(track_id) if library is not None else None
             entry = {
                 "track_id": f"trk_{track_id}" if not track_id.startswith("trk_") else track_id,
                 "stats": {

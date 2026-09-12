@@ -2,7 +2,7 @@
 
 从 `LibraryService` 拆出，组合持有 `LibraryService` 引用，只调用其公开状态
 （`tracks`/`get_playlist`/`save`/`_store.path`）与 `_normalize_relpath` 工具。
-原方法逻辑逐字搬移，仅将 `self.tracks` 等改为 `self._library.tracks`。
+原方法逻辑逐字搬移，仅将 `self.tracks` 等改为 `self._library._tracks`。
 
 拆分动机：`LibraryService` 单类承载清理/导入/导出/搜索多职责，本模块专注
 "按统一格式导出歌单（含播放统计与歌词）"，便于独立测试与未来扩展。
@@ -62,7 +62,7 @@ class PlaylistExporter:
         # 获取指定ID的歌单对象
         playlist = library.get_playlist(playlist_id)
         # 过滤出当前库中存在的歌曲ID
-        track_ids = [tid for tid in playlist.track_ids if tid in library.tracks]
+        track_ids = [tid for tid in playlist.track_ids if tid in library._tracks]
         # 如果没有可导出的歌曲，抛出异常
         if not track_ids:
             raise ValueError("歌单没有可导出的歌曲")
@@ -90,7 +90,7 @@ class PlaylistExporter:
 
         # 遍历每首歌曲ID，收集歌曲信息和播放统计
         for tid in track_ids:
-            track = library.tracks[tid]
+            track = library._tracks[tid]
             # 获取当前歌曲的播放统计数据，若无则使用默认零值
             stats = playback_stats_service.export_stats_for_track(tid) or {
                 "play_count": 0,

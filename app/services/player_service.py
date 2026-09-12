@@ -151,7 +151,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         # 设置播放器核心的错误回调
         self._core.set_error_callback(self._on_core_runtime_error)
         # 为当前播放列表设置初始曲目
-        self._set_initial_track_for_playlist()
+        self.set_initial_track_for_playlist()
 
     @property
     def mode(self) -> PlayMode:
@@ -376,6 +376,18 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         self.queue_changed.emit()
         return self._current_track_id
 
+    def set_current_playlist_id(self, playlist_id: str) -> None:
+        """轻量设置当前歌单 ID，不执行任何状态迁移。
+
+        与 set_playlist 的区别：set_playlist 是完整的状态迁移（重置预读、
+        记录早期跳过、清空播放核心等）；本方法仅对准歌单上下文，供会话
+        恢复预览等"库尚未完整加载、不能触发状态迁移"的场景使用。
+
+        Args:
+            playlist_id: 目标歌单ID
+        """
+        self._current_playlist_id = playlist_id
+
     def set_playlist(self, playlist_id: str | None) -> None:
         """切换当前播放歌单，执行完整的状态迁移。
 
@@ -471,7 +483,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         """
         if self._current_track_id is None:
             # 如果当前没有播放曲目，尝试为播放列表设置初始曲目
-            self._set_initial_track_for_playlist()
+            self.set_initial_track_for_playlist()
             # 如果设置后仍然没有曲目ID，则直接返回
             if self._current_track_id is None:
                 return
@@ -1127,10 +1139,11 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             "playback_rate": self._playback_rate,  # 播放速率（如1.0为正常速度）
         }
 
-    def _set_initial_track_for_playlist(self) -> None:
+    def set_initial_track_for_playlist(self) -> None:
         """
         为当前播放列表设置初始曲目。
         确保当播放列表变更时，能正确设置当前曲目ID，并维护随机顺序和索引。
+        （公开方法：库加载完成后由 AppController 调用以对准初始曲目。）
         """
         track_ids = self._playlist_track_ids()  # 获取当前播放列表中的所有曲目ID
         if not track_ids:  # 如果播放列表为空（库未加载或确实为空）
@@ -1227,7 +1240,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         if playlist is None:  # 如果播放列表不存在
             return []  # 返回空列表
         return [
-            track_id for track_id in playlist.track_ids if track_id in self.library.tracks
+            track_id for track_id in playlist.track_ids if self.library.has_track(track_id)
         ]  # 过滤出存在于库中的 track IDs
 
     def display_ordered_track_ids(self) -> list[str]:
@@ -1255,7 +1268,9 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         track_ids = self._playlist_track_ids()  # 获取当前播放列表的曲目ID列表
         if sort_mode == "default":  # 检查是否为默认排序模式
             return track_ids  # 直接返回原始曲目ID列表
-        tracks = self.library.tracks  # 从库中获取所有曲目的字典，键为曲目ID
+        tracks = {
+            tid: t for tid in track_ids if (t := self.library.get_track(tid)) is not None
+        }  # 经由公开访问器取曲目，避免触碰曲库内部字典
         if sort_mode == "title":  # 如果排序模式为按标题排序
             return sorted(
                 track_ids, key=lambda tid: (tracks[tid].title or "").lower()

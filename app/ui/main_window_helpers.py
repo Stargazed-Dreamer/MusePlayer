@@ -1261,25 +1261,6 @@ def _make_mode_icon(mode: str, *, color: QColor | str = "#f4f4f4") -> QIcon:
     return _render_icon(color, 1.8, _draw)
 
 
-def _make_plus_minus_icon(is_plus: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
-    """创建加减图标.
-
-    Args:
-        is_plus: True为加号，False为减号。
-        color: 图标颜色，默认为"#f4f4f4"。
-
-    Returns:
-        QIcon: 加减图标。
-    """
-
-    def _draw(p: QPainter) -> None:
-        p.drawLine(6, 12, 18, 12)
-        if is_plus:
-            p.drawLine(12, 6, 12, 18)
-
-    return _render_icon(color, 2.0, _draw)
-
-
 def _make_compact_icon(is_compact: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
     """创建一个紧凑型图标，根据is_compact参数决定绘制两种不同尺寸的矩形图标。
 

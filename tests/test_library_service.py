@@ -111,8 +111,8 @@ def test_deduplicate_keeps_newest_same_dedupe_key(tmp_path):
     changed = svc._deduplicate_tracks()
 
     assert changed is True
-    assert "t-old" not in svc.tracks  # 旧者被移除
-    assert "t-new" in svc.tracks  # 新者保留
+    assert not svc.has_track("t-old")  # 旧者被移除
+    assert svc.has_track("t-new")  # 新者保留
 
 
 def test_deduplicate_no_duplicates_returns_false(tmp_path):
@@ -126,7 +126,7 @@ def test_deduplicate_no_duplicates_returns_false(tmp_path):
     _preload(svc, [t1, t2])
 
     assert svc._deduplicate_tracks() is False
-    assert len(svc.tracks) == 2
+    assert len(svc.track_ids()) == 2
 
 
 def test_deduplicate_remaps_playlist_references(tmp_path):
@@ -147,7 +147,7 @@ def test_deduplicate_remaps_playlist_references(tmp_path):
 
     svc._deduplicate_tracks()
 
-    assert svc.playlists["pl1"].track_ids == ["t-new"]
+    assert svc.find_playlist("pl1").track_ids == ["t-new"]
 
 
 def test_deduplicate_same_sha256_different_dedupe_key_not_merged(tmp_path):
@@ -164,7 +164,7 @@ def test_deduplicate_same_sha256_different_dedupe_key_not_merged(tmp_path):
     _preload(svc, [t1, t2])
 
     assert svc._deduplicate_tracks() is False
-    assert {t1.id, t2.id} == set(svc.tracks.keys())
+    assert {t1.id, t2.id} == svc.track_ids()
 
 
 # ============ _drop_missing_tracks ============
@@ -182,8 +182,8 @@ def test_drop_missing_tracks_removes_only_missing(tmp_path):
     changed = svc._drop_missing_tracks()
 
     assert changed is True
-    assert "t-ok" in svc.tracks
-    assert "t-missing" not in svc.tracks
+    assert svc.has_track("t-ok")
+    assert not svc.has_track("t-missing")
 
 
 def test_drop_missing_tracks_all_present_returns_false(tmp_path):
@@ -195,7 +195,7 @@ def test_drop_missing_tracks_all_present_returns_false(tmp_path):
     _preload(svc, [_make_track("t1", str(f1)), _make_track("t2", str(f2))])
 
     assert svc._drop_missing_tracks() is False
-    assert len(svc.tracks) == 2
+    assert len(svc.track_ids()) == 2
 
 
 # ============ _normalize_playlist_tracks ============
@@ -214,7 +214,7 @@ def test_normalize_playlist_tracks_drops_invalid_refs(tmp_path):
     changed = svc._normalize_playlist_tracks()
 
     assert changed is True
-    assert svc.playlists["pl1"].track_ids == ["t-real"]
+    assert svc.find_playlist("pl1").track_ids == ["t-real"]
 
 
 def test_normalize_playlist_tracks_rebuilds_all_songs(tmp_path):
@@ -229,11 +229,11 @@ def test_normalize_playlist_tracks_rebuilds_all_songs(tmp_path):
     svc = _make_service(tmp_path)
     _preload(svc, [t1, t2])
     # 手动清空 ALL_SONGS 以触发重建
-    svc.playlists[ALL_SONGS_ID].track_ids = []
+    svc.find_playlist(ALL_SONGS_ID).track_ids = []
 
     svc._normalize_playlist_tracks()
 
-    assert set(svc.playlists[ALL_SONGS_ID].track_ids) == {"t1", "t2"}
+    assert set(svc.find_playlist(ALL_SONGS_ID).track_ids) == {"t1", "t2"}
 
 
 def test_normalize_playlist_tracks_dedupes_duplicates(tmp_path):
@@ -247,7 +247,7 @@ def test_normalize_playlist_tracks_dedupes_duplicates(tmp_path):
 
     svc._normalize_playlist_tracks()
 
-    assert svc.playlists["pl1"].track_ids == ["t-real"]
+    assert svc.find_playlist("pl1").track_ids == ["t-real"]
 
 
 # ============ 歌单 CRUD ============
@@ -260,7 +260,7 @@ def test_create_playlist_persists_with_clean_name(tmp_path):
     pl = svc.create_playlist("  我的歌单  ")
 
     assert pl.name == "我的歌单"
-    assert pl.id in svc.playlists
+    assert svc.find_playlist(pl.id) is not None
     # 库存文件应已写入（save 被调用）
     assert (tmp_path / "library.json").exists()
 
@@ -272,8 +272,8 @@ def test_rename_playlist_protects_system_playlists(tmp_path):
     svc.rename_playlist(ALL_SONGS_ID, "不应被改")
     svc.rename_playlist(FAVORITES_ID, "不应被改")
 
-    assert svc.playlists[ALL_SONGS_ID].name == "全部歌曲"
-    assert svc.playlists[FAVORITES_ID].name == "我喜欢"
+    assert svc.find_playlist(ALL_SONGS_ID).name == "全部歌曲"
+    assert svc.find_playlist(FAVORITES_ID).name == "我喜欢"
 
 
 def test_rename_playlist_user_playlist(tmp_path):
@@ -283,7 +283,7 @@ def test_rename_playlist_user_playlist(tmp_path):
 
     svc.rename_playlist(pl.id, "新名")
 
-    assert svc.playlists[pl.id].name == "新名"
+    assert svc.find_playlist(pl.id).name == "新名"
 
 
 def test_delete_playlist_protects_system_and_removes_orphans(tmp_path):
@@ -298,14 +298,14 @@ def test_delete_playlist_protects_system_and_removes_orphans(tmp_path):
 
     svc.delete_playlist("pl1")
 
-    assert "pl1" not in svc.playlists
-    assert "t-orphan" not in svc.tracks  # 孤立曲目被清理
+    assert svc.find_playlist("pl1") is None
+    assert not svc.has_track("t-orphan")  # 孤立曲目被清理
 
     # 系统歌单删除为 no-op
     svc.delete_playlist(ALL_SONGS_ID)
     svc.delete_playlist(FAVORITES_ID)
-    assert ALL_SONGS_ID in svc.playlists
-    assert FAVORITES_ID in svc.playlists
+    assert svc.find_playlist(ALL_SONGS_ID) is not None
+    assert svc.find_playlist(FAVORITES_ID) is not None
 
 
 def test_toggle_favorite_roundtrip(tmp_path):
@@ -318,9 +318,9 @@ def test_toggle_favorite_roundtrip(tmp_path):
     assert svc.is_favorite("t1") is False
     assert svc.toggle_favorite("t1") is True
     assert svc.is_favorite("t1") is True
-    assert "t1" in svc.playlists[FAVORITES_ID].track_ids
+    assert "t1" in svc.find_playlist(FAVORITES_ID).track_ids
     assert svc.toggle_favorite("t1") is False  # 再次切换取消
-    assert "t1" not in svc.playlists[FAVORITES_ID].track_ids
+    assert "t1" not in svc.find_playlist(FAVORITES_ID).track_ids
 
 
 # ============ export_playlist_file ============

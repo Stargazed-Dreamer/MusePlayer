@@ -59,8 +59,8 @@ class LibraryService:
         """
         self._store = store  # 存储服务引用
         self._metadata = metadata_service  # 元数据服务引用
-        self.tracks: dict[str, Track] = {}  # 存储所有曲目，键为曲目ID，值为Track对象
-        self.playlists: dict[str, Playlist] = {}  # 存储所有播放列表，键为播放列表ID，值为Playlist对象
+        self._tracks: dict[str, Track] = {}  # 存储所有曲目，键为曲目ID，值为Track对象
+        self._playlists: dict[str, Playlist] = {}  # 存储所有播放列表，键为播放列表ID，值为Playlist对象
         self.active_playlist_id: str | None = None  # 当前活跃/正在播放的播放列表ID，None表示无
         self._cleanup_log_path = self._store.path.parent / "logs" / "data_cleanup.log"  # 数据清理日志文件路径
         self._data_maintenance_logging_enabled = True  # 是否启用数据维护日志记录
@@ -102,11 +102,11 @@ class LibraryService:
         *,
         quick: bool = False,
     ) -> None:
-        self.tracks = tracks
-        self.playlists = playlists
+        self._tracks = tracks
+        self._playlists = playlists
         self._ensure_system_playlists()
 
-        if active in self.playlists:
+        if active in self._playlists:
             self.active_playlist_id = active
         else:
             self.active_playlist_id = ALL_SONGS_ID
@@ -127,7 +127,7 @@ class LibraryService:
             self._rebuild_indexes()
         else:
             self._path_index, self._sha256_index = indexes
-        logger.info("曲库加载完成: tracks=%s playlists=%s quick=%s", len(self.tracks), len(self.playlists), quick)
+        logger.info("曲库加载完成: tracks=%s playlists=%s quick=%s", len(self._tracks), len(self._playlists), quick)
 
     def deferred_cleanup(self) -> None:
         """执行延迟的曲库清理操作（缺失文件检测、歌词路径清理、重复曲目检测）。
@@ -202,7 +202,7 @@ class LibraryService:
 
     def _rebuild_indexes(self) -> None:
         """重建路径索引和SHA256索引，加速查找。"""
-        self._path_index, self._sha256_index = self.build_indexes_for_tracks(self.tracks)
+        self._path_index, self._sha256_index = self.build_indexes_for_tracks(self._tracks)
 
     def _drop_missing_tracks(self) -> bool:
         """清理曲库中指向不存在的文件的跟踪记录。
@@ -233,7 +233,7 @@ class LibraryService:
 
         保存所有曲目、歌单和当前活动歌单状态到存储层。
         """
-        self._store.save(self.tracks, self.playlists, self.active_playlist_id)
+        self._store.save(self._tracks, self._playlists, self.active_playlist_id)
 
     def _ensure_all_songs_playlist(self) -> None:
         """
@@ -251,21 +251,21 @@ class LibraryService:
             None: 该方法无返回值。
         """
         # 检查“全部歌曲”播放列表是否不存在
-        if ALL_SONGS_ID not in self.playlists:
+        if ALL_SONGS_ID not in self._playlists:
             # 创建一个新的播放列表对象，包含ID、名称和空的曲目列表，并添加到播放列表集合
-            self.playlists[ALL_SONGS_ID] = Playlist(id=ALL_SONGS_ID, name="全部歌曲", track_ids=[])
+            self._playlists[ALL_SONGS_ID] = Playlist(id=ALL_SONGS_ID, name="全部歌曲", track_ids=[])
             return
         # 如果“全部歌曲”播放列表已存在，则确保其名称为“全部歌曲”
-        self.playlists[ALL_SONGS_ID].name = "全部歌曲"
+        self._playlists[ALL_SONGS_ID].name = "全部歌曲"
 
     def _ensure_favorites_playlist(self) -> None:
         """确保收藏播放列表存在。如果不存在，则创建一个新的收藏播放列表；如果存在，则将其名称设置为“我喜欢”。参数：无。返回：None。"""
-        if FAVORITES_ID not in self.playlists:  # 检查收藏播放列表是否不存在于self.playlists字典中
-            self.playlists[FAVORITES_ID] = Playlist(
+        if FAVORITES_ID not in self._playlists:  # 检查收藏播放列表是否不存在于self.playlists字典中
+            self._playlists[FAVORITES_ID] = Playlist(
                 id=FAVORITES_ID, name="我喜欢", track_ids=[]
             )  # 创建新的收藏播放列表并添加到字典
             return  # 返回，因为新播放列表已创建完成
-        self.playlists[FAVORITES_ID].name = "我喜欢"  # 如果已存在，则将播放列表名称重命名为“我喜欢”
+        self._playlists[FAVORITES_ID].name = "我喜欢"  # 如果已存在，则将播放列表名称重命名为“我喜欢”
 
     def _ensure_system_playlists(self) -> None:
         """确保系统播放列表存在。参数：无。返回值：无。"""
@@ -290,11 +290,47 @@ class LibraryService:
         Returns:
             Playlist对象
         """
-        if playlist_id and playlist_id in self.playlists:
-            return self.playlists[playlist_id]
-        if ALL_SONGS_ID in self.playlists:
-            return self.playlists[ALL_SONGS_ID]
+        if playlist_id and playlist_id in self._playlists:
+            return self._playlists[playlist_id]
+        if ALL_SONGS_ID in self._playlists:
+            return self._playlists[ALL_SONGS_ID]
         return None
+
+    def find_playlist(self, playlist_id: str | None) -> Playlist | None:
+        """严格查找指定 ID 的歌单，不存在返回 None（不做"全部歌曲"兜底）。
+
+        与 get_playlist 的区别：get_playlist 在找不到时回退到"全部歌曲"，
+        适用于播放场景；本方法适用于协议响应、存在性判断等需要区分
+        "歌单不存在"与"回退默认"的场景。
+
+        Args:
+            playlist_id: 歌单ID
+
+        Returns:
+            Playlist 对象；ID 为空或不存在时返回 None
+        """
+        if not playlist_id:
+            return None
+        return self._playlists.get(str(playlist_id))
+
+    def has_track(self, track_id: str) -> bool:
+        """判断指定 ID 的曲目是否存在于曲库。
+
+        Args:
+            track_id: 曲目ID
+
+        Returns:
+            存在返回 True
+        """
+        return str(track_id) in self._tracks
+
+    def track_ids(self) -> set[str]:
+        """返回当前曲库全部曲目 ID 的快照集合。
+
+        Returns:
+            ID 集合的副本，调用方修改不影响曲库本身
+        """
+        return set(self._tracks.keys())
 
     def list_playlists(self) -> list[Playlist]:
         """获取所有歌单列表。
@@ -304,9 +340,9 @@ class LibraryService:
         Returns:
             排序后的歌单列表
         """
-        all_pl = self.playlists.get(ALL_SONGS_ID)
-        fav_pl = self.playlists.get(FAVORITES_ID)
-        others = [p for p in self.playlists.values() if p.id not in {ALL_SONGS_ID, FAVORITES_ID}]
+        all_pl = self._playlists.get(ALL_SONGS_ID)
+        fav_pl = self._playlists.get(FAVORITES_ID)
+        others = [p for p in self._playlists.values() if p.id not in {ALL_SONGS_ID, FAVORITES_ID}]
         others.sort(key=lambda p: p.name.lower())
         ordered: list[Playlist] = []
         if all_pl is not None:
@@ -326,7 +362,7 @@ class LibraryService:
             该歌单下的Track对象列表
         """
         playlist = self.get_playlist(playlist_id)
-        return [self.tracks[tid] for tid in playlist.track_ids if tid in self.tracks]
+        return [self._tracks[tid] for tid in playlist.track_ids if tid in self._tracks]
 
     def search_playlist_tracks(self, playlist_id: str | None, keyword: str) -> list[Track]:
         """在指定歌单中搜索曲目。
@@ -365,7 +401,7 @@ class LibraryService:
         """
         clean_name = (name or "").strip() or "新建歌单"
         playlist = Playlist(id=new_id(), name=clean_name)
-        self.playlists[playlist.id] = playlist
+        self._playlists[playlist.id] = playlist
         self.save()
         logger.info("创建歌单: %s (%s)", playlist.name, playlist.id)
         return playlist
@@ -381,7 +417,7 @@ class LibraryService:
         """
         if playlist_id in {ALL_SONGS_ID, FAVORITES_ID}:
             return
-        playlist = self.playlists.get(playlist_id)
+        playlist = self._playlists.get(playlist_id)
         if playlist is None:
             return
         old_name = playlist.name
@@ -403,16 +439,16 @@ class LibraryService:
         Returns:
             新创建的Playlist对象，如果源歌单不存在返回None
         """
-        source = self.playlists.get(source_playlist_id)
+        source = self._playlists.get(source_playlist_id)
         if source is None:
             return None
 
         base_name = (new_name or "").strip() or f"{source.name} - 副本"
         target_name = self._make_unique_playlist_name(base_name)
-        copied_ids = [track_id for track_id in source.track_ids if track_id in self.tracks]
+        copied_ids = [track_id for track_id in source.track_ids if track_id in self._tracks]
 
         playlist = Playlist(id=new_id(), name=target_name, track_ids=copied_ids)
-        self.playlists[playlist.id] = playlist
+        self._playlists[playlist.id] = playlist
         self.active_playlist_id = playlist.id
         self.save()
         logger.info("复制歌单: %s -> %s", source.name, playlist.name)
@@ -433,15 +469,15 @@ class LibraryService:
         """
         if source_playlist_id == target_playlist_id:
             return 0
-        source = self.playlists.get(source_playlist_id)
-        target = self.playlists.get(target_playlist_id)
+        source = self._playlists.get(source_playlist_id)
+        target = self._playlists.get(target_playlist_id)
         if source is None or target is None:
             return 0
 
         before = len(target.track_ids)
         existing = set(target.track_ids)
         for track_id in source.track_ids:
-            if track_id not in self.tracks:
+            if track_id not in self._tracks:
                 continue
             if track_id in existing:
                 continue
@@ -465,11 +501,11 @@ class LibraryService:
         """
         if playlist_id in {ALL_SONGS_ID, FAVORITES_ID}:
             return  # 系统保护，不允许删除系统歌单
-        if playlist_id not in self.playlists:
+        if playlist_id not in self._playlists:
             return
 
-        removed = self.playlists[playlist_id]
-        del self.playlists[playlist_id]
+        removed = self._playlists[playlist_id]
+        del self._playlists[playlist_id]
 
         # 查找并删除不再被其他歌单引用的孤立曲目
         orphan_track_ids = self._find_orphan_track_ids(exclude_playlist_id=playlist_id)
@@ -492,7 +528,7 @@ class LibraryService:
         Args:
             playlist_id: 要设为活动的歌单ID
         """
-        if playlist_id not in self.playlists:
+        if playlist_id not in self._playlists:
             return
         self.active_playlist_id = playlist_id
         self.save()
@@ -506,12 +542,12 @@ class LibraryService:
             playlist_id: 目标歌单ID
             track_ids: 要添加的曲目ID列表
         """
-        playlist = self.playlists.get(playlist_id)
+        playlist = self._playlists.get(playlist_id)
         if playlist is None:
             return
         existing = set(playlist.track_ids)
         for track_id in track_ids:
-            if track_id not in self.tracks:
+            if track_id not in self._tracks:
                 continue
             if track_id in existing:
                 continue
@@ -536,7 +572,7 @@ class LibraryService:
         if not track_id:  # 如果track_id为空，直接返回空集合
             return removed_globally
 
-        if track_id not in self.tracks:  # 检查track_id是否存在于当前轨道集合中
+        if track_id not in self._tracks:  # 检查track_id是否存在于当前轨道集合中
             return removed_globally
 
         if playlist_id == ALL_SONGS_ID:  # 如果播放列表ID是ALL_SONGS_ID，全局移除该轨道
@@ -547,7 +583,7 @@ class LibraryService:
             return removed_globally
 
         if playlist_id == FAVORITES_ID:  # 如果播放列表ID是FAVORITES_ID，从收藏列表中移除该轨道
-            playlist = self.playlists.get(FAVORITES_ID)
+            playlist = self._playlists.get(FAVORITES_ID)
             if playlist is None:  # 如果收藏列表不存在，返回空集合
                 return removed_globally
             before = len(playlist.track_ids)  # 记录移除前的轨道数量
@@ -557,7 +593,7 @@ class LibraryService:
                 self.save()  # 保存更改
             return removed_globally
 
-        playlist = self.playlists.get(playlist_id)  # 获取指定播放列表
+        playlist = self._playlists.get(playlist_id)  # 获取指定播放列表
         if playlist is None:  # 如果播放列表不存在，返回空集合
             return removed_globally
 
@@ -567,7 +603,7 @@ class LibraryService:
             playlist.touch()  # 更新播放列表的时间戳
 
         still_referenced = False  # 初始化标志，检查track_id是否还在其他播放列表中被引用
-        for pl in self.playlists.values():  # 遍历所有播放列表
+        for pl in self._playlists.values():  # 遍历所有播放列表
             if pl.id == ALL_SONGS_ID:  # 跳过ALL_SONGS_ID播放列表
                 continue
             if track_id in pl.track_ids:  # 如果track_id在其他播放列表中，设置标志为True
@@ -586,7 +622,7 @@ class LibraryService:
         tid = str(track_id or "").strip()
         if not tid:
             return False
-        playlist = self.playlists.get(FAVORITES_ID)
+        playlist = self._playlists.get(FAVORITES_ID)
         if playlist is None:
             return False
         return tid in playlist.track_ids
@@ -594,10 +630,10 @@ class LibraryService:
     def toggle_favorite(self, track_id: str) -> bool:
         """切换歌曲的“我喜欢”状态，返回切换后的状态。"""
         tid = str(track_id or "").strip()
-        if not tid or tid not in self.tracks:
+        if not tid or tid not in self._tracks:
             return False
         self._ensure_favorites_playlist()
-        favorites = self.playlists[FAVORITES_ID]
+        favorites = self._playlists[FAVORITES_ID]
         if tid in favorites.track_ids:
             favorites.track_ids = [x for x in favorites.track_ids if x != tid]
             favorites.touch()
@@ -619,7 +655,7 @@ class LibraryService:
         """
         if not track_id:
             return None
-        return self.tracks.get(track_id)
+        return self._tracks.get(track_id)
 
     def import_folder(
         self,
@@ -661,33 +697,26 @@ class LibraryService:
             raise FileNotFoundError(str(target))
 
         plan: list[tuple[Playlist, list[Path]]] = []
-        if playlist_id and playlist_id in self.playlists and playlist_id != ALL_SONGS_ID:
-            root_playlist = self.playlists[playlist_id]
-            root_files = self._scan_audio_files(target, recursive=False)
-            if root_files:
-                plan.append((root_playlist, root_files))
-            children = [p for p in target.iterdir() if p.is_dir()]
-            children.sort(key=lambda p: p.name.casefold())
-            for child in children:
-                child_files = self._scan_audio_files(child, recursive=False)
-                if not child_files:
-                    continue
-                child_playlist = self._resolve_target_playlist_for_folder_import(child, None)
-                plan.append((child_playlist, child_files))
-        else:
-            root_files = self._scan_audio_files(target, recursive=False)
-            if root_files:
+        # 根歌单解析：指定了有效歌单 ID 则复用该歌单；否则按目录名新建/复用，
+        # 且仅在根目录确实扫描到音频文件时才解析（避免空根目录产生无意义的新歌单）
+        use_existing_root = bool(playlist_id and playlist_id in self._playlists and playlist_id != ALL_SONGS_ID)
+        root_files = self._scan_audio_files(target, recursive=False)
+        if root_files:
+            if use_existing_root:
+                root_playlist = self._playlists[str(playlist_id)]
+            else:
                 root_playlist = self._resolve_target_playlist_for_folder_import(target, None)
-                plan.append((root_playlist, root_files))
+            plan.append((root_playlist, root_files))
 
-            children = [p for p in target.iterdir() if p.is_dir()]
-            children.sort(key=lambda p: p.name.casefold())
-            for child in children:
-                child_files = self._scan_audio_files(child, recursive=False)
-                if not child_files:
-                    continue
-                child_playlist = self._resolve_target_playlist_for_folder_import(child, None)
-                plan.append((child_playlist, child_files))
+        # 第一级子目录分别建立/复用独立歌单（与根歌单的处理方式无关）
+        children = [p for p in target.iterdir() if p.is_dir()]
+        children.sort(key=lambda p: p.name.casefold())
+        for child in children:
+            child_files = self._scan_audio_files(child, recursive=False)
+            if not child_files:
+                continue
+            child_playlist = self._resolve_target_playlist_for_folder_import(child, None)
+            plan.append((child_playlist, child_files))
 
         if not plan:
             return []
@@ -698,9 +727,9 @@ class LibraryService:
         total = len(flat_files)
 
         imported_by_id: dict[str, Track] = {}
-        all_songs = self.playlists[ALL_SONGS_ID]
+        all_songs = self._playlists[ALL_SONGS_ID]
         all_ids = set(all_songs.track_ids)
-        playlist_ids_map: dict[str, set[str]] = {pl.id: set(pl.track_ids) for pl in self.playlists.values()}
+        playlist_ids_map: dict[str, set[str]] = {pl.id: set(pl.track_ids) for pl in self._playlists.values()}
         touched_playlists: set[str] = set()
 
         last_tick = time.monotonic()
@@ -711,7 +740,7 @@ class LibraryService:
                 existing = self._path_index.get(file_path)
                 if existing is None:
                     track = self._metadata.extract_track(file_path)
-                    self.tracks[track.id] = track
+                    self._tracks[track.id] = track
                     self._path_index[file_path] = track
                 else:
                     track = existing
@@ -733,7 +762,7 @@ class LibraryService:
                         last_tick = now
 
         for pid in touched_playlists:
-            pl = self.playlists.get(pid)
+            pl = self._playlists.get(pid)
             if pl is not None:
                 pl.touch()
         all_songs.touch()
@@ -777,10 +806,10 @@ class LibraryService:
         track = existing if existing is not None else self._metadata.extract_track(source)
 
         if existing is None:
-            self.tracks[track.id] = track
+            self._tracks[track.id] = track
             self._path_index[source] = track
 
-        all_songs = self.playlists[ALL_SONGS_ID]
+        all_songs = self._playlists[ALL_SONGS_ID]
         if track.id not in all_songs.track_ids:
             all_songs.track_ids.append(track.id)
             all_songs.touch()
@@ -1006,8 +1035,8 @@ class LibraryService:
         Returns:
             目标Playlist对象
         """
-        if playlist_id and playlist_id in self.playlists and playlist_id != ALL_SONGS_ID:
-            return self.playlists[playlist_id]
+        if playlist_id and playlist_id in self._playlists and playlist_id != ALL_SONGS_ID:
+            return self._playlists[playlist_id]
 
         folder_name = self._normalize_playlist_name(folder.name)
         existing = self._find_playlist_by_name(folder_name)
@@ -1015,7 +1044,7 @@ class LibraryService:
             return existing
 
         playlist = Playlist(id=new_id(), name=folder_name)
-        self.playlists[playlist.id] = playlist
+        self._playlists[playlist.id] = playlist
         return playlist
 
     def _find_playlist_by_name(self, name: str) -> Playlist | None:
@@ -1031,7 +1060,7 @@ class LibraryService:
             找到的Playlist对象，如果未找到则返回None
         """
         expected = self._normalize_playlist_name(name).casefold()
-        for playlist in self.playlists.values():
+        for playlist in self._playlists.values():
             if playlist.id == ALL_SONGS_ID:
                 continue
             if playlist.name.strip().casefold() == expected:
@@ -1049,7 +1078,7 @@ class LibraryService:
         # 规范化输入的基础名称（例如去除首尾空格等）
         base = self._normalize_playlist_name(base_name)
         # 创建一个集合，包含所有现有播放列表的规范化名称（已去除首尾空格并转为小写），排除“所有歌曲”播放列表
-        used = {playlist.name.strip().casefold() for playlist in self.playlists.values() if playlist.id != ALL_SONGS_ID}
+        used = {playlist.name.strip().casefold() for playlist in self._playlists.values() if playlist.id != ALL_SONGS_ID}
         # 检查规范化后的基础名称（转为小写）是否已存在于已使用名称集合中
         if base.casefold() not in used:
             # 如果不存在，直接返回该名称
@@ -1084,15 +1113,15 @@ class LibraryService:
         """
         # 收集所有非系统歌单引用的曲目ID
         referenced: set[str] = set()
-        for playlist in self.playlists.values():
+        for playlist in self._playlists.values():
             if playlist.id == ALL_SONGS_ID:
                 continue
             if exclude_playlist_id and playlist.id == exclude_playlist_id:
                 continue
-            referenced.update(track_id for track_id in playlist.track_ids if track_id in self.tracks)
+            referenced.update(track_id for track_id in playlist.track_ids if track_id in self._tracks)
 
         # 返回曲库中存在但未被引用（除全部歌曲外）的曲目
-        all_track_ids = set(self.tracks.keys())
+        all_track_ids = set(self._tracks.keys())
         return all_track_ids - referenced
 
     def _remove_track_globally(self, track_id: str) -> None:
@@ -1105,9 +1134,9 @@ class LibraryService:
         返回:
             None: 无返回值。
         """
-        track = self.tracks.get(track_id)  # 获取指定ID的音轨对象
+        track = self._tracks.get(track_id)  # 获取指定ID的音轨对象
         if track is not None:  # 如果音轨存在
-            del self.tracks[track_id]  # 从全局音轨字典中删除该音轨
+            del self._tracks[track_id]  # 从全局音轨字典中删除该音轨
             try:
                 path_key = Path(track.path).resolve()  # 解析音轨路径为绝对路径键
                 if self._path_index.get(path_key) is track:  # 检查路径索引中是否映射到该音轨
@@ -1118,7 +1147,7 @@ class LibraryService:
             sha = str(getattr(track, "source_sha256", "") or "").strip().lower()  # 获取音轨的SHA256哈希值
             if sha and self._sha256_index.get(sha) is track:  # 如果SHA256存在且索引映射到该音轨
                 del self._sha256_index[sha]  # 删除SHA256索引条目
-        for playlist in self.playlists.values():  # 遍历所有播放列表
+        for playlist in self._playlists.values():  # 遍历所有播放列表
             if track_id in playlist.track_ids:  # 如果播放列表包含该track_id
                 playlist.track_ids = [x for x in playlist.track_ids if x != track_id]  # 移除该track_id
                 playlist.touch()  # 更新播放列表的修改时间

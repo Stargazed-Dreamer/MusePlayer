@@ -179,7 +179,7 @@ class AppController(QObject):
             self.player_service.set_mode(state.play_mode)
             self.player_service.set_volume(state.volume)
             self.library_service.active_playlist_id = playlist_id
-            self.player_service._current_playlist_id = playlist_id
+            self.player_service.set_current_playlist_id(playlist_id)
             return self.player_service.play_track(
                 track_id,
                 auto_play=False,
@@ -210,7 +210,7 @@ class AppController(QObject):
         self._library_loaded = True
 
         if self.player_service:
-            self.player_service._set_initial_track_for_playlist()
+            self.player_service.set_initial_track_for_playlist()
 
         self.control_server = ControlServer(self.dispatch_command)
         self.control_server.error_occurred.connect(self.error_occurred)
@@ -702,9 +702,9 @@ class AppController(QObject):
         return merged
 
     def delete_playlist(self, playlist_id: str) -> None:
-        track_ids_before = set(self.library_service.tracks.keys())
+        track_ids_before = self.library_service.track_ids()
         self.library_service.delete_playlist(playlist_id)
-        removed_ids = track_ids_before - set(self.library_service.tracks.keys())
+        removed_ids = track_ids_before - self.library_service.track_ids()
         for track_id in removed_ids:
             self.playback_stats_service.remove_track(track_id)
         if self.player_service.current_playlist_id == playlist_id:
@@ -793,7 +793,7 @@ class AppController(QObject):
         # 安全清理：如果当前播放曲目已经不存在于库中，需要重置状态
         if (
             self.player_service.current_track_id
-            and self.player_service.current_track_id not in self.library_service.tracks
+            and not self.library_service.has_track(self.player_service.current_track_id)
         ):
             self.player_service.pause()
             self.player_service.set_playlist(self.player_service.current_playlist_id)
@@ -973,13 +973,13 @@ class AppController(QObject):
         playlist_id = self.player_service.current_playlist_id
         if not playlist_id:
             return {"ok": True, "result": None}
-        playlist = self.library_service.playlists.get(playlist_id)
+        playlist = self.library_service.find_playlist(playlist_id)
         if playlist is None:
             return {"ok": True, "result": None}
         result = playlist.to_dict()
         tracks_info = []
         for tid in playlist.track_ids:
-            t = self.library_service.tracks.get(tid)
+            t = self.library_service.get_track(tid)
             if t is not None:
                 tracks_info.append(
                     {"id": t.id, "title": t.title, "artist": t.artist, "duration_sec": float(t.duration_sec)}
@@ -991,13 +991,13 @@ class AppController(QObject):
         playlist_id = payload.get("playlist_id")
         if not playlist_id:
             return {"ok": False, "error": "missing playlist_id"}
-        playlist = self.library_service.playlists.get(str(playlist_id))
+        playlist = self.library_service.find_playlist(str(playlist_id))
         if playlist is None:
             return {"ok": True, "result": None}
         result = playlist.to_dict()
         tracks_info = []
         for tid in playlist.track_ids:
-            t = self.library_service.tracks.get(tid)
+            t = self.library_service.get_track(tid)
             if t is not None:
                 info = {"id": t.id, "title": t.title, "artist": t.artist, "duration_sec": float(t.duration_sec)}
                 if t.source_sha256:
