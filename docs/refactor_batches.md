@@ -147,6 +147,7 @@ UI 结构性批次（B10/B11/B13）额外验收：启动 `python main.py` 确认
   2. **音频扩展名常量统一**：新建 `app/ui/file_types.py`：
      ```python
      """音频文件类型常量（UI 层共用）。"""
+
      AUDIO_EXTENSIONS: frozenset[str] = frozenset({".mp3", ".flac", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".wma"})
      AUDIO_FILE_FILTER: str = "音频文件 (*.mp3 *.flac *.wav *.m4a *.aac *.ogg *.opus *.wma)"
      ```
@@ -217,6 +218,7 @@ UI 结构性批次（B10/B11/B13）额外验收：启动 `python main.py` 确认
   ```python
   class LibraryCleaner:
       """曲库数据清理（缺失文件/失效歌词/去重/归一化）。组合持有 LibraryService，只调用其公开状态。"""
+
       def __init__(self, library: "LibraryService") -> None:
           self._library = library
   ```

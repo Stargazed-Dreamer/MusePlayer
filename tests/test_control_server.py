@@ -13,11 +13,29 @@ from app.services.app_controller import AppController  # noqa: E402
 # B9 注册表化后，dispatch_command 通过 _command_handlers 查表分发。
 # 以下 23 个命令名与 AppController._command_handlers 的键完全一致。
 _CMD_NAMES = [
-    "ping", "state", "play", "pause", "toggle", "seek", "set_volume",
-    "next", "previous", "set_mode", "import_folder", "import_playlist_file",
-    "import_playlist_data", "play_file", "load_playlist", "play_playlist",
-    "play_track", "create_playlist", "current_track", "current_playlist",
-    "get_playlist", "add_track_to_playlist", "remove_track_from_playlist",
+    "ping",
+    "state",
+    "play",
+    "pause",
+    "toggle",
+    "seek",
+    "set_volume",
+    "next",
+    "previous",
+    "set_mode",
+    "import_folder",
+    "import_playlist_file",
+    "import_playlist_data",
+    "play_file",
+    "load_playlist",
+    "play_playlist",
+    "play_track",
+    "create_playlist",
+    "current_track",
+    "current_playlist",
+    "get_playlist",
+    "add_track_to_playlist",
+    "remove_track_from_playlist",
 ]
 
 
@@ -52,8 +70,7 @@ def mock_controller():
 
     # 绑定真实的 _cmd_<name> 方法到 mock（dispatch_command 注册表分发需要）
     ctrl._command_handlers = {
-        name: types.MethodType(getattr(AppController, f"_cmd_{name}"), ctrl)
-        for name in _CMD_NAMES
+        name: types.MethodType(getattr(AppController, f"_cmd_{name}"), ctrl) for name in _CMD_NAMES
     }
     return ctrl
 
@@ -65,12 +82,14 @@ def _dispatch(ctrl, payload):
 
 # ============ ping ============
 
+
 def test_dispatch_ping(mock_controller):
     result = _dispatch(mock_controller, {"cmd": "ping"})
     assert result == {"ok": True, "result": "pong"}
 
 
 # ============ 缺失 / 空 cmd ============
+
 
 def test_dispatch_missing_cmd(mock_controller):
     result = _dispatch(mock_controller, {})
@@ -92,6 +111,7 @@ def test_dispatch_no_cmd_key(mock_controller):
 
 # ============ 未知命令 ============
 
+
 def test_dispatch_unknown_cmd(mock_controller):
     result = _dispatch(mock_controller, {"cmd": "does_not_exist"})
     assert result["ok"] is False
@@ -100,6 +120,7 @@ def test_dispatch_unknown_cmd(mock_controller):
 
 
 # ============ 大小写不敏感 / 去空白 ============
+
 
 def test_dispatch_case_insensitive(mock_controller):
     # 内部 .strip().lower()，大写 PING 应等价于 ping
@@ -119,6 +140,7 @@ def test_dispatch_cmd_stripped(mock_controller):
 
 
 # ============ 播放控制路由 ============
+
 
 def test_dispatch_play(mock_controller):
     result = _dispatch(mock_controller, {"cmd": "play"})
@@ -152,6 +174,7 @@ def test_dispatch_previous(mock_controller):
 
 # ============ seek / set_volume / set_mode ============
 
+
 def test_dispatch_seek(mock_controller):
     result = _dispatch(mock_controller, {"cmd": "seek", "position_sec": 12.5})
     assert result == {"ok": True}
@@ -181,6 +204,7 @@ def test_dispatch_set_mode(mock_controller):
 
 # ============ 缺失参数 ============
 
+
 def test_dispatch_play_file_missing_path(mock_controller):
     result = _dispatch(mock_controller, {"cmd": "play_file"})
     assert result["ok"] is False
@@ -206,6 +230,7 @@ def test_dispatch_import_folder_missing_path(mock_controller):
 
 
 # ============ 成功路由（带参数） ============
+
 
 def test_dispatch_create_playlist(mock_controller):
     result = _dispatch(mock_controller, {"cmd": "create_playlist", "name": "新歌单"})
@@ -235,6 +260,7 @@ def test_dispatch_load_playlist_with_id(mock_controller):
 
 
 # ============ ControlServer 协议解析层（_handle_line） ============
+
 
 def _make_qapp():
     """确保存在 QCoreApplication 实例，用于创建 QObject 子类。"""

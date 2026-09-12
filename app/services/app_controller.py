@@ -233,9 +233,7 @@ class AppController(QObject):
             self.runtime_status_changed.emit(False, self.settings.control_host, self.settings.control_port)
 
         _t2 = _time.perf_counter()
-        self.logger.debug(
-            "启动耗时: 库加载=%.3fs 服务=%.3fs 总计=%.3fs", _t1 - _t0, _t2 - _t1, _t2 - _t0
-        )
+        self.logger.debug("启动耗时: 库加载=%.3fs 服务=%.3fs 总计=%.3fs", _t1 - _t0, _t2 - _t1, _t2 - _t0)
 
     def restore_session(self) -> None:
         """恢复上次播放会话（在窗口显示后调用以加速启动）。"""
@@ -791,9 +789,8 @@ class AppController(QObject):
                     self.player_service.pause()
 
         # 安全清理：如果当前播放曲目已经不存在于库中，需要重置状态
-        if (
+        if self.player_service.current_track_id and not self.library_service.has_track(
             self.player_service.current_track_id
-            and not self.library_service.has_track(self.player_service.current_track_id)
         ):
             self.player_service.pause()
             self.player_service.set_playlist(self.player_service.current_playlist_id)

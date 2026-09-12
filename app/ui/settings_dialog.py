@@ -179,7 +179,7 @@ class SettingsDialog(QDialog):
         self.output_device_combo = QComboBox()
         self.output_device_combo.addItem("跟随系统", "")
         current_device = str(getattr(self._settings, "output_device", "")).strip()
-        for dev_info in (self._list_output_devices_fn() if self._list_output_devices_fn else []):
+        for dev_info in self._list_output_devices_fn() if self._list_output_devices_fn else []:
             self.output_device_combo.addItem(dev_info["name"], dev_info["name"])
         dev_idx = self.output_device_combo.findData(current_device)
         self.output_device_combo.setCurrentIndex(0 if dev_idx < 0 else dev_idx)

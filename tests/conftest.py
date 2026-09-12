@@ -55,7 +55,13 @@ def sample_tracks():
     from app.models.entities import Track
 
     return [
-        Track(id="t1", path="music/a.flac", title="A", artist="Artist A", album="Album A", duration_sec=180.0, track_no=1),
-        Track(id="t2", path="music/b.flac", title="B", artist="Artist B", album="Album B", duration_sec=240.0, track_no=2),
-        Track(id="t3", path="music/c.flac", title="C", artist="Artist C", album="Album C", duration_sec=300.0, track_no=3),
+        Track(
+            id="t1", path="music/a.flac", title="A", artist="Artist A", album="Album A", duration_sec=180.0, track_no=1
+        ),
+        Track(
+            id="t2", path="music/b.flac", title="B", artist="Artist B", album="Album B", duration_sec=240.0, track_no=2
+        ),
+        Track(
+            id="t3", path="music/c.flac", title="C", artist="Artist C", album="Album C", duration_sec=300.0, track_no=3
+        ),
     ]

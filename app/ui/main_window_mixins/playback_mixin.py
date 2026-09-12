@@ -247,9 +247,7 @@ class MainWindowPlaybackMixin:
             and str(getattr(self.controller.settings, "random_display_order", "original")) == "random"
         ):
             ordered_ids = self.player.display_ordered_track_ids()
-            tracks = [
-                t for tid in ordered_ids if (t := self.player.library.get_track(tid)) is not None
-            ]
+            tracks = [t for tid in ordered_ids if (t := self.player.library.get_track(tid)) is not None]
         else:
             tracks = self.player.search_playlist_tracks("")
 

@@ -7,6 +7,7 @@ from app.models.entities import Playlist, SessionState, Settings, Track, new_id
 
 # ---- new_id ----
 
+
 def test_new_id_returns_32_char_hex():
     sid = new_id()
     assert isinstance(sid, str)
@@ -20,6 +21,7 @@ def test_new_id_unique():
 
 
 # ============ Track ============
+
 
 def test_track_required_fields():
     track = Track(id="t1", path="music/a.flac", title="A")
@@ -51,11 +53,21 @@ def test_track_path_obj():
 
 def test_track_to_dict_from_dict_roundtrip():
     track = Track(
-        id="t1", path="music/a.flac", title="A", artist="AR", album="AL",
-        duration_sec=123.4, track_no=5, year="2020", added_at=1700000000.0,
-        source_track_id="src1", source_storage_relpath="rel/a",
-        source_lyrics_storage_relpath="rel/a.lrc", source_lyrics_path="/abs/a.lrc",
-        extra_lyrics_paths="/alt/a.lrc", source_sha256="hash1",
+        id="t1",
+        path="music/a.flac",
+        title="A",
+        artist="AR",
+        album="AL",
+        duration_sec=123.4,
+        track_no=5,
+        year="2020",
+        added_at=1700000000.0,
+        source_track_id="src1",
+        source_storage_relpath="rel/a",
+        source_lyrics_storage_relpath="rel/a.lrc",
+        source_lyrics_path="/abs/a.lrc",
+        extra_lyrics_paths="/alt/a.lrc",
+        source_sha256="hash1",
     )
     d = track.to_dict()
     restored = Track.from_dict(d)
@@ -92,15 +104,27 @@ def test_track_to_dict_keys_complete():
     track = Track(id="t1", path="p", title="A")
     d = track.to_dict()
     expected_keys = {
-        "id", "path", "title", "artist", "album", "duration_sec", "track_no",
-        "year", "added_at", "source_track_id", "source_storage_relpath",
-        "source_lyrics_storage_relpath", "source_lyrics_path",
-        "extra_lyrics_paths", "source_sha256",
+        "id",
+        "path",
+        "title",
+        "artist",
+        "album",
+        "duration_sec",
+        "track_no",
+        "year",
+        "added_at",
+        "source_track_id",
+        "source_storage_relpath",
+        "source_lyrics_storage_relpath",
+        "source_lyrics_path",
+        "extra_lyrics_paths",
+        "source_sha256",
     }
     assert set(d.keys()) == expected_keys
 
 
 # ============ Playlist ============
+
 
 def test_playlist_required_fields():
     pl = Playlist(id="p1", name="我的歌单")
@@ -123,9 +147,17 @@ def test_playlist_default_values():
 
 def test_playlist_to_dict_from_dict_roundtrip():
     pl = Playlist(
-        id="p1", name="PL", track_ids=["t1", "t2"], created_at=1.0, updated_at=2.0,
-        source_schema="v1", source_file="f.json", source_playlist_hash="h",
-        source_database_location="db", source_exported_at="2024", ordered=False,
+        id="p1",
+        name="PL",
+        track_ids=["t1", "t2"],
+        created_at=1.0,
+        updated_at=2.0,
+        source_schema="v1",
+        source_file="f.json",
+        source_playlist_hash="h",
+        source_database_location="db",
+        source_exported_at="2024",
+        ordered=False,
     )
     d = pl.to_dict()
     restored = Playlist.from_dict(d)
@@ -176,6 +208,7 @@ def test_playlist_from_dict_track_ids_coerced_to_str():
 
 # ============ SessionState ============
 
+
 def test_session_state_defaults():
     s = SessionState()
     assert s.current_playlist_id is None
@@ -192,9 +225,16 @@ def test_session_state_defaults():
 
 def test_session_state_to_dict_from_dict_roundtrip():
     s = SessionState(
-        current_playlist_id="p1", current_track_id="t1", position_sec=42.5,
-        volume=0.7, play_mode="random", random_seed=99, random_index=3,
-        current_track_path="/music/a.flac", current_track_title="A", current_track_artist="AR",
+        current_playlist_id="p1",
+        current_track_id="t1",
+        position_sec=42.5,
+        volume=0.7,
+        play_mode="random",
+        random_seed=99,
+        random_index=3,
+        current_track_path="/music/a.flac",
+        current_track_title="A",
+        current_track_artist="AR",
     )
     d = s.to_dict()
     restored = SessionState.from_dict(d)
@@ -224,6 +264,7 @@ def test_session_state_from_dict_empty_uses_defaults():
 
 # ============ Settings ============
 
+
 def test_settings_defaults():
     s = Settings()
     assert s.control_host == "127.0.0.1"
@@ -246,10 +287,16 @@ def test_settings_defaults():
 
 def test_settings_to_dict_from_dict_roundtrip():
     s = Settings(
-        control_host="0.0.0.0", control_port=5000, control_interface_enabled=True,
-        auto_restore_session=False, global_gain_boost=2.0, read_strategy="full",
-        dark_theme=False, timed_save_minutes=30,
-        interface_shortcuts={"play": "Ctrl+P"}, global_shortcuts={"next": "Ctrl+Right"},
+        control_host="0.0.0.0",
+        control_port=5000,
+        control_interface_enabled=True,
+        auto_restore_session=False,
+        global_gain_boost=2.0,
+        read_strategy="full",
+        dark_theme=False,
+        timed_save_minutes=30,
+        interface_shortcuts={"play": "Ctrl+P"},
+        global_shortcuts={"next": "Ctrl+Right"},
     )
     d = s.to_dict()
     restored = Settings.from_dict(d)

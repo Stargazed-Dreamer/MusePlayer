@@ -1540,9 +1540,7 @@ def _make_lock_icon(locked: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
             p.setBrush(icon_color)
             p.setPen(Qt.PenStyle.NoPen)
             p.drawEllipse(QRectF(10.9, 13.0, 2.2, 2.2))
-            p.setPen(
-                QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-            )
+            p.setPen(QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
             p.drawLine(12.0, 15.0, 12.0, 17.0)
             p.setBrush(QColor(0, 0, 0, 0))
         else:
@@ -1580,9 +1578,7 @@ def _make_pin_icon(pinned: bool, *, color: QColor | str = "#f4f4f4") -> QIcon:
         p.drawEllipse(QRectF(5.5, 2.5, 13.0, 5.5))  # 宽 13、高 5.5，明显扁平
 
         # 针杆（尖锐三角，向下汇聚到一点）
-        p.setPen(
-            QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-        )
+        p.setPen(QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         p.setBrush(QColor(0, 0, 0, 0))
         needle = QPainterPath()
         needle.moveTo(9.8, 7.8)

@@ -1078,7 +1078,9 @@ class LibraryService:
         # 规范化输入的基础名称（例如去除首尾空格等）
         base = self._normalize_playlist_name(base_name)
         # 创建一个集合，包含所有现有播放列表的规范化名称（已去除首尾空格并转为小写），排除“所有歌曲”播放列表
-        used = {playlist.name.strip().casefold() for playlist in self._playlists.values() if playlist.id != ALL_SONGS_ID}
+        used = {
+            playlist.name.strip().casefold() for playlist in self._playlists.values() if playlist.id != ALL_SONGS_ID
+        }
         # 检查规范化后的基础名称（转为小写）是否已存在于已使用名称集合中
         if base.casefold() not in used:
             # 如果不存在，直接返回该名称

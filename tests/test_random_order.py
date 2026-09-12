@@ -7,6 +7,7 @@ from app.services.random_order import DeterministicShuffle, ShuffleCursor
 
 # ---- ShuffleCursor ----
 
+
 def test_shuffle_cursor_fields():
     cursor = ShuffleCursor(seed=42, index=3)
     assert cursor.seed == 42
@@ -21,6 +22,7 @@ def test_shuffle_cursor_is_dataclass_like():
 
 
 # ---- make_order 确定性 ----
+
 
 def test_make_order_deterministic_same_seed():
     ids = ["t1", "t2", "t3", "t4", "t5"]
@@ -38,6 +40,7 @@ def test_make_order_different_seed_likely_different():
 
 # ---- make_order 元素完整性 ----
 
+
 def test_make_order_contains_all_elements():
     ids = ["a", "b", "c", "d", "e"]
     order = DeterministicShuffle.make_order(ids, 99)
@@ -52,6 +55,7 @@ def test_make_order_no_duplicates():
 
 
 # ---- make_order 边界情况 ----
+
 
 def test_make_order_empty_list():
     assert DeterministicShuffle.make_order([], 123) == []
@@ -69,6 +73,7 @@ def test_make_order_two_elements_stable():
 
 # ---- seed 不影响元素集合 ----
 
+
 def test_make_order_seed_does_not_change_element_set():
     ids = ["x1", "x2", "x3", "x4"]
     for seed in range(10):
@@ -77,6 +82,7 @@ def test_make_order_seed_does_not_change_element_set():
 
 
 # ---- 大规模输入 ----
+
 
 def test_make_order_large_scale_correctness_and_performance():
     ids = [f"track-{i:04d}" for i in range(1000)]
@@ -92,6 +98,7 @@ def test_make_order_large_scale_correctness_and_performance():
 
 # ---- seed 类型转换 ----
 
+
 def test_make_order_seed_int_conversion():
     ids = ["t1", "t2", "t3"]
     order_int = DeterministicShuffle.make_order(ids, 5)
@@ -101,6 +108,7 @@ def test_make_order_seed_int_conversion():
 
 
 # ---- 排序键验证 ----
+
 
 def test_make_order_matches_sha256_sort_key():
     """验证排序键确实基于 sha256(f'{seed}:{track_id}')。"""
@@ -115,6 +123,7 @@ def test_make_order_matches_sha256_sort_key():
 
 
 # ---- clamp_index ----
+
 
 def test_clamp_index_empty_order():
     assert DeterministicShuffle.clamp_index([], 5) == 0
@@ -147,6 +156,7 @@ def test_clamp_index_int_conversion():
 
 
 # ---- locate_track ----
+
 
 def test_locate_track_found():
     ids = ["t1", "t2", "t3", "t4"]

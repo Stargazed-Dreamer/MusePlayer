@@ -9,6 +9,7 @@ from app.models.settings_store import SettingsStore
 
 # ============ LibraryStore ============
 
+
 def test_library_store_load_missing_file(tmp_path):
     store = LibraryStore(tmp_path)
     tracks, playlists, active = store.load()
@@ -127,6 +128,7 @@ def test_library_store_load_track_and_playlist_missing_file(tmp_path):
 
 # ============ SessionStore ============
 
+
 def test_session_store_load_missing_file(tmp_path):
     store = SessionStore(tmp_path)
     state = store.load()
@@ -153,9 +155,16 @@ def test_session_store_load_non_dict_payload(tmp_path):
 def test_session_store_save_load_roundtrip(tmp_path):
     store = SessionStore(tmp_path)
     state = SessionState(
-        current_playlist_id="p1", current_track_id="t1", position_sec=42.5,
-        volume=0.7, play_mode="random", random_seed=99, random_index=3,
-        current_track_path="/a.flac", current_track_title="A", current_track_artist="AR",
+        current_playlist_id="p1",
+        current_track_id="t1",
+        position_sec=42.5,
+        volume=0.7,
+        play_mode="random",
+        random_seed=99,
+        random_index=3,
+        current_track_path="/a.flac",
+        current_track_title="A",
+        current_track_artist="AR",
     )
     store.save(state)
     loaded = store.load()
@@ -170,6 +179,7 @@ def test_session_store_save_creates_parent_dir(tmp_path):
 
 
 # ============ SettingsStore ============
+
 
 def test_settings_store_load_missing_file(tmp_path):
     store = SettingsStore(tmp_path)
@@ -189,7 +199,7 @@ def test_settings_store_load_corrupt_json(tmp_path):
 def test_settings_store_load_non_dict_payload(tmp_path):
     store = SettingsStore(tmp_path)
     store._path.parent.mkdir(parents=True, exist_ok=True)
-    store._path.write_text("\"just a string\"", encoding="utf-8")
+    store._path.write_text('"just a string"', encoding="utf-8")
     s = store.load()
     assert s == Settings()
 
@@ -197,8 +207,11 @@ def test_settings_store_load_non_dict_payload(tmp_path):
 def test_settings_store_save_load_roundtrip(tmp_path):
     store = SettingsStore(tmp_path)
     s = Settings(
-        control_port=5000, dark_theme=False, global_gain_boost=2.0,
-        read_strategy="full", interface_shortcuts={"play": "Ctrl+P"},
+        control_port=5000,
+        dark_theme=False,
+        global_gain_boost=2.0,
+        read_strategy="full",
+        interface_shortcuts={"play": "Ctrl+P"},
     )
     store.save(s)
     loaded = store.load()

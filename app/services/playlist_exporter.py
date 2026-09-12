@@ -281,7 +281,9 @@ class PlaylistExporter:
                 return ""
             try:
                 # 将绝对路径转换为相对于 db_root 的路径，并统一使用正斜杠
-                return self._library._normalize_relpath(str(Path(lyrics_abs).resolve().relative_to(db_root)).replace("\\", "/"))
+                return self._library._normalize_relpath(
+                    str(Path(lyrics_abs).resolve().relative_to(db_root)).replace("\\", "/")
+                )
             except Exception as exc:
                 # 路径不在 db_root 下时回退为文件名，导出仍可继续
                 logger.debug("歌词绝对路径转相对路径失败，回退文件名 %s: %s", lyrics_abs, exc)
@@ -294,7 +296,9 @@ class PlaylistExporter:
             return rel
         try:
             # 将 track.path 的绝对路径转换为相对于 db_root 的路径，并统一使用正斜杠
-            return self._library._normalize_relpath(str(Path(track.path).resolve().relative_to(db_root)).replace("\\", "/"))
+            return self._library._normalize_relpath(
+                str(Path(track.path).resolve().relative_to(db_root)).replace("\\", "/")
+            )
         except Exception as exc:
             # 路径不在 db_root 下时回退为文件名，导出仍可继续
             logger.debug("曲目路径转相对路径失败，回退文件名 %s: %s", track.path, exc)

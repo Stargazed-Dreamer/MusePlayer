@@ -6,6 +6,7 @@ from app.services.playback_stats_service import PlaybackStatsEntry, PlaybackStat
 
 # ============ 初始化 ============
 
+
 def test_stats_service_init_empty(tmp_path):
     svc = PlaybackStatsService(tmp_path)
     assert svc.export_stats_for_track("any") is None
@@ -31,6 +32,7 @@ def test_stats_service_load_invalid_payload_structure(tmp_path):
 
 
 # ============ record_play_start ============
+
 
 def test_record_play_start_active(tmp_path):
     svc = PlaybackStatsService(tmp_path)
@@ -58,6 +60,7 @@ def test_record_play_start_empty_track_id_ignored(tmp_path):
 
 # ============ record_complete_play / record_early_skip ============
 
+
 def test_record_complete_play(tmp_path):
     svc = PlaybackStatsService(tmp_path)
     svc.record_complete_play("t1")
@@ -79,6 +82,7 @@ def test_record_complete_play_empty_track_id_ignored(tmp_path):
 
 
 # ============ record_play_progress ============
+
 
 def test_record_play_progress_accumulates_seconds(tmp_path):
     svc = PlaybackStatsService(tmp_path)
@@ -109,6 +113,7 @@ def test_record_play_progress_zero_duration(tmp_path):
 
 
 # ============ 累积统计 ============
+
 
 def test_stats_accumulation_multiple_plays(tmp_path):
     svc = PlaybackStatsService(tmp_path)
@@ -143,6 +148,7 @@ def test_peak_session_play_count_updates(tmp_path):
 
 
 # ============ save_if_dirty / load 往返 ============
+
 
 def test_save_if_dirty_roundtrip(tmp_path):
     svc = PlaybackStatsService(tmp_path)
@@ -192,6 +198,7 @@ def test_save_if_dirty_after_new_change_writes_again(tmp_path):
 
 # ============ remove_track / reset_early_skip_count ============
 
+
 def test_remove_track(tmp_path):
     svc = PlaybackStatsService(tmp_path)
     svc.record_play_start("t1", active_request=True)
@@ -225,6 +232,7 @@ def test_reset_early_skip_count_empty_id_ignored(tmp_path):
 
 # ============ 不存在的 track_id ============
 
+
 def test_export_stats_for_nonexistent_returns_none(tmp_path):
     svc = PlaybackStatsService(tmp_path)
     assert svc.export_stats_for_track("nonexistent") is None
@@ -237,11 +245,19 @@ def test_export_stats_empty_track_id_returns_none(tmp_path):
 
 # ============ PlaybackStatsEntry 序列化 ============
 
+
 def test_entry_to_dict_from_dict_roundtrip():
     entry = PlaybackStatsEntry(
-        track_id="t1", play_count=5, active_play_count=3, early_skip_count=1,
-        complete_play_count=2, played_seconds_total=120.0, played_percent_total=40.0,
-        peak_session_play_count=5, peak_session_play_at=1700000000.0, updated_at=1700000001.0,
+        track_id="t1",
+        play_count=5,
+        active_play_count=3,
+        early_skip_count=1,
+        complete_play_count=2,
+        played_seconds_total=120.0,
+        played_percent_total=40.0,
+        peak_session_play_count=5,
+        peak_session_play_at=1700000000.0,
+        updated_at=1700000001.0,
     )
     d = entry.to_dict()
     restored = PlaybackStatsEntry.from_dict(d)
@@ -249,10 +265,14 @@ def test_entry_to_dict_from_dict_roundtrip():
 
 
 def test_entry_from_dict_clamps_negative_values():
-    entry = PlaybackStatsEntry.from_dict({
-        "track_id": "t1", "play_count": -5, "played_seconds_total": -10.0,
-        "early_skip_count": -1,
-    })
+    entry = PlaybackStatsEntry.from_dict(
+        {
+            "track_id": "t1",
+            "play_count": -5,
+            "played_seconds_total": -10.0,
+            "early_skip_count": -1,
+        }
+    )
     assert entry.play_count == 0
     assert entry.played_seconds_total == 0.0
     assert entry.early_skip_count == 0
