@@ -247,6 +247,10 @@ class Settings:
     """显示日语歌词"""
     collect_playback_data: bool = True
     """是否收集播放统计信息"""
+    checkpoint_auto_year_save: bool = True
+    """跨年时自动保存上一年度统计检查点"""
+    stats_last_seen_year: int = 0
+    """上次启动时所在的年份（0 表示首次运行），用于跨年检测"""
     global_gain_boost: float = 1.0
     """全局音量增益（0.5-5.0）"""
     read_strategy: str = "window"
@@ -308,6 +312,8 @@ class Settings:
             "show_romaji": bool(self.show_romaji),
             "show_japanese_lyrics": bool(self.show_japanese_lyrics),
             "collect_playback_data": bool(self.collect_playback_data),
+            "checkpoint_auto_year_save": bool(self.checkpoint_auto_year_save),
+            "stats_last_seen_year": max(0, int(self.stats_last_seen_year)),
             "global_gain_boost": float(self.global_gain_boost),
             "read_strategy": self.read_strategy,
             "output_device": self.output_device,
@@ -368,6 +374,8 @@ class Settings:
             show_romaji=bool(data.get("show_romaji", True)),
             show_japanese_lyrics=bool(data.get("show_japanese_lyrics", True)),
             collect_playback_data=bool(data.get("collect_playback_data", True)),
+            checkpoint_auto_year_save=bool(data.get("checkpoint_auto_year_save", True)),
+            stats_last_seen_year=max(0, int(data.get("stats_last_seen_year", 0))),
             # 限制音量增益在合理范围内
             global_gain_boost=max(0.5, min(5.0, float(data.get("global_gain_boost", 1.0)))),
             read_strategy=read_strategy,

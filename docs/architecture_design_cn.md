@@ -111,15 +111,20 @@ flowchart LR
 - `play_count`：每次开始播放都记一次
 - `active_play_count`：主动触发播放计数
 - `early_skip_count`：前 5% 被切走计数
+- `complete_play_count`：完播计数（播放进度 ≥ 95% 时 +1）
 - `played_seconds_total`：累计播放秒数
 - `played_percent_total`：累计播放百分比（可超过 100%）
+- `peak_session_play_count` / `peak_session_play_at`：单次启动期间最高密集播放次数及时间（历史累计口径，无年份隔离）
+- `yearly`：年分桶（1.2.0 新增）——`{"2026": [play, active, complete, seconds, early_skip]}`，紧凑数组省字段名，只保留非零年份；旧文件无此字段时留空、累计值不受影响，历史年份不回填
 - `updated_at`：最后更新时间戳
 
 ### 3.5 Settings（设置实体）
 
 完整字段见 `docs/ARCHITECTURE.md` 第 6 节。按功能分区：
 
-**播放设置**：`auto_restore_session / enable_single_loop_mode / enable_playlist_loop_mode / prefer_playlist_order / playlist_loop_sort / random_display_order / collect_playback_data`
+**播放设置**：`auto_restore_session / enable_single_loop_mode / enable_playlist_loop_mode / prefer_playlist_order / playlist_loop_sort / random_display_order / collect_playback_data / checkpoint_auto_year_save / stats_last_seen_year`
+
+其中 `checkpoint_auto_year_save`（跨年自动保存统计检查点，默认开）与 `stats_last_seen_year`（上次启动年份，跨年检测用）为 1.2.0 新增。
 
 **歌词设置**：`show_japanese_lyrics / show_romaji`
 
@@ -261,7 +266,28 @@ flowchart LR
 - 关闭：`shutdown()`
 - 兜底：`aboutToQuit / atexit / sys.excepthook / threading.excepthook / SIGINT/SIGTERM`
 
-### 7.4 日志系统
+### 7.4 时间维度与年度报告（1.2.0 新增）
+
+`playback_stats.json` 从 `{"tracks": {...}}` 扩展为 `{"tracks": {...}, "aggregate": {...}}`（数据格式版本 1.0 → 1.1，旧文件自动兼容）。
+
+**年分桶（每曲目 `yearly` 字段）**：四个统计记录点（播放起点/进度/完播/早期跳过）同步累加当前年份桶，写盘开销约 35 字节/曲/年。"今年新听的歌"纯推导：曲目最早的非零年份桶 == 目标年份。
+
+**全局聚合块（`aggregate`）**：与曲目分桶同脏标记、同盘落盘。
+- `monthly`：`{"2026": {"play": [12], "seconds": [12]}}`，月度节奏图数据源
+- `hours`：`{"2026": [24]}`，24 小时分布（"时段偏好"趣味卡）
+- `daily_peak`：`{"2026": {"date": "YYYY-MM-DD", "count": n}}`，"最狂热的一天"，仅破纪录时写
+
+**检查点（`stats_checkpoint_service.py`）**：统计的只写只读快照，存 `data/checkpoints/<id>.json`，schema `museplayer_stats_checkpoint_v1`，含曲目全量 + 聚合块。支持保存（默认名"年份+月份"，可自定义）、查看、改名（仅显示名）、删除；数据本体无编辑入口。跨年自动保存：启动时 `Settings.stats_last_seen_year` 与当前年份不同 → 自动存档"{上一年} 年度报告"（`auto` 标签），受 `checkpoint_auto_year_save` 开关控制；首次运行只记录年份。
+
+**年度报告（`stats_report_builder.py`，纯逻辑零 Qt）**：
+- 数据源 `ReportSource`：`("year", 年份)` 读年分桶实时统计；`("checkpoint", id)` 读快照（累计口径：KPI 为保存时刻累计值，月度/小时为快照内各年求和）。
+- 对比 `apply_comparison`：KPI 百分比变化 + Top10 排名 ▲▼/NEW 标记。主副不允许同源（UI 层拦截）。
+- 入口：菜单「统计 → 检查点管理」「统计 → 生成年度报告」（`stats_checkpoint_dialog.py` / `stats_report_dialog.py`）。
+- 导出（`stats_report_exporter.py`）：自包含 HTML（深色调、与主题同配色）/ PNG（报告页截图）/ TXT 纯文本摘要。
+
+**已知口径限制**：`peak_session_play_count` 为历史累计峰值、无年份隔离，年度视图的"单曲循环之王"用该年分桶播放数最大曲目近似；"探索 vs 怀旧"仅在年份视图提供（检查点快照无年份桶历史）。
+
+### 7.5 日志系统
 - 应用日志：`logging_enabled` 控制，同一次运行始终使用同一个日志文件
 - 崩溃日志：`crash_logging_enabled` 控制，使用固定 `crashlog.log` 文件，崩溃后由后处理程序改名持久化
 - 数据维护日志：`data_maintenance_logging_enabled` 控制，记录数据清理操作

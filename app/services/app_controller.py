@@ -23,6 +23,7 @@ from app.services.library_service import ALL_SONGS_ID, LibraryService
 from app.services.metadata_service import MetadataService
 from app.services.playback_stats_service import PlaybackStatsService
 from app.services.player_service import PlayerService, PlayMode
+from app.services.stats_checkpoint_service import StatsCheckpointService
 from app.utils import configure_logging, get_logger
 
 
@@ -62,6 +63,7 @@ class AppController(QObject):
         self.metadata_service = None
         self.library_service = None
         self.playback_stats_service = None
+        self.stats_checkpoint_service = None
         self.player_service = None
         self.control_server = None
         self._session_restored = False
@@ -96,6 +98,28 @@ class AppController(QObject):
             "remove_track_from_playlist": self._cmd_remove_track_from_playlist,
         }
 
+    def _auto_save_year_checkpoint(self) -> None:
+        """跨年自动保存检查点（启动时调用）。
+
+        本次启动年份与上次启动不同 → 自动保存一份"{上一年} 年度报告"检查点；
+        开关关闭时仅推进 last_seen_year，不产生存档。首次运行只记录年份。
+        """
+        if self.stats_checkpoint_service is None:
+            return
+        import time as _time
+
+        current_year = _time.localtime().tm_year
+        last_seen = int(getattr(self.settings, "stats_last_seen_year", 0) or 0)
+        if not bool(getattr(self.settings, "checkpoint_auto_year_save", True)):
+            self.settings.stats_last_seen_year = current_year
+            return
+        meta, latest = self.stats_checkpoint_service.auto_save_if_year_rolled(
+            self.playback_stats_service.snapshot_payload(), last_seen, current_year
+        )
+        self.settings.stats_last_seen_year = latest
+        if meta is not None:
+            self.logger.info("跨年自动保存统计检查点：%s（%d 首）", meta.name, meta.track_count)
+
     def initialize_services(self) -> None:
         """初始化库服务、播放器、控制服务器等重服务。
 
@@ -118,6 +142,8 @@ class AppController(QObject):
         )
 
         self.playback_stats_service = PlaybackStatsService(self.data_dir)
+        self.stats_checkpoint_service = StatsCheckpointService(self.data_dir)
+        self._auto_save_year_checkpoint()
         self.player_service = PlayerService(
             self.library_service,
             playback_stats_service=self.playback_stats_service,

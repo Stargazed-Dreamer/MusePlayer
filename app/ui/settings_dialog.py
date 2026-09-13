@@ -122,6 +122,9 @@ class SettingsDialog(QDialog):
         self.collect_playback_data_check = QCheckBox("收集播放数据")
         self.collect_playback_data_check.setChecked(bool(self._settings.collect_playback_data))
 
+        self.checkpoint_auto_year_save_check = QCheckBox("跨年时自动保存上一年度统计检查点")
+        self.checkpoint_auto_year_save_check.setChecked(bool(self._settings.checkpoint_auto_year_save))
+
         form.addRow(self.auto_restore_check)
         form.addRow(self.single_loop_mode_check)
         form.addRow(self.playlist_loop_mode_check)
@@ -129,6 +132,7 @@ class SettingsDialog(QDialog):
         form.addRow(self.prefer_playlist_order_check)
         form.addRow("随机模式显示顺序", self.random_display_order_combo)
         form.addRow(self.collect_playback_data_check)
+        form.addRow(self.checkpoint_auto_year_save_check)
 
         parent_layout.addWidget(group)
 
@@ -392,6 +396,8 @@ class SettingsDialog(QDialog):
             show_romaji=bool(self.show_romaji_check.isChecked()),
             show_japanese_lyrics=bool(self.show_japanese_lyrics_check.isChecked()),
             collect_playback_data=bool(self.collect_playback_data_check.isChecked()),
+            checkpoint_auto_year_save=bool(self.checkpoint_auto_year_save_check.isChecked()),
+            stats_last_seen_year=int(getattr(self._settings, "stats_last_seen_year", 0)),
             global_gain_boost=float(self.gain_boost_spin.value()),
             read_strategy=str(self.read_strategy_combo.currentData() or "window"),
             output_device=str(self.output_device_combo.currentData() or ""),

@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>听歌统计 — 双界面设计稿（MusePlayer）</title>
+<style>
+  :root {
+    --bg: #16181d;
+    --bg-elev: #1e2128;
+    --bg-elev2: #262a33;
+    --border: #333844;
+    --text: #e6e8ee;
+    --text-dim: #9aa1ad;
+    --text-faint: #6b7280;
+    --accent: #7aa2f7;
+    --accent-soft: rgba(122, 162, 247, 0.14);
+    --up: #9ece6a;
+    --down: #f7768e;
+    --gold: #e0af68;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 24px 32px 60px;
+    max-width: 1060px;
+    margin: 0 auto;
+  }
+  .hint {
+    background: var(--accent-soft);
+    border: 1px dashed var(--accent);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 26px;
+  }
+  .screen-label {
+    display: inline-block;
+    background: var(--accent);
+    color: #10131a;
+    font-weight: 700;
+    font-size: 13px;
+    border-radius: 6px;
+    padding: 3px 12px;
+    margin: 30px 0 4px;
+  }
+  .screen-desc { font-size: 12.5px; color: var(--text-faint); margin-bottom: 14px; }
+  h2 { font-size: 15px; margin: 26px 0 12px; display: flex; align-items: center; gap: 8px; }
+  h2::before { content: ""; width: 4px; height: 15px; background: var(--accent); border-radius: 2px; }
+  h2:first-child { margin-top: 0; }
+  .note { font-size: 12px; color: var(--text-faint); margin: 4px 0 10px; }
+
+  /* ===== 模拟窗口外框 ===== */
+  .win {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+    overflow: hidden;
+  }
+  .win-bar {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--bg-elev2);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 14px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+  .win-bar .dots { display: flex; gap: 5px; }
+  .win-bar .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--border); }
+  .win-body { padding: 20px 24px; }
+
+  .card {
+    background: var(--bg-elev2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  button, select {
+    background: var(--bg-elev2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 14px;
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+  }
+  button:hover, select:hover { border-color: var(--accent); }
+  .primary { background: var(--accent); color: #10131a; border-color: var(--accent); font-weight: 600; }
+  .danger { color: var(--down); }
+
+  /* ===== 界面 A：检查点管理 ===== */
+  .cp-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 10px; flex-wrap: wrap; }
+  .cp-toolbar .left { display: flex; gap: 10px; align-items: center; }
+  .cp-count { font-size: 12px; color: var(--text-faint); }
+  .cp-list { display: flex; flex-direction: column; gap: 8px; }
+  .cp-item {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--bg-elev2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 11px 16px;
+  }
+  .cp-icon {
+    width: 36px; height: 36px; border-radius: 8px;
+    background: var(--accent-soft);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px; flex-shrink: 0;
+  }
+  .cp-main { flex: 1; min-width: 0; }
+  .cp-name { font-weight: 600; font-size: 14px; }
+  .auto-tag {
+    font-size: 10px; border: 1px solid var(--border);
+    color: var(--text-faint); border-radius: 4px; padding: 1px 6px; margin-left: 8px;
+    vertical-align: 1px;
+  }
+  .cp-meta { color: var(--text-faint); font-size: 11.5px; margin-top: 1px; }
+  .cp-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .cp-actions button { padding: 4px 11px; font-size: 12px; }
+
+  /* ===== 界面 B：报告生成向导 ===== */
+  .wizard { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .pick-box h3 { font-size: 13.5px; margin-bottom: 8px; color: var(--text-dim); }
+  .pick-box h3 b { color: var(--accent); }
+  .pick-list { display: flex; flex-direction: column; gap: 8px; }
+  .pick-item {
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+    background: var(--bg-elev);
+  }
+  .pick-item:hover { border-color: var(--accent); }
+  .pick-item.sel { border-color: var(--accent); background: var(--accent-soft); }
+  .pick-item.sel::after { content: "✓"; margin-left: auto; color: var(--accent); font-weight: 700; }
+  .pick-item .pn { font-weight: 600; }
+  .pick-item .pm { font-size: 11px; color: var(--text-faint); }
+  .radio-dot {
+    width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid var(--text-faint); flex-shrink: 0;
+  }
+  .pick-item.sel .radio-dot { border-color: var(--accent); background: var(--accent); }
+  .wizard-foot { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 18px; }
+  .wizard-foot .tip { font-size: 12px; color: var(--text-faint); margin-right: auto; }
+
+  /* ===== 报告窗口 ===== */
+  .report-head { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+  .report-head h1 { font-size: 24px; }
+  .report-head .sub { color: var(--text-dim); font-size: 12.5px; }
+  .compare-banner {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--accent-soft);
+    border: 1px solid rgba(122,162,247,0.4);
+    border-radius: 10px;
+    padding: 8px 16px;
+    font-size: 12.5px;
+    margin-bottom: 16px;
+  }
+  .compare-banner b { color: var(--accent); }
+  .compare-banner .re-pick { margin-left: auto; }
+
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
+  .kpi .label { color: var(--text-dim); font-size: 12px; }
+  .kpi .value { font-size: 24px; font-weight: 700; margin: 1px 0; }
+  .kpi .value small { font-size: 12px; font-weight: 400; color: var(--text-dim); margin-left: 3px; }
+  .delta { font-size: 11.5px; }
+  .delta.up { color: var(--up); }
+  .delta.down { color: var(--down); }
+
+  .month-chart { display: flex; align-items: flex-end; gap: 6px; height: 130px; margin-top: 12px; }
+  .month-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; height: 100%; }
+  .month-bar {
+    width: 70%;
+    background: linear-gradient(180deg, var(--accent), rgba(122,162,247,0.35));
+    border-radius: 5px 5px 2px 2px; min-height: 3px; position: relative;
+  }
+  .month-bar:hover::after {
+    content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 50%;
+    transform: translateX(-50%); background: #000; color: #fff; padding: 3px 8px;
+    border-radius: 6px; font-size: 11px; white-space: nowrap; z-index: 5;
+  }
+  .month-col .m { font-size: 11px; color: var(--text-faint); }
+  .month-bar.prev { background: var(--bg-elev2); position: absolute; }
+
+  .two-col { display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; margin-top: 12px; }
+  .top-row { display: flex; align-items: center; gap: 12px; padding: 8px 4px; border-bottom: 1px solid var(--border); }
+  .top-row:last-child { border-bottom: none; }
+  .top-rank {
+    width: 24px; height: 24px; border-radius: 50%;
+    background: var(--bg); color: var(--text-dim);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11.5px; font-weight: 700; flex-shrink: 0;
+  }
+  .top-rank.gold { background: var(--gold); color: #1a1508; }
+  .top-info { flex: 1; min-width: 0; }
+  .top-info .t { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top-info .a { font-size: 11px; color: var(--text-dim); }
+  .top-delta { font-size: 11px; font-weight: 700; flex-shrink: 0; }
+  .top-delta.up { color: var(--up); }
+  .top-delta.down { color: var(--down); }
+  .top-delta.new { color: var(--gold); }
+  .top-count { text-align: right; flex-shrink: 0; }
+  .top-count .n { font-weight: 700; font-size: 13.5px; }
+  .top-count .u { font-size: 10px; color: var(--text-faint); }
+  .artist-row { display: flex; justify-content: space-between; padding: 7px 4px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .artist-row:last-child { border-bottom: none; }
+  .artist-row .ac { color: var(--text-dim); font-size: 12px; }
+
+  .fun-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+  .fun-card .emoji { font-size: 22px; }
+  .fun-card .fv { font-size: 18px; font-weight: 700; margin: 3px 0; }
+  .fun-card .fd { font-size: 12px; color: var(--text-dim); }
+
+  @media (max-width: 880px) {
+    .kpi-grid, .fun-grid { grid-template-columns: repeat(2, 1fr); }
+    .two-col, .wizard { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hint">
+MusePlayer 听歌统计 — 双界面设计稿（数据为示例）。菜单栏新增「统计」主菜单，含两个子项：
+<b>统计 → 检查点管理</b>、<b>统计 → 生成年度报告</b>。两窗口互相独立。
+</div>
+
+<!-- ================================================================ -->
+<!-- 界面 A：检查点管理 -->
+<!-- ================================================================ -->
+<span class="screen-label">界面 A · 统计 → 检查点管理</span>
+<p class="screen-desc">独立对话框：检查点的增、删、查、改名。检查点 = 统计数据的只读快照，保存后不可修改数据本身。</p>
+
+<div class="win">
+  <div class="win-bar">
+    <span class="dots"><i></i><i></i><i></i></span>
+    检查点管理 — MusePlayer
+  </div>
+  <div class="win-body">
+    <div class="cp-toolbar">
+      <div class="left">
+        <button class="primary">＋ 保存当前为检查点</button>
+        <span class="cp-count">共 3 个 · 存放于 data/checkpoints/</span>
+      </div>
+      <select>
+        <option>按时间排序（新→旧）</option>
+        <option>按名称排序</option>
+      </select>
+    </div>
+
+    <div class="cp-list">
+      <div class="cp-item">
+        <div class="cp-icon">📅</div>
+        <div class="cp-main">
+          <div class="cp-name">2025 年度报告<span class="auto-tag">跨年自动保存</span></div>
+          <div class="cp-meta">保存于 2026-01-03 09:12 · 1,204 首曲目 · 3,899 次播放 · 289 小时</div>
+        </div>
+        <div class="cp-actions">
+          <button>查看</button>
+          <button>改名</button>
+          <button>删除</button>
+        </div>
+      </div>
+      <div class="cp-item">
+        <div class="cp-icon">✨</div>
+        <div class="cp-main">
+          <div class="cp-name">毕业那晚</div>
+          <div class="cp-meta">保存于 2026-06-20 23:47 · 自定义命名 · 1,516 首曲目 · 2,214 次播放 · 168 小时</div>
+        </div>
+        <div class="cp-actions">
+          <button>查看</button>
+          <button>改名</button>
+          <button>删除</button>
+        </div>
+      </div>
+      <div class="cp-item">
+        <div class="cp-icon">📅</div>
+        <div class="cp-main">
+          <div class="cp-name">2026年1月</div>
+          <div class="cp-meta">保存于 2026-01-31 18:02 · 默认命名 · 1,190 首曲目 · 302 次播放 · 21 小时</div>
+        </div>
+        <div class="cp-actions">
+          <button>查看</button>
+          <button>改名</button>
+          <button>删除</button>
+        </div>
+      </div>
+    </div>
+
+    <p class="note" style="margin-top:14px">
+      · 「保存当前为检查点」弹出命名框，默认填入「2026年9月」，可改为任意纪念名。<br>
+      · 「改名」只改显示名称，快照数据只读。<br>
+      · 「删除」需二次确认。<br>
+      · 跨年自动保存（默认开启，设置中可关）：启动时发现与上次启动不同年 → 自动保存上一年度检查点。
+    </p>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- 界面 B-1：报告生成向导 -->
+<!-- ================================================================ -->
+<span class="screen-label">界面 B-1 · 统计 → 生成年度报告（选择主/副）</span>
+<p class="screen-desc">先选主数据（看谁）和副数据（和谁比，可不比），点「生成报告」后弹出独立的报告查看窗口。</p>
+
+<div class="win">
+  <div class="win-bar">
+    <span class="dots"><i></i><i></i><i></i></span>
+    生成年度报告 — MusePlayer
+  </div>
+  <div class="win-body">
+    <div class="wizard">
+      <div class="pick-box">
+        <h3>① 选择<b>主数据</b>（查看谁的数据）</h3>
+        <div class="pick-list">
+          <div class="pick-item sel"><span class="radio-dot"></span><div><div class="pn">2026 年（至今）</div><div class="pm">按年分桶实时统计 · 4,382 次播放</div></div></div>
+          <div class="pick-item"><span class="radio-dot"></span><div><div class="pn">2025 年</div><div class="pm">按年分桶统计 · 3,899 次播放</div></div></div>
+          <div class="pick-item"><span class="radio-dot"></span><div><div class="pn">检查点「毕业那晚」</div><div class="pm">快照 · 2026-06-20 · 2,214 次播放</div></div></div>
+          <div class="pick-item"><span class="radio-dot"></span><div><div class="pn">检查点「2025 年度报告」</div><div class="pm">快照 · 2026-01-03 · 3,899 次播放</div></div></div>
+          <div class="pick-item"><span class="radio-dot"></span><div><div class="pn">检查点「2026年1月」</div><div class="pm">快照 · 2026-01-31 · 302 次播放</div></div></div>
+        </div>
+      </div>
+      <div class="pick-box">
+        <h3>② 选择<b>副数据</b>（和谁对比，可跳过）</h3>
+        <div class="pick-list">
+          <div class="pick-item sel"><span class="radio-dot"></span><div><div class="pn">2025 年</div><div class="pm">上一自然年 · 3,899 次播放</div></div></div>
+          <div class="pick-item"><span class="radio-dot"></span><div><div class="pn">不对比</div><div class="pm">仅展示主数据本身</div></div></div>
+          <div class="pick-item"><span class="radio-dot"></span><div><div class="pn">检查点「毕业那晚」</div><div class="pm">快照 · 2026-06-20 · 2,214 次播放</div></div></div>
+          <div class="pick-item"><span class="radio-dot"></span><div><div class="pn">检查点「2026年1月」</div><div class="pm">快照 · 2026-01-31 · 302 次播放</div></div></div>
+        </div>
+        <p class="note" style="margin-top:8px">主与副不能选择同一条目；副数据可为空。</p>
+      </div>
+    </div>
+    <div class="wizard-foot">
+      <span class="tip">主数据为「年份」时按分桶统计展示；主数据为「检查点」时展示快照内容，对比的是检查点之后的增量。</span>
+      <button>取消</button>
+      <button class="primary">生成报告 →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- 界面 B-2：报告查看窗口 -->
+<!-- ================================================================ -->
+<span class="screen-label">界面 B-2 · 报告查看窗口（生成结果，独立窗口）</span>
+<p class="screen-desc">只读报告窗口；可重新选主/副再生成（重新打开向导），支持导出。窗口标题反映当前主/副组合。</p>
+
+<div class="win">
+  <div class="win-bar">
+    <span class="dots"><i></i><i></i><i></i></span>
+    年度报告：2026 vs 2025 — MusePlayer
+    <span style="margin-left:auto; display:flex; gap:8px;">
+      <button style="padding:3px 10px; font-size:11.5px;">↺ 重选主/副</button>
+      <button class="primary" style="padding:3px 10px; font-size:11.5px;">⬇ 导出</button>
+    </span>
+  </div>
+  <div class="win-body">
+    <div class="report-head">
+      <div>
+        <h1>2026 · 年度听歌报告</h1>
+        <div class="sub">统计范围：2026-01-01 至今 · 主数据：年度分桶统计</div>
+      </div>
+      <select>
+        <option>导出格式：JSON（MuseArc 兼容）</option>
+        <option>导出格式：纯文本摘要</option>
+      </select>
+    </div>
+
+    <div class="compare-banner">
+      ⚖️ 正在与 <b>2025 年</b> 对比 — <span class="delta up">▲</span>/<span class="delta down">▼</span> 为相对变化 ·
+      <span class="re-pick" style="color:var(--accent); cursor:pointer;">换一个对比对象 ↺</span>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="card kpi">
+        <div class="label">播放次数</div>
+        <div class="value">4,382</div>
+        <span class="delta up">▲ 12.4%（2025：3,899）</span>
+      </div>
+      <div class="card kpi">
+        <div class="label">听歌总时长</div>
+        <div class="value">312<small>小时</small></div>
+        <span class="delta up">▲ 8.1%（2025：289）</span>
+      </div>
+      <div class="card kpi">
+        <div class="label">完播次数</div>
+        <div class="value">2,915</div>
+        <span class="delta down">▼ 3.2%（2025：3,011）</span>
+      </div>
+      <div class="card kpi">
+        <div class="label">今年新听的歌</div>
+        <div class="value">187<small>首</small></div>
+        <span class="delta up">▲ 26 首</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0">月度听歌节奏</h2>
+      <div class="month-chart">
+        <div class="month-col"><div class="month-bar" style="height:55%" data-tip="1月 · 21.4 小时 · 302 次"></div><span class="m">1</span></div>
+        <div class="month-col"><div class="month-bar" style="height:70%" data-tip="2月 · 27.2 小时 · 381 次"></div><span class="m">2</span></div>
+        <div class="month-col"><div class="month-bar" style="height:48%" data-tip="3月 · 18.7 小时 · 260 次"></div><span class="m">3</span></div>
+        <div class="month-col"><div class="month-bar" style="height:88%" data-tip="4月 · 34.3 小时 · 470 次"></div><span class="m">4</span></div>
+        <div class="month-col"><div class="month-bar" style="height:62%" data-tip="5月 · 24.1 小时 · 336 次"></div><span class="m">5</span></div>
+        <div class="month-col"><div class="month-bar" style="height:74%" data-tip="6月 · 28.8 小时 · 402 次"></div><span class="m">6</span></div>
+        <div class="month-col"><div class="month-bar" style="height:35%" data-tip="7月 · 13.6 小时 · 190 次"></div><span class="m">7</span></div>
+        <div class="month-col"><div class="month-bar" style="height:92%" data-tip="8月 · 35.9 小时 · 490 次"></div><span class="m">8</span></div>
+        <div class="month-col"><div class="month-bar" style="height:66%" data-tip="9月 · 25.7 小时 · 358 次"></div><span class="m">9</span></div>
+        <div class="month-col"><div class="month-bar" style="height:8%" data-tip="10月 · 3.1 小时 · 45 次"></div><span class="m">10</span></div>
+        <div class="month-col"><div class="month-bar" style="height:0%" data-tip="11月 · 暂无"></div><span class="m">11</span></div>
+        <div class="month-col"><div class="month-bar" style="height:0%" data-tip="12月 · 暂无"></div><span class="m">12</span></div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="card">
+        <h2 style="margin-top:0">年度最常听 · Top 10</h2>
+        <div class="top-row">
+          <div class="top-rank gold">1</div>
+          <div class="top-info"><div class="t">夜に駆ける</div><div class="a">YOASOBI</div></div>
+          <div class="top-delta up">▲9</div>
+          <div class="top-count"><div class="n">86</div><div class="u">次播放</div></div>
+        </div>
+        <div class="top-row">
+          <div class="top-rank gold">2</div>
+          <div class="top-info"><div class="t">晴天</div><div class="a">周杰伦</div></div>
+          <div class="top-delta down">▼1</div>
+          <div class="top-count"><div class="n">74</div><div class="u">次播放</div></div>
+        </div>
+        <div class="top-row">
+          <div class="top-rank gold">3</div>
+          <div class="top-info"><div class="t">Idol</div><div class="a">YOASOBI</div></div>
+          <div class="top-delta new">NEW</div>
+          <div class="top-count"><div class="n">69</div><div class="u">次播放</div></div>
+        </div>
+        <div class="top-row">
+          <div class="top-rank">4</div>
+          <div class="top-info"><div class="t">光るなら</div><div class="a">Goose house</div></div>
+          <div class="top-delta new">NEW</div>
+          <div class="top-count"><div class="n">52</div><div class="u">次播放</div></div>
+        </div>
+        <div class="top-row">
+          <div class="top-rank">5</div>
+          <div class="top-info"><div class="t">花海</div><div class="a">周杰伦</div></div>
+          <div class="top-delta up">▲2</div>
+          <div class="top-count"><div class="n">47</div><div class="u">次播放</div></div>
+        </div>
+        <div class="top-row">
+          <div class="top-rank">6</div>
+          <div class="top-info"><div class="t">打上花火</div><div class="a">DAOKO × 米津玄師</div></div>
+          <div class="top-delta down">▼3</div>
+          <div class="top-count"><div class="n">41</div><div class="u">次播放</div></div>
+        </div>
+        <div class="top-row">
+          <div class="top-rank">7</div>
+          <div class="top-info"><div class="t">群青</div><div class="a">YOASOBI</div></div>
+          <div class="top-delta new">NEW</div>
+          <div class="top-count"><div class="n">35</div><div class="u">次播放</div></div>
+        </div>
+        <div class="top-row">
+          <div class="top-rank">8</div>
+          <div class="top-info"><div class="t">稻香</div><div class="a">周杰伦</div></div>
+          <div class="top-delta up">▲1</div>
+          <div class="top-count"><div class="n">31</div><div class="u">次播放</div></div>
+        </div>
+        <div class="top-row">
+          <div class="top-rank">9</div>
+          <div class="top-info"><div class="t">Lemon</div><div class="a">米津玄師</div></div>
+          <div class="top-delta down">▼2</div>
+          <div class="top-count"><div class="n">26</div><div class="u">次播放</div></div>
+        </div>
+        <div class="top-row">
+          <div class="top-rank">10</div>
+          <div class="top-info"><div class="t">红色高跟鞋</div><div class="a">蔡健雅</div></div>
+          <div class="top-delta new">NEW</div>
+          <div class="top-count"><div class="n">22</div><div class="u">次播放</div></div>
+        </div>
+        <p class="note" style="margin-top:8px">▲▼ = 排名相对副数据的变化；NEW = 副数据未上榜。</p>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <div class="card">
+          <h2 style="margin-top:0">最常听的歌手</h2>
+          <div class="artist-row"><span>1. YOASOBI</span><span class="ac">214 次 ▲</span></div>
+          <div class="artist-row"><span>2. 周杰伦</span><span class="ac">189 次 ▲</span></div>
+          <div class="artist-row"><span>3. 米津玄師</span><span class="ac">96 次 ▼</span></div>
+          <div class="artist-row"><span>4. Goose house</span><span class="ac">61 次 NEW</span></div>
+          <div class="artist-row"><span>5. 蔡健雅</span><span class="ac">44 次 ▼</span></div>
+        </div>
+        <div class="card">
+          <h2 style="margin-top:0">最常听的专辑</h2>
+          <div class="artist-row"><span>1. THE BOOK</span><span class="ac">203 次</span></div>
+          <div class="artist-row"><span>2. 十二新作</span><span class="ac">87 次</span></div>
+          <div class="artist-row"><span>3. STRAY SHEEP</span><span class="ac">66 次</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fun-grid">
+      <div class="card fun-card">
+        <div class="emoji">🌙</div>
+        <div class="fv">深夜电台</div>
+        <div class="fd">最常在 <b>23:00–01:00</b> 听歌，占全年播放的 <b>31%</b></div>
+      </div>
+      <div class="card fun-card">
+        <div class="emoji">🔁</div>
+        <div class="fv">单曲循环之王</div>
+        <div class="fd">「夜に駆ける」单次会话连播 <b>17 遍</b>，创年度纪录</div>
+      </div>
+      <div class="card fun-card">
+        <div class="emoji">🧭</div>
+        <div class="fv">探索 vs 怀旧</div>
+        <div class="fd">今年 <b>43%</b> 的播放给了新听的歌（去年 31%）</div>
+      </div>
+      <div class="card fun-card">
+        <div class="emoji">⚡</div>
+        <div class="fv">手速最快</div>
+        <div class="fd">今年 <b>612 次</b> 在歌的前 5% 就切歌</div>
+      </div>
+      <div class="card fun-card">
+        <div class="emoji">🏆</div>
+        <div class="fv">耐听冠军</div>
+        <div class="fd">「晴天」今年累计听了 <b>9.6 小时</b></div>
+      </div>
+      <div class="card fun-card">
+        <div class="emoji">📅</div>
+        <div class="fv">最狂热的一天</div>
+        <div class="fd"><b>4 月 18 日</b>：一天听了 <b>63 首</b></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

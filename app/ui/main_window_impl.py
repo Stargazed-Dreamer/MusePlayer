@@ -617,6 +617,12 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
 
         action_playlist = self.menuBar().addAction("歌单")  # 添加“歌单”动作到菜单栏
 
+        menu_stats = self.menuBar().addMenu("统计")  # 统计主菜单（检查点管理 + 年度报告）
+        action_checkpoints = menu_stats.addAction("检查点管理…")
+        action_stats_report = menu_stats.addAction("生成年度报告…")
+        action_checkpoints.triggered.connect(self._open_stats_checkpoint_dialog)
+        action_stats_report.triggered.connect(self._open_stats_report_dialog)
+
         action_settings = self.menuBar().addAction("设置")  # 添加“设置”动作到菜单栏
         action_shortcuts = self.menuBar().addAction("按键设置")
         action_about = self.menuBar().addAction("关于")  # 关于入口（菜单栏最右）

@@ -1763,3 +1763,31 @@ class MainWindowPlaybackMixin:
 
         dlg = AboutDialog(self)
         dlg.exec()
+
+    def _open_stats_checkpoint_dialog(self) -> None:
+        """打开检查点管理对话框（统计 → 检查点管理）。"""
+        from app.ui.stats_checkpoint_dialog import StatsCheckpointDialog
+
+        if self.controller.stats_checkpoint_service is None or self.controller.playback_stats_service is None:
+            self.statusBar().showMessage("服务尚未就绪，请稍后再试", 3000)
+            return
+        dlg = StatsCheckpointDialog(
+            self,
+            self.controller.stats_checkpoint_service,
+            self.controller.playback_stats_service,
+        )
+        dlg.exec()
+
+    def _open_stats_report_dialog(self) -> None:
+        """打开年度报告生成对话框（统计 → 生成年度报告）。"""
+        from app.ui.stats_report_dialog import StatsReportDialog
+
+        if self.controller.stats_checkpoint_service is None or self.controller.playback_stats_service is None:
+            self.statusBar().showMessage("服务尚未就绪，请稍后再试", 3000)
+            return
+        dlg = StatsReportDialog(
+            self,
+            self.controller.playback_stats_service,
+            self.controller.stats_checkpoint_service,
+        )
+        dlg.exec()
