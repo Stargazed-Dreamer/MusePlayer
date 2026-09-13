@@ -104,7 +104,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          python -c "import app.services.app_controller; import app.runtime.control_server; import core.core; print('import OK')"
+          python -c "import main; import app.ui.main_window_helpers; print('import OK')"
 
   build-portable:
     # Windows 便携包构建：打 v* tag 时自动触发，也支持手动触发

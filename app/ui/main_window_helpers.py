@@ -29,7 +29,13 @@ import ctypes
 import sys
 import time
 from collections.abc import Callable
-from ctypes import HRESULT, c_int, c_uint, c_ulonglong, c_void_p
+
+if sys.platform.startswith("win"):
+    # HRESULT 等是 ctypes 的 Windows 专有符号，非 Windows 平台导入即 ImportError；
+    # 它们仅在下方 comtypes 守卫区与 _WindowsTaskbarProgress 的 Windows 分支使用
+    from ctypes import HRESULT, c_int, c_uint, c_ulonglong, c_void_p
+else:  # 非 Windows：占位满足模块级名字解析，运行时不会触达
+    HRESULT = c_int = c_uint = c_ulonglong = c_void_p = None  # type: ignore[assignment]
 
 from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap
