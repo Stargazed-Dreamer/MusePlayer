@@ -343,7 +343,7 @@ def main() -> int:
             return
         try:
             controller.library_service.deferred_cleanup()
-            if controller.library_service.tracks:
+            if controller.library_service.track_ids():
                 QMetaObject.invokeMethod(win, "_on_library_changed", _Qt.ConnectionType.QueuedConnection)
         except Exception:
             pass
@@ -411,8 +411,8 @@ def main() -> int:
                 f"library_read_worker={read_done_at - started_at:.3f}s | "
                 f"library_install_main={finished_at - read_done_at:.3f}s | "
                 f"load_library_total={finished_at - started_at:.3f}s | "
-                f"tracks={len(controller.library_service.tracks)} | "
-                f"playlists={len(controller.library_service.playlists)}"
+                f"tracks={len(controller.library_service.track_ids())} | "
+                f"playlists={len(controller.library_service.list_playlists())}"
             )
             QTimer.singleShot(0, _restore_startup_session)
 
