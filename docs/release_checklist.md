@@ -2,7 +2,8 @@
 
 ## 构建前
 
-- [ ] 确认 `app/version.py` 中的版本号已更新
+- [ ] 确认 `app/version.py` 中的版本号已更新（改版本号共两处：`app/version.py` 的 `APP_VERSION` 与 `pyproject.toml` 的 `[project].version`，一致性由 `tests/test_version_consistency.py` 自动校验）
+- [ ] 确认 `CHANGELOG.md` 已把 `[Unreleased]` 落为对应版本小节（含日期）
 - [ ] 确认 `requirements.txt` 中的依赖版本正确
 - [ ] 确认所有新功能在 `docs/` 目录有对应文档
 - [ ] 确认所有代码变更已同步更新到相关文档（接口文档、架构文档、格式文档）

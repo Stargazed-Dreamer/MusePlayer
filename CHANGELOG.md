@@ -5,6 +5,16 @@
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-09-17
+
+### 修复
+- 搜索框焦点困住导致单键快捷键"全局失效"：搜索框（`QLineEdit`）持有焦点时，空格、字母、方向键等单键会被输入框吞掉，界面快捷键（播放/暂停、切换喜欢、快进快退等）无法触发。现在 Esc 清空过滤词后把焦点交还曲目列表，且应用级事件过滤器会在点击主窗口内其他不接受点击焦点的控件（按钮/标签/空白卡片）时同样交还焦点，保证"点击别处退出搜索"始终可用；搜索框自身与其清除按钮不触发该逻辑。
+- 启动竞态：快速启动后（窗口已出现、当前曲目已预备）立刻播放的歌曲，会在曲库加载/磁盘会话恢复完成时被"主动暂停"。原因是 `PlayerService.restore_session` 无条件按会话位置重新加载当前曲目（`auto_play=False`），覆盖了用户刚发起的播放。现在新增"用户已接管播放"监视：`AppController.restore_session_preview` 在预备完成后武装（`arm_playback_takeover_watch`），`play` / `play_track` / `seek` 及内核播放状态任一命中即判定接管，会话恢复随即只对齐随机序列等不触碰音频的上下文——既不改播放状态，也不取消在飞的预读（避免窗口边界卡顿）。
+
+### 测试
+- 新增 `tests/test_player_session_restore.py`（5 例）：启动预备后用户播放 / 播放后暂停并拖动进度条 / 用户未接管（保持原行为）/ 内核兜底判定 / 重新武装。
+- 新增 `tests/test_version_consistency.py`（2 例）：把"`app/version.py` 的 `APP_VERSION` 与 `pyproject.toml` 的 `[project].version` 必须一致、且为三段式语义化版本"固化为自动化校验（此前双份版本号仅靠注释约定，漏改一处无任何报错），测试基线 212 → 219。
+
 ## [1.2.0] - 2026-09-13
 
 ### 新增
@@ -64,5 +74,8 @@
 ### 修复
 - 受限于无 Git 历史访问，本版本可追溯的具体修复条目暂缺。
 
-[Unreleased]: /compare/v0.5.5...HEAD
+[Unreleased]: /compare/v1.2.1...HEAD
+[1.2.1]: /releases/tag/v1.2.1
+[1.2.0]: /releases/tag/v1.2.0
+[1.1.0]: /releases/tag/v1.1.0
 [0.5.5]: /releases/tag/v0.5.5

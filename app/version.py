@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # 应用版本（语义化版本：主.次.修订）
 # 与 pyproject.toml [project].version 保持一致
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 
 # 数据格式版本（library.json / session.json / settings.json / playback_stats.json 共用 schema）
 # 主版本：破坏性 schema 变更（旧文件无法读取）；次版本：兼容性增量（新增字段、旧代码可忽略）
