@@ -592,7 +592,9 @@ class StatsReportDialog(QDialog):
             card = QLabel(text)
             card.setWordWrap(True)
             card.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-            card.setStyleSheet("background: #1f1f1f; border: 1px solid #3b3b3b; border-radius: 10px; padding: 14px 16px;")
+            card.setStyleSheet(
+                "background: #1f1f1f; border: 1px solid #3b3b3b; border-radius: 10px; padding: 14px 16px;"
+            )
             self._fun_grid.addWidget(card, idx // 3, idx % 3)
         # 换行标签的高度依赖实际宽度；此刻报告页尚未完成布局，先占位，
         # 等事件循环里布局给出真实宽度后再修正最小高度（否则首次打开卡片被压矮）
