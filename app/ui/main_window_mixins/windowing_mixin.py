@@ -34,7 +34,15 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent, QGuiApplication
-from PySide6.QtWidgets import QComboBox, QLineEdit, QListWidget, QListWidgetItem, QSlider, QToolButton
+from PySide6.QtWidgets import (
+    QComboBox,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QSlider,
+    QToolButton,
+    QWidget,
+)
 
 from app.ui.file_types import AUDIO_EXTENSIONS
 from app.ui.main_window_helpers import (
@@ -907,6 +915,22 @@ class MainWindowWindowingMixin:
         track_view = self.track_list.viewport() if self.track_list is not None else None
         lyric_view = self.lyrics_list.viewport() if self.lyrics_list is not None else None
         rich_title_targets = {self.rich_title_bar, self.rich_title_label}
+
+        # 焦点困在搜索框时（QLineEdit 会吞掉空格/字母/方向键等单键快捷键），点击主窗口内
+        # 不接受点击焦点的控件（按钮 TabFocus、标签/空白卡片 NoFocus，Qt 点击它们不会移动
+        # 焦点），把焦点交还曲目列表，保证"点击别处退出搜索"始终可用。
+        # isAncestorOf 同时覆盖搜索框自身与其内部的清除按钮。
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and self.search_edit is not None
+            and self.track_list is not None
+            and self.search_edit.hasFocus()
+            and isinstance(watched, QWidget)
+            and watched.window() is self
+            and not self.search_edit.isAncestorOf(watched)
+            and not (watched.focusPolicy() & Qt.FocusPolicy.ClickFocus)
+        ):
+            self.track_list.setFocus(Qt.FocusReason.MouseFocusReason)
 
         if watched in rich_title_targets and watched is not None:
             if not self._use_custom_titlebar:

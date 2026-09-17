@@ -19,6 +19,7 @@ from PySide6.QtGui import (
     QShortcut,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -245,6 +246,8 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self._build_menu()  # 构建菜单栏
         self._bind_signals()  # 绑定信号槽
         self._bind_shortcuts()  # 绑定快捷键
+        # 应用级事件过滤器：拦截主窗口内的鼠标按下，处理"焦点困在搜索框"的点击脱出
+        QApplication.instance().installEventFilter(self)
         _t2 = _time.perf_counter()
         self._apply_window_size_limits()  # 应用窗口最大尺寸限制
         self._restore_window_geometry()  # 恢复窗口位置和大小
@@ -881,11 +884,18 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.search_edit.del_()
 
     def _clear_search_by_esc(self) -> None:
-        """通过ESC键清除搜索。该方法检查当前窗口是否活动且搜索框有文本，如果条件满足则清除搜索文本。
+        """通过ESC键清除搜索，并把焦点交还曲目列表。
+
+        搜索框持有焦点时，QLineEdit 会对空格、字母、方向键等单键接受 ShortcutOverride，
+        界面单键快捷键（播放/暂停、切换喜欢、快进快退等）无法触发；因此 Esc 除了
+        清空过滤词，还必须把焦点移出搜索框，否则快捷键会一直失效。
+
         参数：self - 类实例。返回值：None。
         """
         if not self.isActiveWindow():  # 检查当前窗口是否活动，如果不活动则返回
             return
-        if not self.search_edit.text():  # 检查搜索编辑框是否有文本，如果没有则返回
-            return
-        self._clear_search_text()  # 调用方法清除搜索文本
+        search_has_focus = self.search_edit.hasFocus()
+        if self.search_edit.text():  # 有过滤词时先清空（触发列表重载与清除按钮隐藏）
+            self.search_edit.clear()
+        if search_has_focus:  # 焦点原本在搜索框内：交还曲目列表以恢复单键快捷键
+            self.track_list.setFocus(Qt.FocusReason.ShortcutFocusReason)
