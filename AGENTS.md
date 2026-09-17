@@ -44,6 +44,7 @@ start.bat        # Windows
 
 - **信号槽跨线程通信**：UI 操作必须在主线程执行，跨线程更新 UI 必须通过 Signal/Slot
 - **绝不在线程中直接操作 QWidget**：会导致随机崩溃
+- **单键界面快捷键与输入框焦点互斥**：QLineEdit 持有焦点时，Qt 的 ShortcutOverride 机制会让空格/字母/方向键等单键快捷键失效（按键进入输入框，属正常行为，不可绕过）；因此退出输入框的路径必须把焦点交还列表控件（如 `_clear_search_by_esc` 清空后交还曲目列表），禁止只清文本不移焦点，否则快捷键看似"全局失效"
 
 ### 数据持久化
 
@@ -58,6 +59,7 @@ start.bat        # Windows
 - **曲库内部字典已私有化**：`LibraryService` 的 `_tracks` / `_playlists` 禁止外部直接访问，一律使用公开访问器：`get_track`（单查）、`get_playlist`（缺失时兜底"全部歌曲"，用于播放场景）、`find_playlist`（严格查找，缺失返回 None，用于协议/存在性判断）、`has_track`、`track_ids()`（快照集合）
 - **曲库职责拆分**：清理（`library_cleaner.py`）、Muse 导入（`muse_playlist_importer.py`）、导出（`playlist_exporter.py`）各自成类，组合持有 `LibraryService`；`LibraryService` 保留同名门面方法委托，公开 API 不变
 - **`PlayerService.set_playlist` 与 `set_current_playlist_id` 语义不同**：前者是完整状态迁移（重置预读、记录早期跳过、清理播放核心），后者仅轻量对准歌单 ID，仅供会话恢复预览等库未完整加载的场景使用，不得混用
+- **启动会话恢复绝不改变正在进行的播放状态**：启动是异步的（窗口先出现 → 当前曲目预备 → 曲库加载 → 磁盘会话恢复），用户在"预备完成"到"会话恢复"之间按下的播放比磁盘会话更新。`AppController.restore_session_preview` 在预备完成后调用 `PlayerService.arm_playback_takeover_watch()` 武装监视；`play` / `play_track` / `seek` 任一被调用即登记为"用户已接管播放"（内核正在播放亦兜底判定）。`restore_session` 检测到接管时**只恢复随机序列这类不触碰音频的上下文**，不调用 `set_playlist`（会取消在飞的预读 → 窗口边界卡顿）、不重新加载当前曲目（会把歌变成暂停态）。回归测试见 `tests/test_player_session_restore.py`
 - **控制协议命令经注册表分发**：新增命令 = 在 `AppController` 加 `_cmd_<name>(payload) -> dict` 方法并在 `_command_handlers` 注册，响应结构遵循统一 `{"ok", "result", "error"}` 约定
 
 ### 运行时控制协议

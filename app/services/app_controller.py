@@ -206,12 +206,17 @@ class AppController(QObject):
             self.player_service.set_volume(state.volume)
             self.library_service.active_playlist_id = playlist_id
             self.player_service.set_current_playlist_id(playlist_id)
-            return self.player_service.play_track(
+            ready = self.player_service.play_track(
                 track_id,
                 auto_play=False,
                 start_sec=max(0.0, state.position_sec),
                 manual_select=False,
             )
+        # 预备完成：开始监视用户是否在这之后接管播放。曲库加载与磁盘会话恢复
+        # 都在其后异步进行，若期间用户已开始播放，会话恢复必须保持播放状态
+        # 不变（详见 PlayerService.arm_playback_takeover_watch）。
+        self.player_service.arm_playback_takeover_watch()
+        return ready
 
     def prepare_library_load(self):
         tracks, playlists, active = self.library_store.load()

@@ -125,6 +125,9 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         # 初始化播放控制和统计相关的标志位
         self._expecting_natural_end = False  # 是否正在等待曲目自然结束
         self._last_playing = False  # 上一个tick时的播放状态
+        # 启动预备完成后，用户是否已接管播放（供会话恢复保持播放状态，见
+        # arm_playback_takeover_watch / playback_taken_over）
+        self._playback_takeover = False
         self._stats_last_track_id: str | None = None  # 上次统计记录的曲目ID
         self._stats_last_position = 0.0  # 上次统计记录的位置
         self._stats_skip_next_delta = False  # 是否跳过下一次的位置增量统计
@@ -481,6 +484,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         返回值：
         无返回值（None）
         """
+        self._mark_playback_takeover()  # 用户发起的播放行为，登记为"已接管播放"
         if self._current_track_id is None:
             # 如果当前没有播放曲目，尝试为播放列表设置初始曲目
             self.set_initial_track_for_playlist()
@@ -581,6 +585,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         """
         if self._loaded_track_id is None:
             return
+        self._mark_playback_takeover()  # 拖动进度条表达播放意图，登记为"已接管播放"
         target = max(0.0, float(sec))
         try:
             if self._lazy_window_mode and not self._lazy_promoted_to_full:
@@ -814,6 +819,7 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         if track is None:
             self.error_occurred.emit(f"歌曲不存在: {track_id}")
             return False
+        self._mark_playback_takeover()  # 选曲行为（用户点击/协议）登记为"已接管播放"
 
         playlist_ids = self._playlist_track_ids()
         if track_id not in playlist_ids:
@@ -1080,10 +1086,40 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             current_track_artist=str(track.artist) if track else "",
         )
 
+    def arm_playback_takeover_watch(self) -> None:
+        """开始监视"用户是否已接管播放"（启动流程在完成当前曲目预备后调用）。
+
+        启动是异步的：窗口先出现、当前曲目先预备好（可立即播放），随后才
+        加载曲库并恢复磁盘会话。用户在预备完成到会话恢复之间按下的播放，
+        比磁盘会话更新，会话恢复必须保持这一播放状态不变——否则正在播放
+        的歌曲会被重新加载成暂停态（听感上就是"歌被主动暂停了"）。
+        """
+        self._playback_takeover = False
+
+    def playback_taken_over(self) -> bool:
+        """判断"启动预备之后用户是否已接管播放"。
+
+        判定由两部分组成：
+        - 显式登记：`play` / `play_track` / `seek` 被调用即置位（覆盖 UI 与
+          控制协议两条入口）；
+        - 兜底：内核已在播放。启动流程自身从不自动开始播放（会话恢复一律
+          `auto_play=False`），所以"正在播放"只可能来自用户行为。
+
+        Returns:
+            bool: 已接管播放返回 True
+        """
+        return self._playback_takeover or self.is_playing()
+
+    def _mark_playback_takeover(self) -> None:
+        """登记"用户已接管播放"（内部钩子，供播放入口调用）。"""
+        self._playback_takeover = True
+
     def restore_session(self, state: SessionState) -> None:
         """恢复会话状态。
 
         还原播放器设置、歌单、随机序列、当前曲目和播放位置等所有状态。
+        若启动预备之后用户已接管播放（见 `arm_playback_takeover_watch`），
+        则只对齐不影响音频的上下文，绝不动当前曲目与播放状态。
 
         Args:
             state: 要恢复的会话状态对象
@@ -1093,12 +1129,19 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             self.set_mode(state.play_mode)
             self.set_volume(state.volume)
 
+            if self.playback_taken_over():
+                # 磁盘会话已落后于当前播放意图：此处不做状态迁移、不重新加载
+                # 当前曲目（那会把正在播放的歌曲变成暂停态），也不调用
+                # set_playlist（它会取消在飞的预读，导致窗口边界卡顿），
+                # 只恢复随机序列这类不触碰音频的上下文。
+                self._restore_random_state(state)
+                logger.info("启动期间用户已接管播放，会话恢复保持当前播放状态")
+                return
+
             playlist_id = state.current_playlist_id or self.library.active_playlist_id
             self.set_playlist(playlist_id)
 
-            self._random_seed = max(0, int(state.random_seed))
-            self._random_index = max(0, int(state.random_index))
-            self.random_state_changed.emit(self._random_seed, self._random_index)
+            self._restore_random_state(state)
 
             if state.current_track_id:
                 track_id = state.current_track_id
@@ -1116,6 +1159,12 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
                     start_sec=max(0.0, state.position_sec),
                     manual_select=False,
                 )
+
+    def _restore_random_state(self, state: SessionState) -> None:
+        """恢复随机播放的种子与索引（纯内存状态，不触碰音频输出）。"""
+        self._random_seed = max(0, int(state.random_seed))
+        self._random_index = max(0, int(state.random_index))
+        self.random_state_changed.emit(self._random_seed, self._random_index)
 
     def state_snapshot(self) -> dict:
         """
