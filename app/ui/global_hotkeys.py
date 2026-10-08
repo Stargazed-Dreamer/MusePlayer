@@ -21,18 +21,30 @@ class GlobalHotkeyManager:
         self._window = window
         self._callbacks: dict[int, Callable[[], None]] = {}
         self._registered_ids: list[int] = []
+        # 上一次 register() 里失败的项：action_id -> 失败原因（已注册成功的项不在其中）。
+        # unregister_all() 会清空它，因此"全局快捷键被关闭"时不会留下过期标记。
+        self.conflicts: dict[str, str] = {}
 
-    def register(self, shortcuts: dict[str, str], callbacks: dict[str, Callable[[], None]]) -> list[str]:
+    def register(self, shortcuts: dict[str, str], callbacks: dict[str, Callable[[], None]]) -> dict[str, str]:
+        """注册一组全局快捷键。
+
+        Args:
+            shortcuts: action_id -> 快捷键文本（如 "Ctrl+Alt+Right"），值为空表示不注册。
+            callbacks: action_id -> 触发时执行的回调。
+
+        Returns:
+            失败项字典：action_id -> 失败原因文案。空字典表示全部注册成功。
+        """
         self.unregister_all()
         if sys.platform != "win32":
-            return ["当前系统不支持全局快捷键"]
-        errors: list[str] = []
+            return {"__unsupported__": "当前系统不支持全局快捷键"}
+        errors: dict[str, str] = {}
         for hotkey_id, (action_id, shortcut) in enumerate(shortcuts.items(), start=1):
             if not shortcut or action_id not in callbacks:
                 continue
             native = self._to_native(shortcut)
             if native is None:
-                errors.append(f"无法识别快捷键：{shortcut}")
+                errors[action_id] = f"无法识别快捷键：{shortcut}"
                 continue
             modifiers, virtual_key = native
             ok = ctypes.windll.user32.RegisterHotKey(
@@ -42,10 +54,11 @@ class GlobalHotkeyManager:
                 virtual_key,
             )
             if not ok:
-                errors.append(f"快捷键已被其他程序占用：{shortcut}")
+                errors[action_id] = f"快捷键已被其他程序占用：{shortcut}"
                 continue
             self._registered_ids.append(hotkey_id)
             self._callbacks[hotkey_id] = callbacks[action_id]
+        self.conflicts = dict(errors)
         return errors
 
     def unregister_all(self) -> None:
@@ -55,9 +68,20 @@ class GlobalHotkeyManager:
                 ctypes.windll.user32.UnregisterHotKey(handle, hotkey_id)
         self._registered_ids.clear()
         self._callbacks.clear()
+        # 全部注销后冲突标记自然作废（例如用户刚刚关掉了全局快捷键开关）
+        self.conflicts.clear()
 
     def handle_native_event(self, event_type, message) -> bool:
-        if sys.platform != "win32" or event_type not in {b"windows_generic_MSG", b"windows_dispatcher_MSG"}:
+        if sys.platform != "win32":
+            return False
+        # Qt6 传入的 event_type 是 QByteArray：它与 str/bytes 比较相等但哈希不同，
+        # 直接写 `event_type not in {b"windows_generic_MSG", ...}` 会恒为真，
+        # 从而静默吞掉所有 WM_HOTKEY（注册成功却毫无反应）。统一归一化成 str 再判成员。
+        try:
+            event_name = bytes(event_type).decode("ascii", "replace")
+        except TypeError:
+            event_name = str(event_type)
+        if event_name not in {"windows_generic_MSG", "windows_dispatcher_MSG"}:
             return False
         msg = wintypes.MSG.from_address(int(message))
         if msg.message != WM_HOTKEY:

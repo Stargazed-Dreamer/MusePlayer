@@ -61,6 +61,7 @@ from app.ui.shortcut_settings import (
     default_interface_shortcuts,
     merge_shortcuts,
 )
+from app.ui.theme import STATUS_SEVERITY_ERROR
 from app.utils.logging_setup import get_logger
 from app.version import APP_VERSION
 
@@ -843,7 +844,9 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         )
         errors = self._global_hotkey_manager.register(values, self._shortcut_callbacks())
         if errors:
-            self.statusBar().showMessage("；".join(errors), 6000)
+            # 注册失败=被别的程序占着（或组合无法识别），性质为 error：
+            # 显示错误红，并拉长到 30 秒，避免一闪而过被漏看。
+            self._show_status("；".join(errors.values()), STATUS_SEVERITY_ERROR, 30000)
 
     def nativeEvent(self, event_type, message):
         if self._global_hotkey_manager.handle_native_event(event_type, message):

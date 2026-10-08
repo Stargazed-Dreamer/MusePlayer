@@ -515,12 +515,20 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
 
                     if at_window_end:
                         # 如果到达窗口末尾，重新加载懒加载窗口（保持播放状态）
+                        # _reload_lazy_window 内部会为下一窗排上预读，此处无需重复调度。
                         self._reload_lazy_window(absolute_start, keep_playing=True)
                     else:
                         # 否则，从本地开始位置继续播放
                         self._core.play(local_start)
                         # 设置标志表示预期自然结束
                         self._expecting_natural_end = True
+                        # 从暂停恢复（会话预览后按播放、暂停后按播放等）也必须为
+                        # 下一窗排上预读；否则窗口尾部只能同步 _reload_lazy_window
+                        # 解码，形成"第一窗 → 第二窗边界卡顿一下、之后正常"的听感。
+                        self._schedule_lazy_prefetch(
+                            self._current_track_id,
+                            self._lazy_window_base_sec + local_duration,
+                        )
                 else:
                     # 在正常模式下，从当前位置继续播放
                     start = self._core.current_time()

@@ -39,11 +39,19 @@ start.bat        # Windows
 - **绝不直接操作 core/ 模块**：所有播放操作必须通过 `PlayerService` 进行，`PyAVPlayerCore` 是线程安全的底层内核，UI 层绝不直接调用
 - **sounddevice 回调中绝不阻塞**：音频输出回调在实时线程中运行，任何阻塞操作会导致音频卡顿
 - **窗口读取阈值 6.2 秒**：`LazyDecodeMixin` 的窗口模式以 6.2 秒为一块按需解码并后台预读下一块，整曲持续滑动窗口（并不存在"超过阈值后提升为完整读取"）。`PlayerService` 的 `full` 策略走 `PyAVPlayerCore` 的流式解码路径。窗口阈值由 `PlayerService._LAZY_WINDOW_SEC` 单一常量定义；`LazyDecodeMixin` 仅通过 `self._LAZY_WINDOW_SEC` 继承该值（无独立常量），修改时只改 `PlayerService` 这一处即可，其余读取点（`player_service.py` 窗口加载分支、`lazy_decode_mixin.py` 的 `_reload_lazy_window` 与 `_schedule_lazy_prefetch`）自动联动。预读重叠 `_LAZY_PREFETCH_OVERLAP_SEC` 必须 ≥ 切换提前量 `_LAZY_SWITCH_AHEAD_SEC`，否则窗口边界会出现前向跳音。
+- **懒加载预读调度：必须覆盖所有"让播放真正跑起来"的入口（反复踩坑，红线级关注点）**：任何把状态推进到 `_lazy_window_mode=True` 后开始/继续播放的路径，都必须保证下一窗预读已被安排；否则窗口尾部只能同步 `_reload_lazy_window` 解码，直接表现为"边界卡一下、后续正常"（因为 `_reload_lazy_window` 末尾才补上预读，流水线自此才启动）。当前登记的调度点：
+  - `_load_current_track(auto_play=True)`：初次装载即自动播放（正常点选、协议 `play`）→ 装载分支尾部 `_schedule_lazy_prefetch`
+  - `play()` 的"从暂停恢复"分支（会话预览后按播放、暂停后按播放等）：`_core.play(local_start)` 之后必须补排 `_schedule_lazy_prefetch(base + local_duration)`
+  - `_reload_lazy_window(keep_playing=True)`：窗口耗尽的兜底重载，函数尾部自带预读调度
+  - `seek` / 手动切窗等会走 `_reload_lazy_window` 的路径同样依赖此兜底
+  - **不排预读的唯一合法入口**：`_load_current_track(auto_play=False)`（"仅加载不播放"，用于会话恢复预览——用户可能最终不点播放，此时预热浪费一次后台解码）
+  - **新增播放入口时**：若绕开 `_load_current_track(auto_play=True)` 直接把内核推进到播放状态，必须显式补一次 `_schedule_lazy_prefetch`；否则该入口就是下一次"边界卡顿"回归的种子。回归用例见 `tests/test_player_session_restore.py::test_play_from_pause_schedules_lazy_prefetch`。
 
 ### Qt 线程安全
 
 - **信号槽跨线程通信**：UI 操作必须在主线程执行，跨线程更新 UI 必须通过 Signal/Slot
 - **绝不在线程中直接操作 QWidget**：会导致随机崩溃
+- **⛔ `nativeEvent` 的 `event_type` 是 `QByteArray` 不是 `bytes`**：二者 `==` 相等但 `hash()` 不同，所以 `event_type not in {b"windows_generic_MSG", ...}` 这类 **set 成员判断恒为真**，会把 `WM_HOTKEY` 等原生消息静默吞掉（2026-10-08 全局快捷键"注册成功却完全没反应"的根因）。一律先 `bytes(event_type).decode()` 归一化再比较。
 - **单键界面快捷键与输入框焦点互斥**：QLineEdit 持有焦点时，Qt 的 ShortcutOverride 机制会让空格/字母/方向键等单键快捷键失效（按键进入输入框，属正常行为，不可绕过）；因此退出输入框的路径必须把焦点交还列表控件（如 `_clear_search_by_esc` 清空后交还曲目列表），禁止只清文本不移焦点，否则快捷键看似"全局失效"
 
 ### 数据持久化

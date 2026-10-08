@@ -1762,11 +1762,13 @@ class MainWindowPlaybackMixin:
         self.statusBar().showMessage(tip, 6000)  # 在状态栏显示提示消息，持续6000毫秒
 
     def _open_shortcut_settings_dialog(self) -> None:
-        dialog = ShortcutSettingsDialog(self.controller.settings, self)
+        # 上一次注册的失败结果（action_id -> 原因）用来在对话框里标注"哪几项没生效"
+        conflicts = dict(getattr(self._global_hotkey_manager, "conflicts", {}) or {})
+        dialog = ShortcutSettingsDialog(self.controller.settings, self, global_conflicts=conflicts)
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         self.controller.update_settings(dialog.apply_to_settings())
-        self.statusBar().showMessage("按键设置已保存", 3000)
+        self._show_status("按键设置已保存", STATUS_SEVERITY_SUCCESS, 3000)
 
     def _open_about_dialog(self) -> None:
         """打开关于对话框，实时从磁盘读取版本信息。"""

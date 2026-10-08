@@ -228,3 +228,24 @@ def test_arm_watch_resets_previous_takeover(player):
     service.arm_playback_takeover_watch()
 
     assert service.playback_taken_over() is False
+
+
+def test_play_from_pause_schedules_lazy_prefetch(player):
+    """会话预览后按播放：从暂停恢复分支必须为下一窗排上预读。
+
+    回归：_load_current_track(auto_play=False) 只加载不预读，若 play() 的
+    "从暂停恢复"分支同样不补排，则第一窗尾部只能同步 _reload_lazy_window
+    解码下一窗——听感表现为"首末窗边界卡一下、之后正常"。
+    """
+    service, _core = player
+    _prepare_current_track(service)
+    # 仅加载不播放时不排预读：避免用户最终不点播放时的无用解码。
+    assert service._prefetch_future is None
+
+    service.play()
+
+    # _prepare_current_track 用 start_sec=30.0 + 窗口 6.2s，
+    # 下一窗过渡点应为 30.0 + 6.2 = 36.2。
+    assert service._prefetch_future is not None
+    assert service._prefetch_track_id == "A"
+    assert service._prefetch_transition_sec == pytest.approx(36.2)

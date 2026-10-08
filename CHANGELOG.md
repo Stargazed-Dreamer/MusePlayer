@@ -5,6 +5,26 @@
 
 ## [Unreleased]
 
+### 修复
+- 全局快捷键注册成功但按下毫无反应（无任何报错）：`GlobalHotkeyManager.handle_native_event` 里 `event_type not in {b"windows_generic_MSG", b"windows_dispatcher_MSG"}` 的判断恒为真，导致每个 `WM_HOTKEY` 在第一步就被丢弃。根因是 Qt6/PySide6 传给 `nativeEvent` 的 `event_type` 是 `QByteArray`，它与 `bytes` 比较相等（`==` 为 True）但哈希不一致（`hash()` 不同），而 set 成员判断走哈希 ⇒ 恒 False。现在先 `bytes(event_type).decode()` 归一化为 `str` 再比较。此 bug 与窗口句柄无关（`setWindowFlag()` 在本项目 Qt6 下不重建 `winId()`），也与外部程序占用无关。
+- 全局快捷键冲突提示太弱（一闪而过、看不到是哪几项）：`_refresh_global_hotkeys` 过去只把失败文案在状态栏显示 6 秒。现在改为**错误红 + 30 秒**，并在按键设置对话框里逐项定位到具体操作。
+
+### 新增
+- 状态栏消息支持"性质配色"：`MultiHintStatusBar` 的 `showMessage`/`set_hint` 新增可选 `severity`（`info`/`success`/`warning`/`error`，常量见 `app/ui/theme.py`）。不传则沿用主题正文色（浅色近黑、深色近白）；传了则按当前主题取对应那套颜色（浅色用压暗版保对比度、深色用提亮版），错误=红、成功=绿、警告=琥珀。主题切换时经 `set_dark_theme()` 自动换色，无需重发消息。
+- 按键设置对话框逐项标注全局冲突：上一次注册失败的项会在【操作】格下方显示红色小字`【全局按键冲突】`，同时该行的**全局快捷键输入框描错误红**表示当前不可用（悬浮显示失败原因，如"已被其他程序占用：Ctrl+Alt+Right"）；顶部另有一条汇总说明。用户改动该项组合后标记立即撤销（改完要保存并重新注册才知结果）；全局快捷键总开关关闭时不再标注。
+
+### 变更
+- `GlobalHotkeyManager.register()` 返回值由 `list[str]` 改为 `dict[str, str]`（`action_id -> 失败原因`），并新增 `conflicts` 属性保存上次注册结果，供 UI 定位失败项；`unregister_all()` 一并清空 `conflicts`，因此关闭全局快捷键后不会残留过期标记。
+
+## [1.2.2] - 2026-09-25
+
+### 修复
+- 会话恢复预览后按播放：第一窗到第二窗边界会卡顿一下、后续正常。根因是懒加载下一窗预读只在 `_load_current_track(auto_play=True)` 里安排；预览走 `auto_play=False` 只加载不预读，之后 `play()` 的"从暂停恢复"分支同样未补排预读，于是第一窗尾部只能兜底同步 `_reload_lazy_window` 解码下一窗（该重载末尾才把预读流水线拉起来，所以只有首边界卡）。现在 `play()` 从暂停恢复分支在 `_core.play(local_start)` 之后显式调一次 `_schedule_lazy_prefetch(base + local_duration)`，与 `_load_current_track(auto_play=True)` 对齐。
+- `AGENTS.md` 音频内核节新增红线级"懒加载预读调度：必须覆盖所有让播放真正跑起来的入口"关注点，列清当前合法调度点与唯一不排预读的入口（`_load_current_track(auto_play=False)`），并要求后续新增播放入口时显式补齐预读，防止再次回归。
+
+### 测试
+- 新增 `tests/test_player_session_restore.py::test_play_from_pause_schedules_lazy_prefetch`：模拟会话预览 → 用户按播放，断言下一窗 future 被安排、`_prefetch_transition_sec` 与窗口边界（起点 30.0 + 窗口 6.2 = 36.2）对齐。测试基线 219 → 220。
+
 ## [1.2.1] - 2026-09-17
 
 ### 修复
