@@ -761,3 +761,47 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
 """
 
 APP_STYLE = APP_STYLE_DARK
+
+# ---------------- 状态栏消息的"性质（severity）"配色 ----------------
+#
+# 每条状态栏消息可以带一个性质：信息 / 成功 / 警告 / 错误。
+# 每种性质准备两套颜色——浅色主题下在 `#f3f4f3` 背景上可读、
+# 深色主题下在 `#1a1a1a` 背景上可读；不传性质时退回 info（即主题前景色，
+# 浅色近黑 `#1d221f`、深色近白 `#f1f1f1`）。
+#
+# 取值原则：
+# - info：与所在主题的正文色一致，绝不给正文加无关色彩
+# - success/warning/error：浅色主题用"加深"版本（压暗保对比度），
+#   深色主题用"提亮"版本（抬亮避免糊在深底上）
+STATUS_SEVERITY_INFO = "info"
+STATUS_SEVERITY_SUCCESS = "success"
+STATUS_SEVERITY_WARNING = "warning"
+STATUS_SEVERITY_ERROR = "error"
+
+STATUS_SEVERITY_COLORS: dict[str, tuple[str, str]] = {
+    # severity: (浅色主题色, 深色主题色)
+    STATUS_SEVERITY_INFO: ("#1d221f", "#f1f1f1"),
+    STATUS_SEVERITY_SUCCESS: ("#2f7d3a", "#7ee08a"),
+    STATUS_SEVERITY_WARNING: ("#8a5a00", "#f2c14e"),
+    STATUS_SEVERITY_ERROR: ("#c0392b", "#ff6b6b"),
+}
+
+
+def status_severity_color(severity: str | None, dark_theme: bool) -> str:
+    """返回某条状态栏消息在给定主题下应使用的前景色。
+
+    Args:
+        severity: 消息性质；未知值或 None 一律按 info 处理（即主题正文色）。
+        dark_theme: 当前是否为深色（夜间）主题。
+
+    Returns:
+        ``#rrggbb`` 形式的颜色串。
+    """
+    key = str(severity).strip().lower() if severity else STATUS_SEVERITY_INFO
+    pair = STATUS_SEVERITY_COLORS.get(key) or STATUS_SEVERITY_COLORS[STATUS_SEVERITY_INFO]
+    return pair[1] if dark_theme else pair[0]
+
+
+def error_severity_color(dark_theme: bool) -> str:
+    """错误红在当前主题下的取值，供状态栏之外的 UI（输入框描边、错误小字）复用。"""
+    return status_severity_color(STATUS_SEVERITY_ERROR, dark_theme)

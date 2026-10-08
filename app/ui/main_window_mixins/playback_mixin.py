@@ -69,7 +69,12 @@ from app.ui.main_window_helpers import (
 from app.ui.playlist_dialog import PlaylistDialog
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.shortcut_settings_dialog import ShortcutSettingsDialog
-from app.ui.theme import APP_STYLE_DARK, APP_STYLE_LIGHT
+from app.ui.theme import (
+    APP_STYLE_DARK,
+    APP_STYLE_LIGHT,
+    STATUS_SEVERITY_ERROR,
+    STATUS_SEVERITY_SUCCESS,
+)
 
 
 class MainWindowPlaybackMixin:
@@ -1047,6 +1052,11 @@ class MainWindowPlaybackMixin:
         if app is None:
             return
         app.setStyleSheet(APP_STYLE_DARK if self._dark_theme else APP_STYLE_LIGHT)
+        # 状态栏的性质色（info/success/warning/error）分浅深两套，主题切换后要同步，
+        # 否则夜间↔日间切换时错误红/成功绿会停留在另一套对比度上。
+        bar = self.statusBar()
+        if isinstance(bar, MultiHintStatusBar):
+            bar.set_dark_theme(self._dark_theme)
         self._refresh_control_icons()
 
     def _refresh_theme_button(self) -> None:
@@ -1574,7 +1584,8 @@ class MainWindowPlaybackMixin:
         self._ensure_window_inside_screen()
 
     def _on_error(self, message: str) -> None:
-        self.statusBar().showMessage(message, 7000)
+        # 控制器抛出的异常性质明确是错误，用 error 色 + 7 秒时长突出显示
+        self._show_status(message, STATUS_SEVERITY_ERROR, 7000)
 
     def _on_runtime_status_changed(self, listening: bool, host: str, port: int) -> None:
         """当运行时状态改变时，更新状态栏消息。

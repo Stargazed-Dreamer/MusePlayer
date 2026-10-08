@@ -821,6 +821,18 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
             "save_stats": self.action_save_stats.trigger,
         }
 
+    def _show_status(self, text: str, severity: str | None = None, timeout_ms: int = 2500) -> None:
+        """在状态栏显示一条可带性质色的消息。
+
+        Args:
+            text: 消息文本。
+            severity: 性质取值见 `app.ui.theme` 的 STATUS_SEVERITY_*；
+                None / 未知值 → 沿用主题正文色（浅色近黑、深色近白）。
+            timeout_ms: 显示时长（毫秒），0 表示常驻。
+        """
+        bar = self.statusBar()
+        bar.showMessage(str(text), int(timeout_ms), severity)
+
     def _refresh_global_hotkeys(self) -> None:
         self._global_hotkey_manager.unregister_all()
         if not self.controller.settings.global_shortcuts_enabled:

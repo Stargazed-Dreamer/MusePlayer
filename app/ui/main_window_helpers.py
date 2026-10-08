@@ -29,6 +29,8 @@ import ctypes
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
+from html import escape
 
 if sys.platform.startswith("win"):
     # HRESULT 等是 ctypes 的 Windows 专有符号，非 Windows 平台导入即 ImportError；
@@ -57,6 +59,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.services.player_service import PlayMode
+from app.ui.theme import status_severity_color
 
 try:
     import comtypes
@@ -230,7 +233,7 @@ else:
 
 
 class MultiHintStatusBar(QStatusBar):
-    """支持多条消息并存的状态栏。
+    """支持多条消息并存、且每条消息可带性质色的状态栏。
 
     与 Qt 原生 `showMessage` 不同，本实现允许多来源提示共存，
     并通过 `-` 拼接展示，适合播放器同时显示音量/状态/预告信息。
@@ -240,12 +243,28 @@ class MultiHintStatusBar(QStatusBar):
     - 定时器定期清理过期消息（160ms间隔）
     - 消息按优先级排序后拼接显示，用" - "分隔
     - 支持自动key推断（从消息内容提取前缀）
+    - 每条消息可带性质（info/success/warning/error），按主题取对应颜色渲染；
+      不带性质的一律用主题正文色（浅色近黑、深色近白）
+
+    为什么用自有 QLabel 而不是 QStatusBar.showMessage 渲染：
+    原生接口只能整条统一着色，没法给拼接中的某一段单独上色，且它的内部标签
+    会与 addWidget 的部件重叠。这里改用 RichText QLabel 接管文本，既保留多消息
+    拼接语义，又能让"错误"那一段显示成错误红而不影响同排其他提示。
 
     典型使用场景：
     - key="音量": 显示当前音量值
     - key="状态": 显示播放状态或操作反馈
     - key="预告": 显示下一首/上一首歌曲信息
     """
+
+    @dataclass
+    class Hint:
+        """一条状态提示。"""
+
+        text: str
+        expire: float | None
+        order: int
+        severity: str | None = None
 
     def __init__(self, parent=None):
         """初始化多提示状态栏。
@@ -255,14 +274,23 @@ class MultiHintStatusBar(QStatusBar):
         """
         super().__init__(parent)
 
-        # hints字典结构：{key: (text, expire_time, order)}
-        # - key: 消息类型标识（如"音量"、"状态"）
-        # - text: 实际显示的文本内容
-        # - expire_time: 过期时间戳（None表示永不过期）
-        # - order: 显示优先级（数字越小优先级越高）
-        self._hints: dict[str, tuple[str, float | None, int]] = {}
+        # 每条记录是一个 Hint（见上），key 为外部登记时用的标识
+        self._hints: dict[str, MultiHintStatusBar.Hint] = {}
 
         self._order_counter = 0  # 用于生成唯一的显示优先级
+
+        # 当前主题：决定各性质消息取浅色还是深色那套颜色。
+        # 默认偏深色；真实值由主窗口在切换主题时调用 set_dark_theme() 同步。
+        self._dark_theme = True
+
+        # 消息由自有 QLabel 渲染（原生 showMessage 不支持分段着色，见类文档）
+        self._message_label = QLabel(self)
+        self._message_label.setObjectName("StatusBarMessageLabel")
+        self._message_label.setTextFormat(Qt.TextFormat.RichText)
+        self._message_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self._message_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._message_label.setContentsMargins(0, 0, 0, 0)
+        self.addWidget(self._message_label, 1)
 
         # 创建定时器定期清理过期消息并刷新显示
         self._timer = QTimer(self)
@@ -270,7 +298,20 @@ class MultiHintStatusBar(QStatusBar):
         self._timer.timeout.connect(self._prune_and_render)
         self._timer.start()
 
-    def showMessage(self, message: str, timeout: int = 0) -> None:
+    def set_dark_theme(self, dark_theme: bool) -> None:
+        """同步当前主题（决定性质色取哪一套），变化后立即重渲染。"""
+        dark = bool(dark_theme)
+        if dark == self._dark_theme:
+            return
+        self._dark_theme = dark
+        self._render()
+
+    @property
+    def dark_theme(self) -> bool:
+        """当前用于配色计算的模式（True=夜间/深色主题）。"""
+        return self._dark_theme
+
+    def showMessage(self, message: str, timeout: int = 0, severity: str | None = None) -> None:
         """
         显示提示消息。
 
@@ -279,25 +320,29 @@ class MultiHintStatusBar(QStatusBar):
         参数：
             message (str): 需要显示的消息文本。
             timeout (int): 超时时间，单位为毫秒。默认为0，表示立即显示或无超时。
+            severity (str | None): 消息性质（info/success/warning/error）。
+                None 表示沿用主题正文色。
 
         返回值：
             None：此方法不返回任何值。
         """
         key = self._infer_key(message)  # 根据消息推断键
-        self.set_hint(key=key, text=message, timeout_ms=timeout)  # 设置提示，包含键、消息和超时
+        # 设置提示，包含键、消息、超时与性质
+        self.set_hint(key=key, text=message, timeout_ms=timeout, severity=severity)
 
     def clearMessage(self) -> None:
         """清除消息，清空hints并重置状态栏。参数：self - 实例对象。返回值：无。"""
         self._hints.clear()  # 清除hints
-        QStatusBar.showMessage(self, "", 0)  # 清空状态栏消息
+        self._render()  # 清空自有标签的文本
 
-    def set_hint(self, key: str, text: str, timeout_ms: int = 0) -> None:
+    def set_hint(self, key: str, text: str, timeout_ms: int = 0, severity: str | None = None) -> None:
         """设置一条状态提示。
 
         Args:
             key: 提示类型标识（如"音量"、"状态"）
             text: 要显示的文本内容
             timeout_ms: 超时时间（毫秒），0表示永不过期
+            severity: 消息性质（info/success/warning/error）；None 用主题正文色
         """
         if not text:
             self.clear_hint(key)
@@ -308,9 +353,9 @@ class MultiHintStatusBar(QStatusBar):
         expire = (now + max(0, int(timeout_ms)) / 1000.0) if timeout_ms > 0 else None
 
         # 如果key已存在则保持原有优先级，否则分配新的优先级
-        order = self._hints[key][2] if key in self._hints else self._next_order()
+        order = self._hints[key].order if key in self._hints else self._next_order()
 
-        self._hints[key] = (str(text), expire, order)
+        self._hints[key] = MultiHintStatusBar.Hint(text=str(text), expire=expire, order=order, severity=severity)
         self._render()
 
     def clear_hint(self, key: str) -> None:
@@ -333,17 +378,23 @@ class MultiHintStatusBar(QStatusBar):
             self._render()
 
     def _render(self) -> None:
-        """根据内部提示信息更新状态栏显示。"""
-        # 如果没有提示信息，则清空状态栏并返回
+        """根据内部提示信息更新状态栏显示。
+
+        每条提示按其性质取当前主题下的颜色，包成一段 `<span>`；整条消息由这些
+        片段拼起来，因此错误提示能显示成红色而不影响同排的其他提示。
+        """
         if not self._hints:
-            QStatusBar.showMessage(self, "", 0)
+            self._message_label.setText("")
             return
-        # 将提示信息按第三个元素（可能是优先级或时间戳）排序
-        ordered = sorted(self._hints.items(), key=lambda kv: kv[1][2])
-        # 将所有非空提示文本用 " - " 连接起来
-        text = " - ".join(v[0] for _, v in ordered if v[0])
-        # 在状态栏上显示组合后的提示文本
-        QStatusBar.showMessage(self, text, 0)
+        # 按优先级排序（order 越小越靠前）
+        ordered = sorted(self._hints.items(), key=lambda kv: kv[1].order)
+        parts = []
+        for _, hint in ordered:
+            if not hint.text:
+                continue
+            color = status_severity_color(hint.severity, self._dark_theme)
+            parts.append(f'<span style="color: {color};">{escape(hint.text)}</span>')
+        self._message_label.setText(" - ".join(parts))
 
     def _prune_and_render(self) -> None:
         """
@@ -353,8 +404,8 @@ class MultiHintStatusBar(QStatusBar):
         """
         now = self._now_sec()  # 获取当前时间（秒）
         expired = [
-            k for k, (_, e, _) in self._hints.items() if e is not None and e <= now
-        ]  # 从self._hints中筛选出过期键（结束时间e存在且小于等于当前时间）
+            k for k, hint in self._hints.items() if hint.expire is not None and hint.expire <= now
+        ]  # 过期键：存在结束时间且已到点
         if not expired:  # 如果没有过期项
             return  # 提前返回
         for key in expired:  # 遍历所有过期键
