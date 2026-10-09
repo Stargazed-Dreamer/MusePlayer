@@ -24,12 +24,13 @@
 from __future__ import annotations
 
 import html
+import logging
 import subprocess
 import sys
 from bisect import bisect_right
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QRect, QSize, Qt
+from PySide6.QtCore import QCoreApplication, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -76,6 +77,8 @@ from app.ui.theme import (
     STATUS_SEVERITY_SUCCESS,
 )
 
+logger = logging.getLogger("museplayer.ui")
+
 
 class MainWindowPlaybackMixin:
     """主窗口播放功能mixin。
@@ -108,6 +111,10 @@ class MainWindowPlaybackMixin:
     - 左右键：进度调整
     - 翻页键：切歌控制
     """
+
+    # 列表重建的重入守卫：见 _reload_track_list。
+    _reloading_track_list = False
+    _reload_track_list_pending = False
 
     # ============================================================================
     # 基本播放控制
@@ -244,45 +251,62 @@ class MainWindowPlaybackMixin:
         - 使用setUpdatesEnabled减少UI重绘次数
         - 动态计算项目高度以支持文本换行
         """
-        keyword = self.search_edit.text().strip()
-        if keyword:
-            tracks = self.player.search_playlist_tracks(keyword)
-        elif (
-            self.player.mode == PlayMode.RANDOM
-            and str(getattr(self.controller.settings, "random_display_order", "original")) == "random"
-        ):
-            ordered_ids = self.player.display_ordered_track_ids()
-            tracks = [t for tid in ordered_ids if (t := self.player.library.get_track(tid)) is not None]
-        else:
-            tracks = self.player.search_playlist_tracks("")
+        # 重入守卫：本方法可能在切歌信号链中被再次触发（如"自动切歌 →
+        # 重建随机序 → 重排列表"），若允许并发执行，后一次会把前一次建到
+        # 一半的列表 clear() 掉，并让"当前行"基于半旧的状态落定。这里只记
+        # 一个 pending 标记，收尾后再补一次，绝不并发。
+        if self._reloading_track_list:
+            self._reload_track_list_pending = True
+            return
+        self._reloading_track_list = True
+        try:
+            keyword = self.search_edit.text().strip()
+            if keyword:
+                tracks = self.player.search_playlist_tracks(keyword)
+            elif (
+                self.player.mode == PlayMode.RANDOM
+                and str(getattr(self.controller.settings, "random_display_order", "original")) == "random"
+            ):
+                ordered_ids = self.player.display_ordered_track_ids()
+                tracks = [t for tid in ordered_ids if (t := self.player.library.get_track(tid)) is not None]
+            else:
+                tracks = self.player.search_playlist_tracks("")
 
-        self.track_delegate.set_hover_row(-1)
-        self.track_list.setUpdatesEnabled(False)
-        self.track_list.clear()
-        current_id = self.player.current_track_id
-        row_to_select = -1
-        total = len(tracks)
+            self.track_delegate.set_hover_row(-1)
+            self.track_list.setUpdatesEnabled(False)
+            self.track_list.clear()
+            row_by_id: dict[str, int] = {}
 
-        for idx, track in enumerate(tracks):
-            text = f"{track.title}  -  {track.artist}"
-            item = QListWidgetItem(text)
-            item.setData(Qt.ItemDataRole.UserRole, track.id)
-            item.setSizeHint(QSize(0, self._track_item_height_for_text(text)))
-            self.track_list.addItem(item)
-            if track.id == current_id:
-                row_to_select = idx
-            if total > 600 and idx > 0 and idx % 300 == 0:
-                self.statusBar().showMessage(f"列表加载中：{idx}/{total}", 1500)
-                QCoreApplication.processEvents()
+            # 循环内不再调用 QCoreApplication.processEvents()：那会在切歌链
+            # 中途打开嵌套事件循环，让排队中的双击/定时器重入 play_track，
+            # 造成"服务层/音频已切、列表却按旧状态落定"的分裂（本次 bug 的
+            # 直接成因）。批量构建在不抽走事件循环的前提下依然很快。
+            for idx, track in enumerate(tracks):
+                text = f"{track.title}  -  {track.artist}"
+                item = QListWidgetItem(text)
+                item.setData(Qt.ItemDataRole.UserRole, track.id)
+                item.setSizeHint(QSize(0, self._track_item_height_for_text(text)))
+                self.track_list.addItem(item)
+                row_by_id.setdefault(track.id, idx)
 
-        if row_to_select >= 0:
-            self.track_list.setCurrentRow(row_to_select)
-            current_item = self.track_list.item(row_to_select)
-            if current_item is not None:
-                self.track_list.scrollToItem(current_item, QListWidget.ScrollHint.PositionAtCenter)
-        self.track_list.setUpdatesEnabled(True)
-        self._position_locate_current_button()
-        self._update_locate_current_button()
+            # 收尾时重新读取当前曲目：构建期间若发生过切歌，以最新状态为准，
+            # 避免"列表停在旧曲、音频已在放新曲"。
+            current_id = self.player.current_track_id
+            row_to_select = row_by_id.get(current_id, -1) if current_id else -1
+
+            if row_to_select >= 0:
+                self.track_list.setCurrentRow(row_to_select)
+                current_item = self.track_list.item(row_to_select)
+                if current_item is not None:
+                    self.track_list.scrollToItem(current_item, QListWidget.ScrollHint.PositionAtCenter)
+            self.track_list.setUpdatesEnabled(True)
+            self._position_locate_current_button()
+            self._update_locate_current_button()
+        finally:
+            self._reloading_track_list = False
+            if self._reload_track_list_pending:
+                self._reload_track_list_pending = False
+                QTimer.singleShot(0, self._reload_track_list)
 
     def _sync_current_track_row(self, *, center: bool) -> None:
         """同步当前播放曲目在列表中的选中状态和滚动位置。
@@ -347,6 +371,22 @@ class MainWindowPlaybackMixin:
             track: 当前播放的曲目对象，如果为None表示没有选中的曲目
         """
         self._next_track_preview_announced = False
+
+        # 统一数据源：本方法由 track_changed 信号驱动，参数是"发出信号那一刻"的
+        # 曲目；而列表高亮（_sync_current_track_row）读的是实时 current_track_id。
+        # 二者本应一致，一旦不一致即说明期间又发生了一次切歌（排队信号 / 重入）。
+        # 此时以实时状态为准并留一条 warning，便于下次复现时自证竞态——本次
+        # bug 正是"标题/音频=新曲、列表=旧曲"这种发散。
+        live_id = self.player.current_track_id
+        signal_id = track.id if track is not None else None
+        if live_id != signal_id:
+            live_track = self.player.library.get_track(live_id) if live_id else None
+            logger.warning(
+                "当前曲目显示源不一致：信号=%s 实时=%s（已以实时为准）", signal_id, live_id
+            )
+            if not live_id or live_track is not None:
+                track = live_track
+
         if track is None:
             self.title_label.setText("未选择歌曲")
             self.artist_label.setText("歌手")

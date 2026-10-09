@@ -125,6 +125,10 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         # 初始化播放控制和统计相关的标志位
         self._expecting_natural_end = False  # 是否正在等待曲目自然结束
         self._last_playing = False  # 上一个tick时的播放状态
+        # 是否正处于一次切歌（play_track）的临界区内。UI 侧据此避免在切歌
+        # 半途调用 QCoreApplication.processEvents() 打开事件循环——那会让排队
+        # 的点击/定时器重入切歌，造成"服务层与界面各持一套当前曲目"的分裂。
+        self._switching_track = False
         # 启动预备完成后，用户是否已接管播放（供会话恢复保持播放状态，见
         # arm_playback_takeover_watch / playback_taken_over）
         self._playback_takeover = False
@@ -167,6 +171,14 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
     @property
     def current_track_id(self) -> str | None:
         return self._current_track_id
+
+    def is_switching_track(self) -> bool:
+        """是否正处于一次切歌的临界区（供 UI 决定是否可以让出事件循环）。
+
+        Returns:
+            bool: True 表示此刻不应调用 processEvents / 打开嵌套事件循环
+        """
+        return bool(self._switching_track)
 
     @property
     def random_seed(self) -> int:
@@ -838,6 +850,10 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         previous_position = float(self._safe_position())
         previous_duration = float(self._safe_duration())
 
+        # 切歌前快照：这些字段先于加载被改写，加载失败必须整体回滚，
+        # 否则服务层/统计/session 会停在"新曲"，而音频与界面还停在"旧曲"。
+        rollback = (self._current_track_id, self._sequential_index, self._random_index)
+
         self._current_track_id = track_id
         if track_id in playlist_ids:
             self._sequential_index = playlist_ids.index(track_id)
@@ -856,8 +872,16 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
                 self._rebuild_random_order(force=False)
                 self._align_random_index_with_current_track()
 
-        ok = self._load_current_track(auto_play=auto_play, start_sec=start_sec, active_request=active_request)
+        self._switching_track = True
+        try:
+            ok = self._load_current_track(auto_play=auto_play, start_sec=start_sec, active_request=active_request)
+        finally:
+            self._switching_track = False
         if not ok:
+            # 加载失败 ⇒ 这次切歌没发生：把先写入的状态整体退回，避免留下
+            # "状态已切、音视频与界面未切" 的半切换态。
+            self._current_track_id, self._sequential_index, self._random_index = rollback
+            logger.warning("切歌失败，已回滚切歌状态: %s -> %s", track_id, rollback[0])
             return False
 
         self._record_early_skip_if_needed(
@@ -954,10 +978,12 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
                     # 否则，移动到下一个索引
                     self._random_index += 1
 
+                # 先锁定目标音轨ID，再发信号：random_state_changed 的接收方可能
+                # 重排列表并让出事件循环，期间 _random_index 会被别的切歌改掉，
+                # 若在其之后再取 target 就会切到别人选中的曲目。
+                target_id = self._random_order[self._random_index]
                 # 发出随机状态变化信号
                 self.random_state_changed.emit(self._random_seed, self._random_index)
-                # 获取目标音轨ID
-                target_id = self._random_order[self._random_index]
                 # 尝试播放目标音轨
                 if self.play_track(
                     target_id,
@@ -1036,8 +1062,9 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
                     self._random_index = self._random_order.index(self._current_track_id)
                 if self._random_index > 0:
                     self._random_index -= 1
-                self.random_state_changed.emit(self._random_seed, self._random_index)
+                # 同 next_track：先锁定目标再发信号，避免信号回调重入改写索引
                 target_id = self._random_order[self._random_index]
+                self.random_state_changed.emit(self._random_seed, self._random_index)
                 if self.play_track(
                     target_id,
                     auto_play=True,
@@ -1271,7 +1298,10 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
                 self._record_play_start(track.id, active_request=active_request)  # 记录播放开始事件
                 if self._lazy_window_mode and not self._lazy_promoted_to_full:
                     local_duration = max(0.0, float(self._core.duration()))
-                    self._schedule_lazy_prefetch(track.id, target_start + local_duration)  # 调度预读下一个窗口
+                    try:
+                        self._schedule_lazy_prefetch(track.id, target_start + local_duration)  # 调度预读下一个窗口
+                    except Exception as exc:  # 预读只是性能优化，失败不能让整次切歌判负
+                        logger.debug("调度窗口预读失败（不影响本次切歌）: %s", exc)
             else:  # 只加载不播放
                 self._core.seek(0.0 if self._lazy_window_mode else target_start)
                 self._expecting_natural_end = False
