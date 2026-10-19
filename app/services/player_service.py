@@ -48,6 +48,9 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
 
     # Qt信号定义
     track_changed = Signal(object)  # 当前曲目变化时发出
+    # 播放请求已受理（play_track 校验通过、开始加载前）发出，payload 为目标 Track。
+    # 语义是"尝试播放"，与 playback_changed(True)（真正出声）区分，供 UI 分两段提示。
+    playback_requested = Signal(object)
     queue_changed = Signal()  # 播放队列（歌单）变化时发出
     progress_changed = Signal(float, float)  # 播放进度变化：位置, 时长
     playback_changed = Signal(bool)  # 播放状态变化：是否正在播放
@@ -129,6 +132,15 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         # 半途调用 QCoreApplication.processEvents() 打开事件循环——那会让排队
         # 的点击/定时器重入切歌，造成"服务层与界面各持一套当前曲目"的分裂。
         self._switching_track = False
+        # 最近一次"进入暂停态"是否由用户主动暂停引起。供 UI 决定要不要显示
+        # 「暂停：X」——会话预览装载、切歌单停旧曲、自然结束等系统侧停止
+        # 不该被表述成"暂停"（2026-10-19 用户反馈这类提示有惊讶度）。
+        self.last_pause_was_user = False
+        # pause() 置位、由 _emit_playback_state 在 True→False 转变时消费。
+        self._user_pause_pending = False
+        # _emit_playback_state 实际发出的上一个状态（自维护，与 tick 的
+        # _last_playing 互不干扰），用于识别真实的状态转变。
+        self._emitted_playing = False
         # 启动预备完成后，用户是否已接管播放（供会话恢复保持播放状态，见
         # arm_playback_takeover_watch / playback_taken_over）
         self._playback_takeover = False
@@ -575,6 +587,10 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
 
         暂停当前播放并重置"期待自然结束"的状态标志。
         """
+        if self.is_playing():
+            # 只有"确实正在播"的暂停才算用户暂停；空打（未在播放）不置位，
+            # 避免残留的 pending 把之后系统侧的停止误标成用户暂停。
+            self._user_pause_pending = True
         try:
             self._core.pause()
         except Exception as exc:
@@ -840,6 +856,9 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             self.error_occurred.emit(f"歌曲不存在: {track_id}")
             return False
         self._mark_playback_takeover()  # 选曲行为（用户点击/协议）登记为"已接管播放"
+        # 播放请求在此受理：后续加载可能失败（文件缺失/解码异常），因此
+        # "尝试播放"与"开始播放"必须分开提示（UI 据 playback_changed 区分）。
+        self.playback_requested.emit(track)
 
         playlist_ids = self._playlist_track_ids()
         if track_id not in playlist_ids:
@@ -1466,5 +1485,17 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             force: 是否强制发射信号（即使状态未变）
         """
         playing = self.is_playing() if current is None else bool(current)
-        if force or playing != self._last_playing:  # 状态改变或强制发射
+        # 以"上次实际发出的状态"为基准判断转变（_last_playing 由 tick 维护，
+        # 两次 tick 之间的用户暂停会漏检）。初始 False 与"启动时未播放"一致。
+        if force or playing != self._emitted_playing:
+            if playing != self._emitted_playing:
+                # 真实状态转变：登记"这次进入暂停是否用户引起"，供 UI 决定
+                # 是否显示「暂停：X」。会话预览装载（force 但值未变）、切歌单
+                # 停旧曲（_core.pause 直调，未置位 pending）都会落到 False。
+                if playing:
+                    self.last_pause_was_user = False
+                else:
+                    self.last_pause_was_user = self._user_pause_pending
+                self._user_pause_pending = False
+            self._emitted_playing = playing
             self.playback_changed.emit(playing)

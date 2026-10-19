@@ -430,7 +430,10 @@ class MainWindowPlaybackMixin:
 
         self._sync_current_track_row(center=True)
         self._update_locate_current_button()
-        self.statusBar().showMessage(f"播放歌曲：{self._current_track_title}", 3000)
+        # 注意：此处不再发「播放歌曲：X」状态栏消息。播放提示由
+        # playback_requested（尝试）+ playback_changed(True)（开始播放）
+        # 两段式承担；track_changed 还会话预览/切歌单等非播放场景触发，
+        # 在那里说"播放"是错语义。
 
     def _set_cover(self, cover_data: bytes | None) -> None:
         """设置并显示音频文件的封面图片。
@@ -881,6 +884,12 @@ class MainWindowPlaybackMixin:
     def _on_playback_changed(self, playing: bool) -> None:
         """当播放状态改变时调用此方法，更新播放按钮图标和状态栏消息。
 
+        提示语义（2026-10-19 与用户确认）：
+        - True →「歌曲 X 开始播放」，X 实时读服务层当前曲目（切歌链中本信号
+          早于 track_changed 发出，读 UI 缓存会显示上一首的标题）
+        - False → 仅用户主动暂停才显示「暂停：X」；会话预览装载、切歌单停
+          旧曲、自然结束等系统侧停止保持沉默（last_pause_was_user 为 False）
+
         参数:
             playing (bool): 是否正在播放。True表示播放，False表示暂停。
 
@@ -891,10 +900,28 @@ class MainWindowPlaybackMixin:
             "pause" if playing else "play", color=self._control_icon_color()
         )  # 根据播放状态选择暂停或播放图标
         self.play_btn.setIcon(icon)  # 更新播放按钮的图标
-        state = "播放" if playing else "暂停"  # 根据状态设置中文文本
-        self.statusBar().showMessage(
-            f"{state}：{self._current_track_title}", 2000
-        )  # 在状态栏显示当前状态和歌曲标题，持续2秒
+        track = self.player.current_track()
+        title = (
+            (track.title if track is not None else "") or self._current_track_title or ""
+        ).strip() or "未知标题"
+        if playing:
+            self.statusBar().showMessage(f"歌曲 {title} 开始播放", 2000)
+        elif getattr(self.player, "last_pause_was_user", False):
+            self.statusBar().showMessage(f"暂停：{title}", 2000)
+
+    def _on_playback_requested(self, track) -> None:
+        """播放请求已受理（play_track 校验通过、开始加载前）。
+
+        与「歌曲 X 开始播放」构成两段式提示：若本条之后没有"开始播放"而是
+        错误消息，即说明这次播放尝试失败了。
+
+        Args:
+            track: 请求播放的曲目对象（PlayerService.playback_requested 发出）。
+        """
+        if track is None:
+            return
+        title = ((track.title or "").strip() or "未知标题")
+        self.statusBar().showMessage(f"尝试播放歌单歌曲：{title}", 2500)
 
     def _refresh_mode_order(self) -> None:
         """刷新并更新可用的播放模式顺序列表。
@@ -1486,9 +1513,8 @@ class MainWindowPlaybackMixin:
             None
         """
         try:
-            # 尝试从项数据中获取轨道ID和显示文本
+            # 尝试从项数据中获取轨道ID
             track_id = item.data(Qt.ItemDataRole.UserRole)
-            display_text = self._track_text_of_item(item)
         except RuntimeError:
             # 如果发生RuntimeError，则直接返回
             return
@@ -1500,12 +1526,11 @@ class MainWindowPlaybackMixin:
             self.player.mode == PlayMode.RANDOM
             and str(getattr(self.controller.settings, "random_display_order", "original")) == "random"
         )
-        # 调用播放函数播放指定轨道
+        # 调用播放函数播放指定轨道（状态栏提示由 playback_requested /
+        # playback_changed 信号统一驱动，此处不再重复发消息）
         self.player.play_track(
             str(track_id), auto_play=True, manual_select=True, active_request=True, preserve_random=preserve_random
         )
-        # 在状态栏显示播放消息，持续2500毫秒
-        self.statusBar().showMessage(f"播放歌曲：{display_text}", 2500)
 
     def _on_remove_track_clicked(self, track_id: str) -> None:
         """处理从歌单移除音轨的点击事件。

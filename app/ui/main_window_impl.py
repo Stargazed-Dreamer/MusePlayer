@@ -762,6 +762,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
 
         if self.player:  # 检查播放器实例是否存在，如果存在则连接播放器相关信号
             self.player.track_changed.connect(self._refresh_current_track_ui)
+            self.player.playback_requested.connect(self._on_playback_requested)
             self.player.progress_changed.connect(self._on_progress_changed)
             self.player.playback_changed.connect(self._on_playback_changed)
             self.player.mode_changed.connect(self._on_mode_changed)
