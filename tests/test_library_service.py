@@ -308,6 +308,45 @@ def test_delete_playlist_protects_system_and_removes_orphans(tmp_path):
     assert svc.find_playlist(FAVORITES_ID) is not None
 
 
+def test_delete_empty_playlist_keeps_all_songs_only_tracks(tmp_path):
+    """删除空歌单不得连带清除仅存于"全部歌曲"的曲目（回归：误删待春归）。"""
+    f = tmp_path / "a.flac"
+    f.write_bytes(b"x")
+    t = _make_track("t-all-only", str(f))
+    svc = _make_service(tmp_path)
+    _preload(svc, [t], [])
+
+    pl = svc.create_playlist("空歌单")
+    svc.delete_playlist(pl.id)
+
+    assert svc.find_playlist(pl.id) is None
+    assert svc.has_track("t-all-only")  # 仅在全部歌曲的曲目不受影响
+
+
+def test_delete_playlist_scoped_orphan_cleanup_and_preview(tmp_path):
+    """孤立清理与预览只针对被删歌单自身曲目，曲库其他孤立曲目不受影响。"""
+    f_own = tmp_path / "own.flac"
+    f_own.write_bytes(b"x")
+    f_other = tmp_path / "other.flac"
+    f_other.write_bytes(b"x")
+    own = _make_track("t-own", str(f_own), title="随歌单删除")
+    other_orphan = _make_track("t-other", str(f_other), title="仅在全部歌曲")
+    pl = Playlist(id="pl1", name="歌单1", track_ids=["t-own"])
+
+    svc = _make_service(tmp_path)
+    _preload(svc, [own, other_orphan], [pl])
+
+    # 预览：只包含歌单自身即将孤立的曲目，保持歌单内顺序
+    preview = svc.imminent_orphan_tracks("pl1")
+    assert [t.id for t in preview] == ["t-own"]
+
+    svc.delete_playlist("pl1")
+
+    assert svc.find_playlist("pl1") is None
+    assert not svc.has_track("t-own")  # 歌单自身的孤立曲目被清理
+    assert svc.has_track("t-other")  # 曲库中其他孤立曲目不受影响
+
+
 def test_toggle_favorite_roundtrip(tmp_path):
     f = tmp_path / "a.flac"
     f.write_bytes(b"a")

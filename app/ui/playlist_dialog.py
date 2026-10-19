@@ -27,6 +27,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -34,10 +35,12 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
 )
 
+from app.models.entities import Track
 from app.services.app_controller import AppController
 from app.services.library_service import ALL_SONGS_ID, FAVORITES_ID
 from app.ui.file_types import AUDIO_FILE_FILTER
@@ -231,7 +234,8 @@ class PlaylistDialog(QDialog):
         """删除当前选中的歌单。
 
         检查选中的歌单是否可删除（"全部歌曲"不可删除），
-        显示确认对话框获取用户确认，然后调用控制器删除歌单。
+        预览将随歌单一并移除的孤立曲目：若有，弹出提醒对话框（多行文本
+        列出全部受影响歌曲）；否则使用普通确认框。确认后调用控制器删除。
         """
         playlist_id = self._selected_playlist_id()
         if not playlist_id:
@@ -240,12 +244,57 @@ class PlaylistDialog(QDialog):
             QMessageBox.information(self, "提示", "系统歌单不可删除。")
             return
 
-        answer = QMessageBox.question(self, "确认", "确定删除该歌单？")
-        if answer != QMessageBox.StandardButton.Yes:
-            return
+        orphan_tracks = self.controller.library_service.imminent_orphan_tracks(playlist_id)
+        if orphan_tracks:
+            if not self._confirm_orphan_loss(playlist_id, orphan_tracks):
+                return
+        else:
+            answer = QMessageBox.question(self, "确认", "确定删除该歌单？")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
 
         self.controller.delete_playlist(playlist_id)
         self.reload()
+
+    def _confirm_orphan_loss(self, playlist_id: str, orphan_tracks: list[Track]) -> bool:
+        """弹出孤立曲目提醒对话框，返回用户是否选择继续删除。
+
+        对话框提示这些曲目删除后将只存在于"全部歌曲"并被一并移除，
+        并用只读多行文本控件完整展示所有受影响歌曲，便于用户先加歌单保全。
+        """
+        playlist = self.controller.library_service.find_playlist(playlist_id)
+        playlist_name = playlist.name if playlist else playlist_id
+        dialog = QDialog(self)
+        dialog.setWindowTitle("删除歌单")
+        dialog.setMinimumWidth(480)
+        layout = QVBoxLayout(dialog)
+        tip = QLabel(
+            f"删除歌单「{playlist_name}」后，以下 {len(orphan_tracks)} 首歌曲将不再被任何歌单引用，"
+            "会被一并移除，可能导致丢失。请尽快将它们加入其他歌单进行管理："
+        )
+        tip.setWordWrap(True)
+        layout.addWidget(tip)
+
+        viewer = QPlainTextEdit(dialog)
+        viewer.setReadOnly(True)
+        lines = []
+        for track in orphan_tracks:
+            artist = (track.artist or "").strip()
+            title = str(track.title or "").strip() or "未知标题"
+            lines.append(f"{title} - {artist}" if artist else title)
+        viewer.setPlainText("\n".join(lines))
+        layout.addWidget(viewer, 1)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No,
+            parent=dialog,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Yes).setText("仍然删除")
+        buttons.button(QDialogButtonBox.StandardButton.No).setText("取消")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        return dialog.exec() == QDialog.DialogCode.Accepted
 
     def _copy_playlist(self) -> None:
         """复制当前选中的歌单。

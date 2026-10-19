@@ -82,6 +82,7 @@ start.bat        # Windows
 - **`seek` 的 position 参数单位是秒（float）**：不是毫秒，不是百分比
 - **`set_volume` 的 volume 范围是 0.0~1.0**：不是 0~100
 - **`remove_track_from_playlist` 可能删除全局曲目**：如果曲目只属于一个歌单，移除后统计数据也会被清理
+- **`delete_playlist` 只清理被删歌单自身的孤立曲目**：删除后仅移除"该歌单包含且不再被其他歌单引用"的曲目，曲库中仅存于"全部歌曲"的曲目不受影响（2026-10-12 修复：旧实现做全局孤立清扫，删除 0 首歌单曾连带误删 595 首未加入任何歌单的歌曲）。UI 删除前经 `imminent_orphan_tracks` 预览并弹窗列出受影响曲目
 - **`play_track` 需要 track_id 而非文件路径**：文件路径用 `play_file`
 
 ### IDE / 工具使用注意
@@ -181,7 +182,7 @@ MusePlayer/
 │   ├── utils/                # 工具
 │   │   └── logging_setup.py  # 日志配置（文件轮转、会话复用）
 │   └── version.py            # 版本号 + 元数据（APP/DATA_FORMAT/PROTOCOL_VERSION、AUTHOR、REPO_URL）
-├── tests/                    # 自动化测试（pytest，基线 212 用例）
+├── tests/                    # 自动化测试（pytest，基线 228 用例）
 │   ├── conftest.py           # 测试 fixtures
 │   ├── test_random_order.py  # 随机播放算法测试
 │   ├── test_entities.py      # 数据模型测试
@@ -223,7 +224,7 @@ pytest tests/ -v
 python -c "import socket,json;s=socket.socket();s.connect(('127.0.0.1',43121));s.sendall(json.dumps({'cmd':'ping'}).encode()+b'\n');print(s.recv(1024).decode())"
 ```
 
-- **单元测试**：`tests/` 目录下覆盖数据模型、持久化存储、随机播放算法、播放统计（含年分桶/聚合块/检查点/报告聚合器）、控制协议分发（命令注册表）、曲库服务（清理/去重/CRUD/导出）、Muse 歌单导入、播放内核并发回归，基线 212 用例
+- **单元测试**：`tests/` 目录下覆盖数据模型、持久化存储、随机播放算法、播放统计（含年分桶/聚合块/检查点/报告聚合器）、控制协议分发（命令注册表）、曲库服务（清理/去重/CRUD/导出/删歌单孤立清理）、Muse 歌单导入、播放内核并发回归，基线 228 用例
 - **运行时验证**：启动应用后通过 TCP 控制接口发送 `ping` 命令验证服务可用性
 - **CI**：`.github/workflows/ci.yml` 自动执行 ruff 检查 + ruff 格式检查 + mypy（仅输出）+ 三平台 pytest + 冒烟测试；打 tag（`v*`）额外触发 Windows 便携包构建
 

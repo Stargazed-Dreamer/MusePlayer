@@ -491,9 +491,11 @@ class LibraryService:
         return merged_count
 
     def delete_playlist(self, playlist_id: str) -> None:
-        """删除歌单及其相关的孤立曲目。
+        """删除歌单，并清理其中删除后不再被其他歌单引用的曲目。
 
-        删除指定歌单，如果曲目不再被其他歌单引用则一并删除。
+        仅检查被删歌单自身包含的曲目：删除后如果某曲目不再被任何其他歌单
+        引用（系统歌单"全部歌曲"不参与引用统计），则一并移除。曲库中不属于
+        该歌单的曲目（包括仅存于"全部歌曲"的曲目）一律不受影响。
         "全部歌曲"歌单为系统保留，不允许删除。
 
         Args:
@@ -505,10 +507,9 @@ class LibraryService:
             return
 
         removed = self._playlists[playlist_id]
+        orphan_track_ids = self._playlist_own_orphan_ids(playlist_id)
         del self._playlists[playlist_id]
 
-        # 查找并删除不再被其他歌单引用的孤立曲目
-        orphan_track_ids = self._find_orphan_track_ids(exclude_playlist_id=playlist_id)
         for track_id in orphan_track_ids:
             self._remove_track_globally(track_id)
 
@@ -521,6 +522,28 @@ class LibraryService:
 
         self.save()
         logger.info("删除歌单: %s (%s), 清理歌曲=%s", removed.name, playlist_id, len(orphan_track_ids))
+
+    def imminent_orphan_tracks(self, playlist_id: str) -> list[Track]:
+        """预览删除歌单时将被连带移除的孤立曲目。
+
+        只统计歌单自身包含的曲目：删除后不再被任何其他非系统歌单引用的
+        曲目会随歌单一并移除，本方法返回这些曲目（保持歌单内顺序）。
+
+        Args:
+            playlist_id: 待删除的歌单ID
+
+        Returns:
+            将被连带移除的曲目列表
+        """
+        return [self._tracks[tid] for tid in self._playlist_own_orphan_ids(playlist_id)]
+
+    def _playlist_own_orphan_ids(self, playlist_id: str) -> list[str]:
+        """计算删除歌单后将孤立的曲目ID（仅限歌单自身曲目，保持顺序）。"""
+        playlist = self._playlists.get(playlist_id)
+        if playlist is None:
+            return []
+        unreferenced = self._find_orphan_track_ids(exclude_playlist_id=playlist_id)
+        return [tid for tid in dict.fromkeys(playlist.track_ids) if tid in self._tracks and tid in unreferenced]
 
     def set_active_playlist(self, playlist_id: str) -> None:
         """设置当前活动歌单。

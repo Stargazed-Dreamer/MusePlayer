@@ -5,16 +5,23 @@
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-10-12
+
 ### 修复
+- 删除歌单连带误删曲库中所有"仅存于全部歌曲"的曲目：旧实现的孤立曲目清扫是全局的（`_find_orphan_track_ids` 扫描全部歌单，"全部歌曲"不参与引用统计），与被删歌单内容无关——即使删除一个显示 0 首的歌单，也会把所有未加入任何用户歌单的曲目从曲库清除。现在 `delete_playlist` 仅检查被删歌单自身包含的曲目：删除后不再被其他歌单引用的才一并移除，曲库中其他曲目（含仅存于"全部歌曲"的）一律不受影响。回归用例见 `tests/test_library_service.py::test_delete_empty_playlist_keeps_all_songs_only_tracks`。
 - 全局快捷键注册成功但按下毫无反应（无任何报错）：`GlobalHotkeyManager.handle_native_event` 里 `event_type not in {b"windows_generic_MSG", b"windows_dispatcher_MSG"}` 的判断恒为真，导致每个 `WM_HOTKEY` 在第一步就被丢弃。根因是 Qt6/PySide6 传给 `nativeEvent` 的 `event_type` 是 `QByteArray`，它与 `bytes` 比较相等（`==` 为 True）但哈希不一致（`hash()` 不同），而 set 成员判断走哈希 ⇒ 恒 False。现在先 `bytes(event_type).decode()` 归一化为 `str` 再比较。此 bug 与窗口句柄无关（`setWindowFlag()` 在本项目 Qt6 下不重建 `winId()`），也与外部程序占用无关。
 - 全局快捷键冲突提示太弱（一闪而过、看不到是哪几项）：`_refresh_global_hotkeys` 过去只把失败文案在状态栏显示 6 秒。现在改为**错误红 + 30 秒**，并在按键设置对话框里逐项定位到具体操作。
 
 ### 新增
+- 删除歌单孤立曲目提醒：`LibraryService.imminent_orphan_tracks` 预览删除歌单时将被连带移除的曲目（仅限歌单自身、保持顺序）；歌单管理对话框删除前检测到此类曲目时弹窗提示"将不再被任何歌单引用、可能丢失，请尽快加入其他歌单管理"，并以只读多行文本控件完整列出全部受影响歌曲（标题 - 艺术家），确认"仍然删除"才执行。
 - 状态栏消息支持"性质配色"：`MultiHintStatusBar` 的 `showMessage`/`set_hint` 新增可选 `severity`（`info`/`success`/`warning`/`error`，常量见 `app/ui/theme.py`）。不传则沿用主题正文色（浅色近黑、深色近白）；传了则按当前主题取对应那套颜色（浅色用压暗版保对比度、深色用提亮版），错误=红、成功=绿、警告=琥珀。主题切换时经 `set_dark_theme()` 自动换色，无需重发消息。
 - 按键设置对话框逐项标注全局冲突：上一次注册失败的项会在【操作】格下方显示红色小字`【全局按键冲突】`，同时该行的**全局快捷键输入框描错误红**表示当前不可用（悬浮显示失败原因，如"已被其他程序占用：Ctrl+Alt+Right"）；顶部另有一条汇总说明。用户改动该项组合后标记立即撤销（改完要保存并重新注册才知结果）；全局快捷键总开关关闭时不再标注。
 
 ### 变更
 - `GlobalHotkeyManager.register()` 返回值由 `list[str]` 改为 `dict[str, str]`（`action_id -> 失败原因`），并新增 `conflicts` 属性保存上次注册结果，供 UI 定位失败项；`unregister_all()` 一并清空 `conflicts`，因此关闭全局快捷键后不会残留过期标记。
+
+### 测试
+- 新增 `tests/test_library_service.py::test_delete_empty_playlist_keeps_all_songs_only_tracks` 与 `test_delete_playlist_scoped_orphan_cleanup_and_preview`，测试基线 226 → 228。
 
 ## [1.2.2] - 2026-09-25
 
