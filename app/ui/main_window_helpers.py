@@ -162,6 +162,51 @@ class AdaptiveInfoLabel(QLabel):
         return marker.strip()
 
 
+class CoverLabel(QLabel):
+    """可点击的专辑封面标签。
+
+    QLabel 本身不带 clicked 信号，这里补一个与 AdaptiveInfoLabel 一致语义的
+    clicked（左键在控件矩形内释放时发射），供封面「点击即复制」使用。
+    """
+
+    clicked = Signal()
+
+    def __init__(self, text: str = "", parent: QWidget | None = None):
+        super().__init__(parent)
+        self._has_content = False
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 仅在真的有封面时才显示手型光标/ToolTip，避免占位文字也像可点。
+        self._update_interactive_affordance()
+
+    def setHasContent(self, has_content: bool) -> None:
+        """标记当前是否展示了真实封面（无封面时不应表现为可点击）。"""
+        value = bool(has_content)
+        if value == self._has_content:
+            return
+        self._has_content = value
+        self._update_interactive_affordance()
+
+    def hasContent(self) -> bool:
+        return self._has_content
+
+    def mouseReleaseEvent(self, event) -> None:
+        if (
+            self._has_content
+            and event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+        ):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+    def _update_interactive_affordance(self) -> None:
+        if self._has_content:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.setToolTip("点击复制专辑封面")
+        else:
+            self.unsetCursor()
+            self.setToolTip("")
+
+
 TBPF_NOPROGRESS = 0x00000000
 TBPF_INDETERMINATE = 0x00000001
 TBPF_NORMAL = 0x00000002

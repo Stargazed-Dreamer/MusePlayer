@@ -31,7 +31,7 @@ from bisect import bisect_right
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QRect, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QGuiApplication, QPixmap
+from PySide6.QtGui import QColor, QGuiApplication, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -75,6 +75,7 @@ from app.ui.theme import (
     APP_STYLE_LIGHT,
     STATUS_SEVERITY_ERROR,
     STATUS_SEVERITY_SUCCESS,
+    STATUS_SEVERITY_WARNING,
 )
 
 logger = logging.getLogger("museplayer.ui")
@@ -449,6 +450,7 @@ class MainWindowPlaybackMixin:
         """
         if not cover_data:
             self._has_cover_content = False
+            self.cover_label.setHasContent(False)
             self.cover_label.hide()
             return
 
@@ -456,6 +458,7 @@ class MainWindowPlaybackMixin:
         ok = pixmap.loadFromData(cover_data)
         if not ok:
             self._has_cover_content = False
+            self.cover_label.setHasContent(False)
             self.cover_label.hide()
             return
 
@@ -465,6 +468,7 @@ class MainWindowPlaybackMixin:
             Qt.TransformationMode.SmoothTransformation,
         )
         self._has_cover_content = True
+        self.cover_label.setHasContent(True)
         self.cover_label.show()
         self.cover_label.setText("")
         self.cover_label.setPixmap(scaled)
@@ -1770,15 +1774,49 @@ class MainWindowPlaybackMixin:
         if self.player.current_track() is None:
             self.statusBar().showMessage("当前没有可复制的歌曲信息", 2500)
             return
-        text = "\n".join(
+        QApplication.clipboard().setText(self._compose_song_info_text())
+        self.statusBar().showMessage("已复制歌曲信息", 2500)
+
+    def _compose_song_info_text(self) -> str:
+        """拼装「复制歌曲信息」的纯文本内容。
+
+        口径：只含歌名 / 歌手 / 专辑三项，**每个字段独占一行**，不含文件路径
+        （路径属于本机私有信息，早期版本带上后粘贴到外部场景会泄露目录结构）。
+
+        Returns:
+            str: 三行文本，形如 "歌名: X\\n歌手: A\\n专辑: B"。
+        """
+        return "\n".join(
             (
                 f"歌名: {self._current_track_title}",
-                f"歌手: {self._current_track_artist} | 专辑: {self._current_track_album}",
-                f"路径: {self._current_track_path}",
+                f"歌手: {self._current_track_artist}",
+                f"专辑: {self._current_track_album}",
             )
         )
-        QApplication.clipboard().setText(text)
-        self.statusBar().showMessage("已复制歌曲信息", 2500)
+
+    def _copy_current_album_cover(self) -> None:
+        """复制当前播放曲目的专辑封面位图到系统剪贴板。
+
+        菜单「文件 → 复制当前歌曲专辑封面」与「单击封面图」共用此实现：
+        - 取的是文件内嵌封面的原始字节（不是界面上 170px 缩放后的那张），保证粘贴出去的分辨率最大；
+        - 走 QClipboard.setImage 放真正的位图，可被图片编辑 / 聊天窗口直接粘贴；
+        - 三者同样受 `copy_song_info_enabled` 总开关约束（与信息项点击同口径）。
+        """
+        if not bool(getattr(self.controller.settings, "copy_song_info_enabled", True)):
+            return
+        if self.player.current_track() is None:
+            self._show_status("当前没有可复制的歌曲封面", STATUS_SEVERITY_WARNING, 2500)
+            return
+        cover_data = self.controller.get_current_cover()
+        if not cover_data:
+            self._show_status("当前歌曲没有内嵌专辑封面", STATUS_SEVERITY_WARNING, 2500)
+            return
+        image = QImage()
+        if not image.loadFromData(cover_data) or image.isNull():
+            self._show_status("专辑封面数据无法解析", STATUS_SEVERITY_ERROR, 3000)
+            return
+        QApplication.clipboard().setImage(image)
+        self._show_status(f"已复制专辑封面（{image.width()}×{image.height()}）", STATUS_SEVERITY_SUCCESS, 2500)
 
     def _copy_song_info_item(self, item_name: str) -> None:
         if not bool(getattr(self.controller.settings, "copy_song_info_enabled", True)):
@@ -1818,6 +1856,8 @@ class MainWindowPlaybackMixin:
         self.controller.update_settings(new_settings)  # 更新控制器中的设置
         if self.action_copy_song_info is not None:
             self.action_copy_song_info.setEnabled(bool(new_settings.copy_song_info_enabled))
+        if self.action_copy_album_cover is not None:
+            self.action_copy_album_cover.setEnabled(bool(new_settings.copy_song_info_enabled))
         if (
             new_settings.logging_enabled and self.controller.log_file_path is not None
         ):  # 检查日志是否启用且日志文件路径存在

@@ -216,7 +216,7 @@ class SettingsDialog(QDialog):
         self.remember_window_geometry_check = QCheckBox("记住上次窗口大小和位置")
         self.remember_window_geometry_check.setChecked(bool(getattr(self._settings, "remember_window_geometry", True)))
 
-        self.copy_song_info_check = QCheckBox("允许复制当前歌曲信息（Ctrl+C / 点击信息项）")
+        self.copy_song_info_check = QCheckBox("允许复制当前歌曲信息（Ctrl+C / 点击信息项 / 封面）")
         self.copy_song_info_check.setChecked(bool(getattr(self._settings, "copy_song_info_enabled", True)))
 
         # 创建最大窗口宽度和高度的输入框

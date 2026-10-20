@@ -41,6 +41,7 @@ from app.ui.global_hotkeys import GlobalHotkeyManager
 from app.ui.main_window_helpers import (
     AdaptiveInfoLabel,
     ClickJumpSlider,
+    CoverLabel,
     LyricsItemDelegate,
     LyricsListWidget,
     MultiHintStatusBar,
@@ -221,6 +222,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.album_label = None
         self.path_label = None
         self.action_copy_song_info = None
+        self.action_copy_album_cover = None
 
         # 其他状态属性（之前依赖 getattr/hasattr 防御）
         self._last_random_seed: int | None = None
@@ -351,9 +353,8 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self._meta_top_spacer = QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         self._meta_bottom_spacer = QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
-        self.cover_label = QLabel("暂无封面")
+        self.cover_label = CoverLabel("暂无封面")
         self.cover_label.setFixedSize(170, 170)
-        self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cover_label.setStyleSheet("")
 
         self.lyrics_list = LyricsListWidget()
@@ -614,6 +615,8 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         action_open_file = menu_file.addAction("播放文件")  # 添加“播放文件”动作
         self.action_copy_song_info = menu_file.addAction("复制歌曲信息")
         self.action_copy_song_info.setEnabled(bool(self.controller.settings.copy_song_info_enabled))
+        self.action_copy_album_cover = menu_file.addAction("复制当前歌曲专辑封面")
+        self.action_copy_album_cover.setEnabled(bool(self.controller.settings.copy_song_info_enabled))
         self.action_save_stats = menu_file.addAction("保存统计数据")  # 添加“保存统计数据”动作，并保存为实例变量
         action_export_stats = menu_file.addAction("导出统计数据")  # 添加“导出统计数据”动作
         menu_file.addSeparator()  # 添加分隔线
@@ -666,6 +669,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         action_import_playlist.triggered.connect(self._menu_import_playlist_file)  # 连接导入歌单文件动作到槽函数
         action_open_file.triggered.connect(self._menu_open_file)  # 连接播放文件动作到槽函数
         self.action_copy_song_info.triggered.connect(self._copy_current_song_info)
+        self.action_copy_album_cover.triggered.connect(self._copy_current_album_cover)
         self.action_save_stats.triggered.connect(self._save_stats_now)  # 连接保存统计数据动作到槽函数
         action_export_stats.triggered.connect(self._export_stats)  # 连接导出统计数据动作到槽函数
         action_exit.triggered.connect(self.close)  # 连接退出动作到关闭方法
@@ -735,6 +739,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.artist_label.clicked.connect(lambda: self._copy_song_info_item("artist"))
         self.album_label.clicked.connect(lambda: self._copy_song_info_item("album"))
         self.path_label.clicked.connect(lambda: self._copy_song_info_item("path"))
+        self.cover_label.clicked.connect(self._copy_current_album_cover)
         self.add_to_playlist_btn.clicked.connect(self._add_current_to_playlist)
         self.prev_btn.clicked.connect(self._play_previous_track)
         self.play_btn.clicked.connect(self.player.toggle_play_pause)
