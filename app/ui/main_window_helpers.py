@@ -98,10 +98,29 @@ class AdaptiveInfoLabel(QLabel):
     def __init__(self, text: str = "", parent: QWidget | None = None):
         super().__init__(parent)
         self._source_text = ""
+        self._clickable = True
         self.setWordWrap(True)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setText(text)
+
+    def setClickable(self, clickable: bool) -> None:
+        """标记该信息项当前是否允许点击复制。
+
+        关闭时不留任何"能点"的暗示（游标变回默认、点击不再发 `clicked`）。
+        注意**不能**顺手清 ToolTip：本控件的 ToolTip 复用为"被省略时的完整文本"。
+        """
+        value = bool(clickable)
+        if value == self._clickable:
+            return
+        self._clickable = value
+        if value:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.unsetCursor()
+
+    def isClickable(self) -> bool:
+        return self._clickable
 
     def sourceText(self) -> str:
         return self._source_text
@@ -115,7 +134,11 @@ class AdaptiveInfoLabel(QLabel):
         self._refresh_display_text()
 
     def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
+        if (
+            self._clickable
+            and event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+        ):
             self.clicked.emit()
         super().mouseReleaseEvent(event)
 
@@ -174,8 +197,10 @@ class CoverLabel(QLabel):
     def __init__(self, text: str = "", parent: QWidget | None = None):
         super().__init__(parent)
         self._has_content = False
+        self._clickable = True
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # 仅在真的有封面时才显示手型光标/ToolTip，避免占位文字也像可点。
+        # 仅在真的有封面、且点击复制被允许时才显示手型光标/ToolTip，
+        # 避免占位文字或无点击权限时还"长得能点"。
         self._update_interactive_affordance()
 
     def setHasContent(self, has_content: bool) -> None:
@@ -189,9 +214,21 @@ class CoverLabel(QLabel):
     def hasContent(self) -> bool:
         return self._has_content
 
+    def setClickable(self, clickable: bool) -> None:
+        """标记封面当前是否允许点击复制（受 copy_song_info_enabled 总开关控制）。"""
+        value = bool(clickable)
+        if value == self._clickable:
+            return
+        self._clickable = value
+        self._update_interactive_affordance()
+
+    def isClickable(self) -> bool:
+        return self._clickable
+
     def mouseReleaseEvent(self, event) -> None:
         if (
-            self._has_content
+            self._clickable
+            and self._has_content
             and event.button() == Qt.MouseButton.LeftButton
             and self.rect().contains(event.position().toPoint())
         ):
@@ -199,7 +236,7 @@ class CoverLabel(QLabel):
         super().mouseReleaseEvent(event)
 
     def _update_interactive_affordance(self) -> None:
-        if self._has_content:
+        if self._clickable and self._has_content:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
             self.setToolTip("点击复制专辑封面")
         else:

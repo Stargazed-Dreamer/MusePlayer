@@ -1590,6 +1590,18 @@ class MainWindowPlaybackMixin:
             self._reload_track_list()
         self._refresh_favorite_button(self.player.current_track_id)
 
+    def _refresh_copy_clickable_state(self) -> None:
+        """按 `copy_song_info_enabled` 刷新「信息项 / 封面」的可点击表现。
+
+        开关的本意是"别让我点一下就把剪贴板改掉"，所以关闭时不只是让点击失效，
+        而是让控件**根本不长得像可点的**：游标回到默认、封面的 ToolTip 清空、
+        `clicked` 信号也不再发射。菜单与 Ctrl+C 走的是别的代码路径，不受影响。
+        """
+        enabled = bool(getattr(self.controller.settings, "copy_song_info_enabled", True))
+        for label in (self.title_label, self.artist_label, self.album_label, self.path_label, self.cover_label):
+            if label is not None:
+                label.setClickable(enabled)
+
     def _on_settings_changed(self, settings) -> None:
         """
         当设置发生变化时被调用的处理方法。
@@ -1610,6 +1622,8 @@ class MainWindowPlaybackMixin:
         返回值：
         None: 此方法不返回任何值。
         """
+        # 开关可能刚被改过，重建"信息项 / 封面"的可点击表现（见 _refresh_copy_clickable_state）
+        self._refresh_copy_clickable_state()
         self._bind_shortcuts()
         # 设置单曲循环模式，将settings中的属性转换为布尔值，并启用或禁用
         self.player.set_single_loop_mode_enabled(bool(getattr(settings, "enable_single_loop_mode", True)))
@@ -1822,18 +1836,19 @@ class MainWindowPlaybackMixin:
     def _on_cover_label_clicked(self) -> None:
         """封面点击入口（区别于菜单入口）：这里才吃 `copy_song_info_enabled` 开关。
 
-        与信息项点击（`_copy_song_info_item`）同口径：开关关闭时点击不改写剪贴板，
-        但要给一条说明性提示，让用户知道"不是坏了，是开关关着，菜单仍能复制"。
+        被开关拦住时**静默返回**——不开口、不动剪贴板、不留任何提示；
+        用户对这点钟就是"点了跟没点一样"，多一句解释反而干扰。
         """
         if not bool(getattr(self.controller.settings, "copy_song_info_enabled", True)):
-            self._show_status("点击复制已关闭，封面请用文件菜单复制", STATUS_SEVERITY_WARNING, 2500)
             return
         self._copy_current_album_cover()
 
     def _copy_song_info_item(self, item_name: str) -> None:
-        """信息项点击入口：受 `copy_song_info_enabled` 约束，Ctrl+C / 菜单不受限。"""
+        """信息项点击入口：受 `copy_song_info_enabled` 约束，Ctrl+C / 菜单不受限。
+
+        被开关拦住时同样是静默返回。
+        """
         if not bool(getattr(self.controller.settings, "copy_song_info_enabled", True)):
-            self._show_status("点击复制已关闭，歌曲信息请用 Ctrl+C / 文件菜单", STATUS_SEVERITY_WARNING, 2500)
             return
         if self.player.current_track() is None:
             self.statusBar().showMessage("当前没有可复制的歌曲信息", 2500)

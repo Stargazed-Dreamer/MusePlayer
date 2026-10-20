@@ -220,7 +220,8 @@ class SettingsDialog(QDialog):
         self.copy_song_info_check.setChecked(bool(getattr(self._settings, "copy_song_info_enabled", True)))
         self.copy_song_info_check.setToolTip(
             "只限制「点一下界面上的歌名 / 歌手 / 专辑 / 路径 / 封面就把内容塞进剪贴板」这条误触路径。\n"
-            "关闭后，Ctrl+C 与【文件】菜单里的「复制歌曲信息」「复制当前歌曲专辑封面」仍然正常使用。"
+            "关闭后这些元素不再显示手型光标（封面也不再提示「点击复制专辑封面」），点击不产生任何效果；\n"
+            "Ctrl+C 与【文件】菜单里的「复制歌曲信息」「复制当前歌曲专辑封面」仍然正常使用。"
         )
 
         # 创建最大窗口宽度和高度的输入框

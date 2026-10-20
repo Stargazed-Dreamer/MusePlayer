@@ -263,6 +263,7 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self._refresh_volume_ui()  # 刷新音量显示
         self._apply_theme_stylesheet()  # 应用主题样式
         self._refresh_theme_button()  # 刷新主题按钮状态
+        self._refresh_copy_clickable_state()  # 按 copy_song_info_enabled 决定信息项/封面是否可点
         self._update_window_title()  # 更新窗口标题
         self._refresh_window_flags()  # 刷新窗口标志
         _t3 = _time.perf_counter()

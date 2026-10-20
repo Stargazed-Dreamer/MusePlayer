@@ -5,7 +5,8 @@
    各自占一行——早期版本把歌手与专辑挤在一行并用 " | " 分隔，还额外输出本机绝对路径。
 2. 专辑封面可点击：有封面时单击发射 `clicked`；无封面占位时不发射、也不呈现手型光标。
 3. `copy_song_info_enabled` 开关**只挡界面点击**这条误触路径；Ctrl+C 与【文件】菜单
-   里的两个复制项必须照样可用（曾一度把菜单项也置灰）。
+   里的两个复制项必须照样可用（曾一度把菜单项也置灰）。被拦的点击是**完全静默**的：
+   不改剪贴板、不弹状态提示，用户点了就该像什么都没发生。
 
 运行注意：本文件里的控件级 / 剪贴板级用例需要真正的 QApplication。同会话若已存在裸
 QCoreApplication（`tests/test_control_server.py` 的 `_make_qapp` 会创建），Qt 不允许再建
@@ -168,6 +169,108 @@ class _WindowStub(MainWindowPlaybackMixin):
         self.statuses.append((text, severity))
 
 
+class _LabelStub:
+    """替代真实 QWidget，只记录 _refresh_copy_clickable_state 下发了什么。"""
+
+    def __init__(self) -> None:
+        self.clickable: bool | None = None
+
+    def setClickable(self, clickable: bool) -> None:
+        self.clickable = bool(clickable)
+
+
+def test_copy_clickable_state_propagates_to_all_info_widgets() -> None:
+    """开关下达后：四个信息项标签 + 封面都要同步"能不能点"（纯逻辑，无需 Qt）。"""
+
+    class _StateStub:
+        def __init__(self, copy_enabled: bool) -> None:
+            self.controller = SimpleNamespace(settings=SimpleNamespace(copy_song_info_enabled=copy_enabled))
+            self.title_label = _LabelStub()
+            self.artist_label = _LabelStub()
+            self.album_label = _LabelStub()
+            self.path_label = _LabelStub()
+            self.cover_label = _LabelStub()
+
+    stub = _StateStub(copy_enabled=True)
+    MainWindowPlaybackMixin._refresh_copy_clickable_state(stub)  # type: ignore[arg-type]
+    assert [w.clickable for w in (stub.title_label, stub.artist_label, stub.album_label, stub.path_label)] == [
+        True,
+        True,
+        True,
+        True,
+    ]
+    assert stub.cover_label.clickable is True
+
+    stub.controller.settings.copy_song_info_enabled = False
+    MainWindowPlaybackMixin._refresh_copy_clickable_state(stub)  # type: ignore[arg-type]
+    assert [w.clickable for w in (stub.title_label, stub.artist_label, stub.album_label, stub.path_label)] == [
+        False,
+        False,
+        False,
+        False,
+    ]
+    assert stub.cover_label.clickable is False, "封面必须跟着变成不可点"
+
+
+def test_disabled_switch_makes_widgets_look_unclickable() -> None:
+    """控件层面：不可点时不该再是手型光标 / 提示文案，点了也不发 clicked。"""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    _require_qapp()
+    # QApplication 已由 _require_qapp() 建好，这里只查控件自身的行为
+    from app.ui.main_window_helpers import AdaptiveInfoLabel, CoverLabel
+
+    title = AdaptiveInfoLabel("晴天")
+    title.show()
+    cover = CoverLabel("暂无封面")
+    cover.setFixedSize(170, 170)
+    cover.show()
+
+    hits: list[str] = []
+    title.clicked.connect(lambda: hits.append("title"))
+    cover.clicked.connect(lambda: hits.append("cover"))
+    cover.setHasContent(True)
+
+    def _release(widget, x: float, y: float) -> None:
+        local = QPointF(x, y)
+        widget.mouseReleaseEvent(
+            QMouseEvent(
+                QMouseEvent.Type.MouseButtonRelease,
+                local,
+                local,
+                local,
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
+
+    # 允许点击：都有手型光标，封面还有 ToolTip
+    assert title.cursor().shape() == Qt.CursorShape.PointingHandCursor
+    assert cover.cursor().shape() == Qt.CursorShape.PointingHandCursor
+    assert cover.toolTip() == "点击复制专辑封面"
+
+    # 关闭可点：游标回到默认、封面 ToolTip 清空、点击不再发信号
+    title.setClickable(False)
+    cover.setClickable(False)
+    assert title.cursor().shape() != Qt.CursorShape.PointingHandCursor
+    assert cover.cursor().shape() != Qt.CursorShape.PointingHandCursor
+    assert cover.toolTip() == ""
+    _release(title, 5.0, 5.0)
+    _release(cover, 10.0, 10.0)
+    assert hits == []
+
+    # 恢复可点：立刻回到原来的表现（设置里重新打开要即时生效）
+    title.setClickable(True)
+    cover.setClickable(True)
+    assert title.cursor().shape() == Qt.CursorShape.PointingHandCursor
+    assert cover.cursor().shape() == Qt.CursorShape.PointingHandCursor
+    _release(title, 5.0, 5.0)
+    _release(cover, 10.0, 10.0)
+    assert hits == ["title", "cover"]
+
+
 def _sentinel_png(size: int) -> bytes:
     """生成一张纯色 PNG 的原始字节，充当「文件内嵌封面」。"""
     from PySide6.QtCore import QBuffer, QByteArray, QIODevice
@@ -186,7 +289,7 @@ def _sentinel_png(size: int) -> bytes:
 
 
 def test_click_info_item_is_blocked_by_switch() -> None:
-    """关闭开关后，点击信息项不应改写剪贴板，但要给出「不是坏了」的说明性提示。"""
+    """关闭开关后点击信息项：既不改写剪贴板，也**不发任何提示**（被拦＝点了跟没点一样）。"""
     from PySide6.QtWidgets import QApplication
 
     _require_qapp()
@@ -195,7 +298,8 @@ def test_click_info_item_is_blocked_by_switch() -> None:
     stub = _WindowStub(copy_enabled=False)
     MainWindowPlaybackMixin._copy_song_info_item(stub, "title")  # type: ignore[arg-type]
     assert QApplication.clipboard().text() == "SENTINEL", "开关关闭后点击信息项仍改写了剪贴板"
-    assert stub.statuses and "点击复制已关闭" in stub.statuses[0][0], stub.statuses
+    assert stub.statuses == [], f"被拦的点击不该发状态提示：{stub.statuses}"
+    assert stub.status_messages == [], f"被拦的点击不该发状态提示：{stub.status_messages}"
 
 
 def test_menu_and_ctrl_c_copy_ignores_switch() -> None:
@@ -227,10 +331,10 @@ def test_cover_click_blocked_but_menu_entry_still_works() -> None:
 
     stub = _WindowStub(copy_enabled=False, cover_bytes=_sentinel_png(9))
 
-    # ① 点击入口：被开关挡住，剪贴板里的哨兵图保持不动
+    # ① 点击入口：被开关挡住，剪贴板里的哨兵图保持不动，且不留任何提示
     MainWindowPlaybackMixin._on_cover_label_clicked(stub)  # type: ignore[arg-type]
     assert mime.image().size() == sentinel.size(), "开关关闭后点击封面仍改写了剪贴板"
-    assert stub.statuses and "点击复制已关闭" in stub.statuses[0][0]
+    assert stub.statuses == [], f"被拦的点击不该发状态提示：{stub.statuses}"
 
     # ② 菜单入口：开关关着也照样把封面（9×9）放进剪贴板
     MainWindowPlaybackMixin._copy_current_album_cover(stub)  # type: ignore[arg-type]
