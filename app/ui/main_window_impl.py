@@ -613,10 +613,11 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         action_import_folder = menu_file.addAction("导入文件夹")  # 添加“导入文件夹”动作
         action_import_playlist = menu_file.addAction("导入歌单文件")  # 添加“导入歌单文件”动作
         action_open_file = menu_file.addAction("播放文件")  # 添加“播放文件”动作
+        # 两个复制菜单项常驻可用：`copy_song_info_enabled` 只管"点击界面元素就复制"这条
+        # 误触路径（详见 playback_mixin 的 _copy_song_info_item / _on_cover_label_clicked），
+        # 不该把用户明确表达的菜单意图也一起拦掉。
         self.action_copy_song_info = menu_file.addAction("复制歌曲信息")
-        self.action_copy_song_info.setEnabled(bool(self.controller.settings.copy_song_info_enabled))
         self.action_copy_album_cover = menu_file.addAction("复制当前歌曲专辑封面")
-        self.action_copy_album_cover.setEnabled(bool(self.controller.settings.copy_song_info_enabled))
         self.action_save_stats = menu_file.addAction("保存统计数据")  # 添加“保存统计数据”动作，并保存为实例变量
         action_export_stats = menu_file.addAction("导出统计数据")  # 添加“导出统计数据”动作
         menu_file.addSeparator()  # 添加分隔线
@@ -739,7 +740,8 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.artist_label.clicked.connect(lambda: self._copy_song_info_item("artist"))
         self.album_label.clicked.connect(lambda: self._copy_song_info_item("album"))
         self.path_label.clicked.connect(lambda: self._copy_song_info_item("path"))
-        self.cover_label.clicked.connect(self._copy_current_album_cover)
+        # 封面点击走受限入口（菜单项走不受限的 _copy_current_album_cover）
+        self.cover_label.clicked.connect(self._on_cover_label_clicked)
         self.add_to_playlist_btn.clicked.connect(self._add_current_to_playlist)
         self.prev_btn.clicked.connect(self._play_previous_track)
         self.play_btn.clicked.connect(self.player.toggle_play_pause)

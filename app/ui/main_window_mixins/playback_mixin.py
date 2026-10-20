@@ -1768,9 +1768,12 @@ class MainWindowPlaybackMixin:
         self.statusBar().showMessage("歌单管理已更新", 2500)
 
     def _copy_current_song_info(self) -> None:
-        if not bool(getattr(self.controller.settings, "copy_song_info_enabled", True)):
-            self.statusBar().showMessage("歌曲信息复制功能已关闭", 2500)
-            return
+        """【复制歌曲信息】动作本体：菜单项 + Ctrl+C 快捷键。
+
+        注意：这里**不检查** `copy_song_info_enabled`。那个开关的语义是
+        「是否允许点界面上的信息项/封面就顺手把剪贴板改掉」（防误触），
+        不该拦住用户明确表达意图的菜单点击或 Ctrl+C。
+        """
         if self.player.current_track() is None:
             self.statusBar().showMessage("当前没有可复制的歌曲信息", 2500)
             return
@@ -1797,13 +1800,11 @@ class MainWindowPlaybackMixin:
     def _copy_current_album_cover(self) -> None:
         """复制当前播放曲目的专辑封面位图到系统剪贴板。
 
-        菜单「文件 → 复制当前歌曲专辑封面」与「单击封面图」共用此实现：
         - 取的是文件内嵌封面的原始字节（不是界面上 170px 缩放后的那张），保证粘贴出去的分辨率最大；
         - 走 QClipboard.setImage 放真正的位图，可被图片编辑 / 聊天窗口直接粘贴；
-        - 三者同样受 `copy_song_info_enabled` 总开关约束（与信息项点击同口径）。
+        - **不受** `copy_song_info_enabled` 约束：开关只挡"点击封面就复制"这条误触路径，
+          用户主动走菜单（见封面点击专用的 `_on_cover_label_clicked`）应该一路放行。
         """
-        if not bool(getattr(self.controller.settings, "copy_song_info_enabled", True)):
-            return
         if self.player.current_track() is None:
             self._show_status("当前没有可复制的歌曲封面", STATUS_SEVERITY_WARNING, 2500)
             return
@@ -1818,8 +1819,21 @@ class MainWindowPlaybackMixin:
         QApplication.clipboard().setImage(image)
         self._show_status(f"已复制专辑封面（{image.width()}×{image.height()}）", STATUS_SEVERITY_SUCCESS, 2500)
 
-    def _copy_song_info_item(self, item_name: str) -> None:
+    def _on_cover_label_clicked(self) -> None:
+        """封面点击入口（区别于菜单入口）：这里才吃 `copy_song_info_enabled` 开关。
+
+        与信息项点击（`_copy_song_info_item`）同口径：开关关闭时点击不改写剪贴板，
+        但要给一条说明性提示，让用户知道"不是坏了，是开关关着，菜单仍能复制"。
+        """
         if not bool(getattr(self.controller.settings, "copy_song_info_enabled", True)):
+            self._show_status("点击复制已关闭，封面请用文件菜单复制", STATUS_SEVERITY_WARNING, 2500)
+            return
+        self._copy_current_album_cover()
+
+    def _copy_song_info_item(self, item_name: str) -> None:
+        """信息项点击入口：受 `copy_song_info_enabled` 约束，Ctrl+C / 菜单不受限。"""
+        if not bool(getattr(self.controller.settings, "copy_song_info_enabled", True)):
+            self._show_status("点击复制已关闭，歌曲信息请用 Ctrl+C / 文件菜单", STATUS_SEVERITY_WARNING, 2500)
             return
         if self.player.current_track() is None:
             self.statusBar().showMessage("当前没有可复制的歌曲信息", 2500)
@@ -1854,10 +1868,8 @@ class MainWindowPlaybackMixin:
 
         new_settings = dlg.output_settings()  # 从对话框获取新的设置
         self.controller.update_settings(new_settings)  # 更新控制器中的设置
-        if self.action_copy_song_info is not None:
-            self.action_copy_song_info.setEnabled(bool(new_settings.copy_song_info_enabled))
-        if self.action_copy_album_cover is not None:
-            self.action_copy_album_cover.setEnabled(bool(new_settings.copy_song_info_enabled))
+        # 注：copy_song_info_enabled 不再影响菜单项可用性（只限制界面点击复制），
+        # 因此这里无需像以前那样同步 action_copy_song_info / action_copy_album_cover 的 enabled。
         if (
             new_settings.logging_enabled and self.controller.log_file_path is not None
         ):  # 检查日志是否启用且日志文件路径存在
