@@ -339,3 +339,111 @@ def test_cover_click_blocked_but_menu_entry_still_works() -> None:
     # ② 菜单入口：开关关着也照样把封面（9×9）放进剪贴板
     MainWindowPlaybackMixin._copy_current_album_cover(stub)  # type: ignore[arg-type]
     assert mime.image().size().width() == 9, f"菜单复制封面未生效：{mime.image().size()}"
+
+
+# ============ 点击歌词复制（copy_lyric_on_click_enabled） ============
+#
+# 口径（2026-10-22 定）：单击歌词行即复制该行当前显示的全部内容；双击仍跳转到该句；
+# 该开关**独立于** copy_song_info_enabled（歌曲信息/封面那套开关不受影响、也不影响它）；
+# 开关关闭时点击完全静默，而 Ctrl+C 复制选中歌词照常可用。
+
+
+class _LyricStub(MainWindowPlaybackMixin):
+    """最小桩：`_lyric_text_of_item` 直接回传入值，省掉 QListWidgetItem 依赖。"""
+
+    def __init__(self, lyric_enabled: bool, text: str = "晴天", song_info_enabled: bool = True) -> None:
+        self.controller = SimpleNamespace(
+            settings=SimpleNamespace(
+                copy_lyric_on_click_enabled=lyric_enabled,
+                copy_song_info_enabled=song_info_enabled,
+            )
+        )
+        self._text = text
+        self.status_messages: list[tuple[str, int]] = []
+
+    def statusBar(self) -> SimpleNamespace:
+        return SimpleNamespace(showMessage=lambda text, timeout: self.status_messages.append((text, timeout)))
+
+    def _lyric_text_of_item(self, item) -> str:  # noqa: ANN001 - 桩：入参即歌词文本
+        return item
+
+
+def test_lyric_click_copies_line_text() -> None:
+    """开关打开：单击歌词行直接写入剪贴板，并给出一条状态提示。"""
+    from PySide6.QtWidgets import QApplication
+
+    _require_qapp()
+    QApplication.clipboard().setText("")
+
+    stub = _LyricStub(lyric_enabled=True, text="故事的小黄花")
+    MainWindowPlaybackMixin._on_lyric_clicked(stub, "故事的小黄花")  # type: ignore[arg-type]
+    assert QApplication.clipboard().text() == "故事的小黄花"
+    assert stub.status_messages == [("已复制歌词：故事的小黄花", 2000)]
+
+
+def test_lyric_click_multi_line_message_shows_first_line() -> None:
+    """多行歌词（原文 + 罗马音 + 翻译）整体进剪贴板，状态栏只显示首行，避免撑高状态栏。"""
+    from PySide6.QtWidgets import QApplication
+
+    _require_qapp()
+    QApplication.clipboard().setText("")
+
+    text = "約束だよ\nyakusoku dayo\n约定好了"
+    stub = _LyricStub(lyric_enabled=True)
+    MainWindowPlaybackMixin._on_lyric_clicked(stub, text)  # type: ignore[arg-type]
+    assert QApplication.clipboard().text() == text, "剪贴板必须是完整的显示文本（含罗马音/翻译）"
+    assert stub.status_messages == [("已复制歌词：約束だよ…", 2000)]
+
+
+def test_lyric_click_is_silent_when_disabled() -> None:
+    """开关关闭：不改剪贴板、不发任何提示——点了跟没点一样。"""
+    from PySide6.QtWidgets import QApplication
+
+    _require_qapp()
+    QApplication.clipboard().setText("SENTINEL")
+
+    stub = _LyricStub(lyric_enabled=False)
+    MainWindowPlaybackMixin._on_lyric_clicked(stub, "故事的小黄花")  # type: ignore[arg-type]
+    assert QApplication.clipboard().text() == "SENTINEL", "开关关闭后单击歌词仍改写了剪贴板"
+    assert stub.status_messages == [], f"被拦的点击不该发状态提示：{stub.status_messages}"
+
+
+def test_lyric_click_switch_is_independent_from_song_info_switch() -> None:
+    """两个开关互不牵连：歌曲信息开关关掉不影响点击歌词复制。"""
+    from PySide6.QtWidgets import QApplication
+
+    _require_qapp()
+    QApplication.clipboard().setText("")
+
+    stub = _LyricStub(lyric_enabled=True, song_info_enabled=False)
+    MainWindowPlaybackMixin._on_lyric_clicked(stub, "故事的小黄花")  # type: ignore[arg-type]
+    assert QApplication.clipboard().text() == "故事的小黄花"
+
+    # 反向：歌词开关关掉时，点歌曲信息（Ctrl+C/菜单不受限，此处只验信息项点击仍受自己的开关管）
+    QApplication.clipboard().setText("SENTINEL")
+    stub2 = _LyricStub(lyric_enabled=False, song_info_enabled=True)
+    MainWindowPlaybackMixin._on_lyric_clicked(stub2, "故事的小黄花")  # type: ignore[arg-type]
+    assert QApplication.clipboard().text() == "SENTINEL"
+
+
+def test_ctrl_c_lyric_copy_ignores_lyric_click_switch() -> None:
+    """Ctrl+C 复制选中歌词不受点击开关影响（开关只挡"点一下就复制"这条误触路径）。"""
+    from PySide6.QtWidgets import QApplication
+
+    _require_qapp()
+    QApplication.clipboard().setText("")
+
+    stub = _LyricStub(lyric_enabled=False)
+    stub.lyrics_list = SimpleNamespace(currentItem=lambda: "故事的小黄花")
+    MainWindowPlaybackMixin._copy_selected_lyric(stub)  # type: ignore[arg-type]
+    assert QApplication.clipboard().text() == "故事的小黄花"
+
+
+def test_lyric_click_setting_persists_and_defaults_on() -> None:
+    """设置序列化：旧 settings.json（无该字段）默认开启，新字段能写入并读回。"""
+    from app.models.entities import Settings
+
+    assert Settings.from_dict({}).copy_lyric_on_click_enabled is True
+    saved = Settings(copy_lyric_on_click_enabled=False).to_dict()
+    assert saved["copy_lyric_on_click_enabled"] is False
+    assert Settings.from_dict(saved).copy_lyric_on_click_enabled is False

@@ -156,8 +156,16 @@ class SettingsDialog(QDialog):
         # 从设置中安全获取显示罗马音的值，并设置复选框状态
         self.show_romaji_check.setChecked(bool(getattr(self._settings, "show_romaji", True)))
 
+        self.copy_lyric_check = QCheckBox("允许点击歌词直接复制")
+        self.copy_lyric_check.setChecked(bool(getattr(self._settings, "copy_lyric_on_click_enabled", True)))
+        self.copy_lyric_check.setToolTip(
+            "单击任意一行歌词，即把该行当前显示的内容复制到剪贴板（日语歌会连罗马音 / 翻译一起复制）。\n"
+            "关闭后单击歌词不产生任何效果（双击仍可跳转到该句），Ctrl+C 复制选中歌词照常可用。"
+        )
+
         form.addRow(self.show_japanese_lyrics_check)  # 将日语歌词复选框添加到表单布局
         form.addRow(self.show_romaji_check)  # 将罗马音复选框添加到表单布局
+        form.addRow(self.copy_lyric_check)  # 将点击歌词复制复选框添加到表单布局
 
         parent_layout.addWidget(group)  # 将歌词组添加到父布局
 
@@ -418,6 +426,7 @@ class SettingsDialog(QDialog):
             max_window_height=int(self._parse_max_window_value(self.max_window_height_edit.text(), 800)[0] or 0),
             startup_file_check=bool(self.startup_file_check.isChecked()),
             copy_song_info_enabled=bool(self.copy_song_info_check.isChecked()),
+            copy_lyric_on_click_enabled=bool(self.copy_lyric_check.isChecked()),
             global_shortcuts_enabled=bool(getattr(self._settings, "global_shortcuts_enabled", True)),
             interface_shortcuts=dict(getattr(self._settings, "interface_shortcuts", {})),
             global_shortcuts=dict(getattr(self._settings, "global_shortcuts", {})),

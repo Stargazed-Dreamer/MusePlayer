@@ -846,7 +846,7 @@ class MainWindowPlaybackMixin:
         self._sync_lyrics_with_position(position)
 
     def _copy_selected_lyric(self) -> None:
-        """复制当前选中的歌词文本到剪贴板。
+        """复制当前选中的歌词文本到剪贴板（Ctrl+C 入口，不受任何开关限制）。
 
         获取当前选中的歌词列表项文本内容，并复制到系统剪贴板：
         - 检查是否有选中的列表项
@@ -857,12 +857,43 @@ class MainWindowPlaybackMixin:
         item = self.lyrics_list.currentItem()
         if item is None:
             return
-        text = self._lyric_text_of_item(item)
-        if not text:
+        self._write_lyric_to_clipboard(self._lyric_text_of_item(item))
+
+    def _on_lyric_clicked(self, item: QListWidgetItem) -> None:
+        """单击歌词行即复制该行内容（受 `copy_lyric_on_click_enabled` 开关控制）。
+
+        与 Ctrl+C 入口共用同一段写入逻辑，因此复制内容与「选中后 Ctrl+C」完全一致
+        （结构化歌词行为原文 + 罗马音 + 翻译的多行文本）。
+
+        开关关闭时**完全静默**：不动剪贴板、不发状态提示，点了跟没点一样。
+
+        Args:
+            item: 被单击的歌词列表项
+        """
+        if item is None:
             return
-        clipboard = QGuiApplication.clipboard()
-        clipboard.setText(text)
-        self.statusBar().showMessage(f"已复制歌词：{text}", 2000)
+        if not bool(getattr(self.controller.settings, "copy_lyric_on_click_enabled", True)):
+            return
+        self._write_lyric_to_clipboard(self._lyric_text_of_item(item))
+
+    def _write_lyric_to_clipboard(self, text: str) -> bool:
+        """把歌词文本写入剪贴板并给出状态反馈。
+
+        Args:
+            text: 待复制的歌词文本（调用方已完成去空白）。
+
+        Returns:
+            bool: 文本为空时不写入、返回 False。
+        """
+        text = (text or "").strip()
+        if not text:
+            return False
+        QGuiApplication.clipboard().setText(text)
+        # 多行歌词（原文 + 罗马音 + 翻译）在状态栏里只展示首行，避免状态栏被撑高
+        lines = text.splitlines() or [text]
+        suffix = "…" if len(lines) > 1 else ""
+        self.statusBar().showMessage(f"已复制歌词：{lines[0].strip() or text}{suffix}", 2000)
+        return True
 
     def _on_lyric_double_clicked(self, item: QListWidgetItem) -> None:
         """处理歌词项双击事件，跳转到对应播放时间点。

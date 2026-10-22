@@ -281,6 +281,8 @@ class Settings:
     """启动时检查歌曲文件是否存在"""
     copy_song_info_enabled: bool = True
     """是否允许复制当前歌曲信息"""
+    copy_lyric_on_click_enabled: bool = True
+    """是否允许点击歌词行直接复制（独立于 copy_song_info_enabled）"""
     global_shortcuts_enabled: bool = True
     """是否启用全局快捷键"""
     interface_shortcuts: dict[str, str] = field(default_factory=dict)
@@ -329,6 +331,7 @@ class Settings:
             "max_window_height": int(self.max_window_height),
             "startup_file_check": bool(self.startup_file_check),
             "copy_song_info_enabled": bool(self.copy_song_info_enabled),
+            "copy_lyric_on_click_enabled": bool(self.copy_lyric_on_click_enabled),
             "global_shortcuts_enabled": bool(self.global_shortcuts_enabled),
             "interface_shortcuts": dict(self.interface_shortcuts),
             "global_shortcuts": dict(self.global_shortcuts),
@@ -394,6 +397,7 @@ class Settings:
             max_window_height=max_window_height,
             startup_file_check=bool(data.get("startup_file_check", True)),
             copy_song_info_enabled=bool(data.get("copy_song_info_enabled", True)),
+            copy_lyric_on_click_enabled=bool(data.get("copy_lyric_on_click_enabled", True)),
             global_shortcuts_enabled=bool(data.get("global_shortcuts_enabled", True)),
             interface_shortcuts=dict(data.get("interface_shortcuts", {}))
             if isinstance(data.get("interface_shortcuts", {}), dict)

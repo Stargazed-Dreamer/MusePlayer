@@ -791,6 +791,8 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
 
         self.lyrics_list.user_interacted.connect(self._on_lyrics_user_interaction)
         self.lyrics_list.copy_requested.connect(self._copy_selected_lyric)
+        # 单击歌词即复制该行（受 copy_lyric_on_click_enabled 控制）；双击仍跳转到该句
+        self.lyrics_list.itemClicked.connect(self._on_lyric_clicked)
         self.lyrics_list.itemDoubleClicked.connect(self._on_lyric_double_clicked)
         self.lyrics_list.verticalScrollBar().sliderPressed.connect(self._on_lyrics_user_interaction)
         self.lyrics_list.verticalScrollBar().valueChanged.connect(self._on_lyrics_scroll_changed)
