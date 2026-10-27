@@ -362,6 +362,59 @@ def test_toggle_favorite_roundtrip(tmp_path):
     assert "t1" not in svc.find_playlist(FAVORITES_ID).track_ids
 
 
+# ============ search_playlist_tracks ============
+
+
+def _search_fixture(tmp_path: Path) -> LibraryService:
+    """两首曲目：目标曲目跨标题/艺术家承载关键词，干扰项只共享字母 s。"""
+    f1 = tmp_path / "a.flac"
+    f2 = tmp_path / "b.flac"
+    f1.write_bytes(b"a")
+    f2.write_bytes(b"b")
+    target = _make_track(
+        "t-target",
+        str(f1),
+        title="Fading Sky",
+        artist="塞壬唱片-MSR/远山明孝",
+        album="危机合约寻昼行动OST",
+    )
+    other = _make_track(
+        "t-other",
+        str(f2),
+        title="Fading Star",
+        artist="其他歌手",
+        album="其他专辑",
+    )
+    pl = Playlist(id="pl1", name="歌单1", track_ids=["t-target", "t-other"])
+    svc = _make_service(tmp_path)
+    _preload(svc, [target, other], [pl])
+    return svc
+
+
+def test_search_playlist_tracks_splits_whitespace_tokens(tmp_path):
+    """空白分隔的关键词可分别命中不同字段（标题 + 艺术家）。"""
+    svc = _search_fixture(tmp_path)
+
+    assert [t.id for t in svc.search_playlist_tracks("pl1", "s 塞壬")] == ["t-target"]
+    # 词序无关 + 大小写不敏感 + 全角空格同样分词
+    assert [t.id for t in svc.search_playlist_tracks("pl1", "塞壬 S")] == ["t-target"]
+    assert [t.id for t in svc.search_playlist_tracks("pl1", "s\u3000塞壬")] == ["t-target"]
+
+
+def test_search_playlist_tracks_requires_all_tokens(tmp_path):
+    """任一关键词未命中即排除；单关键词仍按子串匹配。"""
+    svc = _search_fixture(tmp_path)
+
+    assert svc.search_playlist_tracks("pl1", "s 塞王") == []
+    assert [t.id for t in svc.search_playlist_tracks("pl1", "fading")] == ["t-target", "t-other"]
+
+
+def test_search_playlist_tracks_blank_query_returns_all(tmp_path):
+    svc = _search_fixture(tmp_path)
+
+    assert [t.id for t in svc.search_playlist_tracks("pl1", "  \t\u3000")] == ["t-target", "t-other"]
+
+
 # ============ export_playlist_file ============
 
 

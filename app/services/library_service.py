@@ -368,22 +368,24 @@ class LibraryService:
         """在指定歌单中搜索曲目。
 
         搜索范围包括曲目标题、艺术家、专辑名，不区分大小写。
+        关键词按空白拆分为多个词，全部词都出现在搜索范围内才算命中，
+        各词可以分散落在不同字段（例如标题命中一个、艺术家命中另一个）。
 
         Args:
             playlist_id: 要搜索的歌单ID
-            keyword: 搜索关键词
+            keyword: 搜索关键词（空白分隔多个词）
 
         Returns:
             匹配的Track对象列表
         """
-        key = (keyword or "").strip().lower()
+        tokens = (keyword or "").lower().split()
         tracks = self.get_playlist_tracks(playlist_id)
-        if not key:
+        if not tokens:
             return tracks
         result: list[Track] = []
         for track in tracks:
             hay = f"{track.title} {track.artist} {track.album}".lower()
-            if key in hay:
+            if all(token in hay for token in tokens):
                 result.append(track)
         return result
 
