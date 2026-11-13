@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from enum import StrEnum
 from pathlib import Path
@@ -114,6 +114,10 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
 
         # 初始化当前播放的播放列表和曲目ID
         self._current_playlist_id = self.library.active_playlist_id  # 从图书馆服务获取当前活动播放列表ID
+        # 搜索结果临时队列：None 表示正常按原歌单播放；非 None 时该列表暂时
+        # 取代原歌单成为"当前播放队列"（只在内存里，不落盘、不进歌单下拉、
+        # 不参与会话恢复）。详见 set_temporary_queue / clear_temporary_queue。
+        self._temp_queue_ids: list[str] | None = None
         self._current_track_id: str | None = None  # 当前正在播放或请求播放的曲目ID
         self._loaded_track_id: str | None = None  # 已加载到播放器核心的曲目ID
 
@@ -425,6 +429,9 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             playlist_id: 目标歌单ID，None表示使用当前活动歌单
         """
         # 切歌单是"状态迁移"过程：要同时处理播放状态、随机序和早期跳过统计。
+        # 临时队列只是"当前歌单的搜索结果视图"，歌单一旦切换即失去意义，
+        # 否则新歌单的切歌会继续落在旧结果集里。
+        self._temp_queue_ids = None
         self._reset_lazy_prefetch(cancel=True)
         was_playing = self.is_playing()
         prev_track_for_skip = self._loaded_track_id or self._current_track_id
@@ -784,6 +791,75 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
             匹配的Track对象列表
         """
         return self.library.search_playlist_tracks(self._current_playlist_id, keyword)
+
+    @property
+    def has_temporary_queue(self) -> bool:
+        """当前是否处于"搜索结果临时歌单"播放上下文。"""
+        return self._temp_queue_ids is not None
+
+    def set_temporary_queue(self, track_ids: Sequence[str]) -> bool:
+        """把当前播放队列临时切换为给定的曲目集合（搜索结果集）。
+
+        临时队列只存在于内存：不写入曲库、不出现在歌单下拉框、不参与会话
+        恢复。有效期内 `_playlist_track_ids()` 以它为准，因此顺序播放、单曲
+        循环、歌单循环、随机都作用在这个集合上。
+
+        只改队列口径，不触碰播放内核（音频不重载、预读不取消）；真正的切歌
+        仍由随后的 `play_track` 完成。
+
+        Args:
+            track_ids: 结果集的曲目ID，顺序即结果集顺序（重复项会被去掉）
+
+        Returns:
+            bool: 是否成功登记（结果集为空或曲目全不在库中时为 False）
+        """
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for track_id in track_ids:
+            if track_id in seen or not self.library.has_track(track_id):
+                continue
+            seen.add(track_id)
+            ordered.append(track_id)
+        if not ordered:
+            return False
+        self._temp_queue_ids = ordered
+        # 仅当当前曲目落在新集合里才重算索引/随机序；不在集合里说明接下来
+        # 要切到别的曲目，由 play_track 负责对齐（此处提前改写当前曲目会
+        # 让"上一首"的早期跳过统计凭空多出一条）。
+        if self._current_track_id in ordered:
+            self._sequential_index = ordered.index(self._current_track_id)
+            if self._mode == PlayMode.RANDOM:
+                self._rebuild_random_order(force=True)
+                self._align_random_index_with_current_track()
+        return True
+
+    def clear_temporary_queue(self) -> bool:
+        """作废临时队列，播放上下文立即回到原歌单。
+
+        与 `set_playlist` 的关键区别：这里只换队列口径（重算顺序索引与随机
+        序），不 pause/unload、不重置预读。正在播放的曲目继续出声，下一个
+        "下一首/自动切歌"起就按原歌单顺序走。
+
+        不发射 `queue_changed`：现有调用方（搜索词变动）本身会重载列表，
+        再发一次只会让大列表在每次按键时多重建一遍。
+
+        Returns:
+            bool: 本次调用是否真的清掉了一个临时队列
+        """
+        if self._temp_queue_ids is None:
+            return False
+        self._temp_queue_ids = None
+        track_ids = self._playlist_track_ids()
+        if not track_ids:
+            self._sequential_index = 0
+        elif self._current_track_id in track_ids:
+            self._sequential_index = track_ids.index(self._current_track_id)
+        else:  # 防御：保持索引在合法范围内，不擅自改写正在播放的曲目
+            self._sequential_index = min(max(0, self._sequential_index), len(track_ids) - 1)
+        if self._mode == PlayMode.RANDOM:
+            self._rebuild_random_order(force=True)
+            self._align_random_index_with_current_track()
+        return True
 
     def preview_next_track(self) -> Track | None:
         track_ids = self._playlist_track_ids()
@@ -1338,10 +1414,16 @@ class PlayerService(PlayerServiceStatsMixin, PlayerServiceLazyDecodeMixin, QObje
         return True
 
     def _playlist_track_ids(self) -> list[str]:
-        """获取当前播放列表的 track IDs，只返回在库中存在的 track IDs。
+        """获取当前播放队列的 track IDs，只返回在库中存在的 track IDs。
+
+        队列优先级：搜索结果临时队列（若已登记）> 当前原歌单。临时队列是
+        "搜索时按结果集播放"这一模式的载体，见 set_temporary_queue。
+
         参数：无（self 是实例参数）。
         返回值：list[str] - 包含字符串类型的 track IDs 列表。
         """
+        if self._temp_queue_ids is not None:  # 临时队列有效期内以它为准
+            return [track_id for track_id in self._temp_queue_ids if self.library.has_track(track_id)]
         playlist = self.library.get_playlist(self._current_playlist_id)  # 获取指定ID的播放列表
         if playlist is None:  # 如果播放列表不存在
             return []  # 返回空列表

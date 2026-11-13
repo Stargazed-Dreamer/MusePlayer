@@ -135,6 +135,9 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         # 窗口几何状态（用于模式切换时保存/恢复）
         self._last_window_width = 0  # 上次窗口宽度
         self._resize_adjusting_splitter = False  # 是否正在调整分割器
+        # 列表行高：缓存上次重算所用的视口宽度，拖拽缩放时按"停顿后一次"重算
+        self._track_heights_width = -1  # 上次据以计算行高的视口宽度（-1 表示未算过）
+        self._track_height_timer: QTimer | None = None  # 尺寸稳定后再整表重算行高
         self._width_before_compact = 0  # 进入简洁模式前的宽度
         self._height_before_compact = 0  # 进入简洁模式前的高度
         self._min_width_before_compact = self.minimumWidth()  # 进入简洁模式前的最小宽度
@@ -875,6 +878,10 @@ class MainWindow(MainWindowPlaybackMixin, MainWindowWindowingMixin, QMainWindow)
         self.search_clear_btn.setVisible(
             bool(self.search_edit.text().strip())
         )  # 判断搜索框文本是否非空，是则显示清除按钮，否则隐藏
+        # 搜索结果临时歌单只对生成它的关键词有效：搜索词一变动（含清空）即作废，
+        # 播放上下文立即回到原歌单——音频不重载，后续切歌按原歌单顺序走。
+        if self.player is not None and self.player.has_temporary_queue:
+            self.player.clear_temporary_queue()
 
     def _position_search_clear_button(self) -> None:
         """设置搜索框清除按钮的位置和大小。

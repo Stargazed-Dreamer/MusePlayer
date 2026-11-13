@@ -370,7 +370,13 @@ class MultiHintStatusBar(QStatusBar):
         self._message_label.setObjectName("StatusBarMessageLabel")
         self._message_label.setTextFormat(Qt.TextFormat.RichText)
         self._message_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-        self._message_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._message_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        # 水平策略必须是 Ignored：QLabel 的 minimumSizeHint 等于整段文本宽度，
+        # 一条较长的错误提示（如"快捷键已被其他程序占用：..."，30 秒不消失）
+        # 会把主窗口的最小宽度顶到 2400+，表现为"一打开就特别宽、往里拖到一半拖不动"。
+        # Ignored 让布局只按可用宽度分配，超出部分裁剪，与原生 QStatusBar 一致；
+        # 完整文本通过 tooltip 兜底（见 _render）。
+        self._message_label.setMinimumWidth(0)
         self._message_label.setContentsMargins(0, 0, 0, 0)
         self.addWidget(self._message_label, 1)
 
@@ -467,6 +473,7 @@ class MultiHintStatusBar(QStatusBar):
         """
         if not self._hints:
             self._message_label.setText("")
+            self._message_label.setToolTip("")
             return
         # 按优先级排序（order 越小越靠前）
         ordered = sorted(self._hints.items(), key=lambda kv: kv[1].order)
@@ -477,6 +484,8 @@ class MultiHintStatusBar(QStatusBar):
             color = status_severity_color(hint.severity, self._dark_theme)
             parts.append(f'<span style="color: {color};">{escape(hint.text)}</span>')
         self._message_label.setText(" - ".join(parts))
+        # 状态栏按可用宽度裁剪长文本，完整内容放 tooltip（不影响布局）
+        self._message_label.setToolTip(" - ".join(h.text for _, h in ordered if h.text))
 
     def _prune_and_render(self) -> None:
         """

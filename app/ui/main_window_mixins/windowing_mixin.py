@@ -1315,7 +1315,7 @@ class MainWindowWindowingMixin:
         self._reposition_sidebar_toggle()
         self._layout_compact_top_bar()
         self._reposition_volume_value_label()
-        self._update_track_item_heights()
+        self._schedule_track_item_height_refresh()
         self._position_locate_current_button()
         self._update_locate_current_button()
         for label_name in ("title_label", "artist_label", "album_label", "path_label"):
@@ -1353,12 +1353,45 @@ class MainWindowWindowingMixin:
         """更新播放列表中所有项目的高度。
 
         根据项目的文本内容计算合适的高度，确保文本能够完整显示。
+
+        宽度没变时直接跳过：行高只取决于视口宽度（换行位置），纵向缩放不需要重算。
+        3500 首的整表重算约 40ms，若每次 resizeEvent 都跑会占满 UI 线程。
         """
+        width = self.track_list.viewport().width()
+        if width == self._track_heights_width:
+            return
+        self._track_heights_width = width
         for row in range(self.track_list.count()):
-            item = self.track_list.item(row)
-            if item is None:
-                continue
-            item.setSizeHint(QSize(0, self._track_item_height_for_text(item.text() or "")))
+            self._apply_track_item_height(row)
+
+    def _apply_track_item_height(self, row: int) -> None:
+        """按当前视口宽度修正单行行高；高度未变化时不触碰 model。"""
+        item = self.track_list.item(row)
+        if item is None:
+            return
+        height = self._track_item_height_for_text(item.text() or "")
+        hint = item.sizeHint()
+        if hint.height() == height and hint.width() == 0:
+            return  # 无变化就不发 dataChanged（每次都会引起整行重排与重绘）
+        item.setSizeHint(QSize(0, height))
+
+    def _schedule_track_item_height_refresh(self) -> None:
+        """拖拽缩放期间延迟整表重算行高（尺寸稳定 90ms 后跑一次）。
+
+        resizeEvent 在拖动窗口时每帧触发。实测 3543 首的整表重算约 40ms，即便只
+        修正可视区的 ~20 行也要 ~20ms/次（非等高列表改行高会触发从头重排），
+        两者都会把 UI 线程占满，表现为"拖动很卡、拖到一半拖不动"。
+
+        因此拖动过程中只重新定位轻量控件，行高等手停下来再统一算一次；行高只
+        取决于视口宽度，纵向缩放时 `_update_track_item_heights` 会直接跳过。
+        """
+        if self._track_height_timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(90)
+            timer.timeout.connect(self._update_track_item_heights)
+            self._track_height_timer = timer
+        self._track_height_timer.start()
 
     def _position_locate_current_button(self) -> None:
         """定位"跳转到当前播放"按钮的位置。

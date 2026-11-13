@@ -122,7 +122,7 @@ flowchart LR
 
 完整字段见 `docs/ARCHITECTURE.md` 第 6 节。按功能分区：
 
-**播放设置**：`auto_restore_session / enable_single_loop_mode / enable_playlist_loop_mode / prefer_playlist_order / playlist_loop_sort / random_display_order / collect_playback_data / checkpoint_auto_year_save / stats_last_seen_year`
+**播放设置**：`auto_restore_session / enable_single_loop_mode / enable_playlist_loop_mode / prefer_playlist_order / playlist_loop_sort / random_display_order / search_result_play_mode / collect_playback_data / checkpoint_auto_year_save / stats_last_seen_year`
 
 其中 `checkpoint_auto_year_save`（跨年自动保存统计检查点，默认开）与 `stats_last_seen_year`（上次启动年份，跨年检测用）为 1.2.0 新增。
 

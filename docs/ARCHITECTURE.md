@@ -160,6 +160,7 @@
 | `prefer_playlist_order` | bool | `False` | 优先使用歌单指定的顺序 |
 | `playlist_loop_sort` | str | `"default"` | 歌单循环排序方式：`default`/`title`/`artist` |
 | `random_display_order` | str | `"original"` | 随机模式显示顺序：`original`（随机前）/`random`（随机后） |
+| `search_result_play_mode` | str | `"playlist"` | 搜索结果播放方式：`playlist`（跳转原歌单位置）/`temp_queue`（结果集作为临时歌单） |
 | `show_romaji` | bool | `True` | 日语歌词显示罗马音 |
 | `show_japanese_lyrics` | bool | `True` | 显示日语歌词 |
 | `collect_playback_data` | bool | `True` | 是否采集播放数据 |

@@ -119,6 +119,13 @@ class SettingsDialog(QDialog):
         rdo_idx = self.random_display_order_combo.findData(rdo_val)
         self.random_display_order_combo.setCurrentIndex(0 if rdo_idx < 0 else rdo_idx)
 
+        self.search_play_mode_combo = QComboBox()
+        self.search_play_mode_combo.addItem("跳转原歌单位置（默认）", "playlist")
+        self.search_play_mode_combo.addItem("结果集作为临时歌单", "temp_queue")
+        spm_val = str(getattr(self._settings, "search_result_play_mode", "playlist")).strip().lower()
+        spm_idx = self.search_play_mode_combo.findData(spm_val)
+        self.search_play_mode_combo.setCurrentIndex(0 if spm_idx < 0 else spm_idx)
+
         self.collect_playback_data_check = QCheckBox("收集播放数据")
         self.collect_playback_data_check.setChecked(bool(self._settings.collect_playback_data))
 
@@ -131,6 +138,7 @@ class SettingsDialog(QDialog):
         form.addRow("歌单循环排序", self.playlist_loop_sort_combo)
         form.addRow(self.prefer_playlist_order_check)
         form.addRow("随机模式显示顺序", self.random_display_order_combo)
+        form.addRow("搜索结果播放方式", self.search_play_mode_combo)
         form.addRow(self.collect_playback_data_check)
         form.addRow(self.checkpoint_auto_year_save_check)
 
@@ -406,6 +414,7 @@ class SettingsDialog(QDialog):
             prefer_playlist_order=bool(self.prefer_playlist_order_check.isChecked()),
             playlist_loop_sort=str(self.playlist_loop_sort_combo.currentData() or "default"),
             random_display_order=str(self.random_display_order_combo.currentData() or "original"),
+            search_result_play_mode=str(self.search_play_mode_combo.currentData() or "playlist"),
             show_romaji=bool(self.show_romaji_check.isChecked()),
             show_japanese_lyrics=bool(self.show_japanese_lyrics_check.isChecked()),
             collect_playback_data=bool(self.collect_playback_data_check.isChecked()),

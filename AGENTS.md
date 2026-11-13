@@ -47,6 +47,19 @@ start.bat        # Windows
   - **不排预读的唯一合法入口**：`_load_current_track(auto_play=False)`（"仅加载不播放"，用于会话恢复预览——用户可能最终不点播放，此时预热浪费一次后台解码）
   - **新增播放入口时**：若绕开 `_load_current_track(auto_play=True)` 直接把内核推进到播放状态，必须显式补一次 `_schedule_lazy_prefetch`；否则该入口就是下一次"边界卡顿"回归的种子。回归用例见 `tests/test_player_session_restore.py::test_play_from_pause_schedules_lazy_prefetch`。
 
+### 搜索结果播放上下文（2026-11）
+
+- **两种模式由设置项 `search_result_play_mode` 控制**：`playlist`（默认）= 搜索只影响列表显示，双击结果后播放上下文仍是原歌单；`temp_queue` = 搜索结果集临时取代原歌单成为播放队列，顺序 / 单曲循环 / 歌单循环 / 随机都作用在结果集上
+- **临时队列只在内存里**（`PlayerService._temp_queue_ids`）：不落盘、不进歌单下拉、不参与会话恢复。唯一入口 `set_temporary_queue()`；`_playlist_track_ids()` 在有效期内以它为准，因此 next/previous/下一首预览/随机序自动跟随，不需要各自加分支
+- **搜索词一变（含清空）立即作废**：`clear_temporary_queue()` 只换队列口径（重算顺序索引与随机序），**绝不 pause/unload、不重置预读**，正在播放的曲目继续出声；`set_playlist()` 同样直接作废临时队列（否则新歌单的切歌会落在旧结果集里）
+- **新增播放入口时**：若要在临时队列上下文里直接推进内核，务必确认目标曲目已在 `_playlist_track_ids()` 里，否则 `play_track` 会走 `set_playlist("all_songs")` 把上下文丢掉
+
+### 窗口尺寸与缩放（2026-11）
+
+- **状态栏/长文本控件必须用 `Ignored` 水平策略**：QLabel 的 `minimumSizeHint` 等于整段文本宽度，一旦参与布局最小宽度计算，一条长提示会把整个主窗口的最小宽度顶到 2000+（表现为"一打开就特别宽、向内拖到一半拖不动"）。`MultiHintStatusBar` 的消息标签就是这条约束的现场，完整文本放 tooltip，不要回退成 `Expanding`
+- **`resizeEvent` 里禁止整表遍历**：拖动窗口时每帧触发，3543 首的行高重算约 40ms/次，会把 UI 线程占满。行高只取决于视口宽度，统一走 `_schedule_track_item_height_refresh()`（90ms 单次延迟 + `_track_heights_width` 缓存），不要直接调 `_update_track_item_heights()`
+- **缩放开销已量化**：连续 20 次 resize 约 98ms（改造前 ~400ms）。回归用例 `tests/test_window_layout_invariants.py`（需 `QApplication`，完整回归中跳过，需单独运行）
+
 ### Qt 线程安全
 
 - **信号槽跨线程通信**：UI 操作必须在主线程执行，跨线程更新 UI 必须通过 Signal/Slot
@@ -182,7 +195,7 @@ MusePlayer/
 │   ├── utils/                # 工具
 │   │   └── logging_setup.py  # 日志配置（文件轮转、会话复用）
 │   └── version.py            # 版本号 + 元数据（APP/DATA_FORMAT/PROTOCOL_VERSION、AUTHOR、REPO_URL）
-├── tests/                    # 自动化测试（pytest，基线 251 用例）
+├── tests/                    # 自动化测试（pytest，基线 269 用例）
 │   ├── conftest.py           # 测试 fixtures
 │   ├── test_random_order.py  # 随机播放算法测试
 │   ├── test_entities.py      # 数据模型测试
@@ -224,7 +237,7 @@ pytest tests/ -v
 python -c "import socket,json;s=socket.socket();s.connect(('127.0.0.1',43121));s.sendall(json.dumps({'cmd':'ping'}).encode()+b'\n');print(s.recv(1024).decode())"
 ```
 
-- **单元测试**：`tests/` 目录下覆盖数据模型、持久化存储、随机播放算法、播放统计（含年分桶/聚合块/检查点/报告聚合器）、控制协议分发（命令注册表）、曲库服务（清理/去重/CRUD/导出/删歌单孤立清理）、Muse 歌单导入、播放内核并发回归，基线 251 用例
+- **单元测试**：`tests/` 目录下覆盖数据模型、持久化存储、随机播放算法、播放统计（含年分桶/聚合块/检查点/报告聚合器）、控制协议分发（命令注册表）、曲库服务（清理/去重/CRUD/导出/删歌单孤立清理）、Muse 歌单导入、播放内核并发回归、搜索结果临时歌单（`test_search_temp_queue.py`）、窗口尺寸不变量（`test_window_layout_invariants.py`，需真实 QApplication，完整回归中跳过），基线 269 用例
 - **运行时验证**：启动应用后通过 TCP 控制接口发送 `ping` 命令验证服务可用性
 - **CI**：`.github/workflows/ci.yml` 自动执行 ruff 检查 + ruff 格式检查 + mypy（仅输出）+ 三平台 pytest + 冒烟测试；打 tag（`v*`）额外触发 Windows 便携包构建
 

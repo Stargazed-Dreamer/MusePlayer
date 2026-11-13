@@ -1537,6 +1537,29 @@ class MainWindowPlaybackMixin:
             f"当前歌单：{self.playlist_combo.currentText()}", 2500
         )  # 在状态栏显示当前播放列表名称，持续2.5秒
 
+    def _arm_search_temporary_queue(self, track_id: str) -> bool:
+        """按设置把当前搜索结果集登记为临时播放队列。
+
+        只在"结果集作为临时歌单"模式下生效；默认模式（跳转原歌单位置）完全
+        沿用原行为：不登记临时队列，搜索只影响列表显示，播放上下文仍是原歌单。
+
+        Args:
+            track_id: 即将播放的曲目ID（必须属于当前搜索结果集）
+
+        Returns:
+            bool: 是否登记成功（默认模式、无搜索词、曲目不在结果集时返回 False）
+        """
+        mode = str(getattr(self.controller.settings, "search_result_play_mode", "playlist")).strip().lower()
+        if mode != "temp_queue":
+            return False
+        keyword = self.search_edit.text().strip()
+        if not keyword:
+            return False
+        result_ids = [track.id for track in self.player.search_playlist_tracks(keyword)]
+        if track_id not in result_ids:
+            return False
+        return self.player.set_temporary_queue(result_ids)
+
     def _on_track_double_clicked(self, item: QListWidgetItem) -> None:
         """
         当轨道项被双击时，播放该轨道。
@@ -1556,9 +1579,13 @@ class MainWindowPlaybackMixin:
         # 如果轨道ID不存在，则返回
         if not track_id:
             return
-        # 计算是否保留随机播放顺序
+        # "结果集作为临时歌单"模式下，先把结果集登记为播放队列（仅内存，不落盘）
+        use_temp_queue = self._arm_search_temporary_queue(str(track_id))
+        # 计算是否保留随机播放顺序；结果集模式下列表显示的是过滤后的原顺序，
+        # 保留随机序没有意义，按手动选曲处理（重新洗牌）
         preserve_random = (
-            self.player.mode == PlayMode.RANDOM
+            not use_temp_queue
+            and self.player.mode == PlayMode.RANDOM
             and str(getattr(self.controller.settings, "random_display_order", "original")) == "random"
         )
         # 调用播放函数播放指定轨道（状态栏提示由 playback_requested /
@@ -1653,6 +1680,13 @@ class MainWindowPlaybackMixin:
         返回值：
         None: 此方法不返回任何值。
         """
+        # 切回"跳转原歌单位置"意味着放弃结果集上下文：临时队列立即作废，
+        # 否则用户关掉设置后仍会在旧结果集里切歌，与设置显示不一致。
+        if (
+            str(getattr(settings, "search_result_play_mode", "playlist")).strip().lower() != "temp_queue"
+            and self.player.has_temporary_queue
+        ):
+            self.player.clear_temporary_queue()
         # 开关可能刚被改过，重建"信息项 / 封面"的可点击表现（见 _refresh_copy_clickable_state）
         self._refresh_copy_clickable_state()
         self._bind_shortcuts()

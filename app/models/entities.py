@@ -241,6 +241,8 @@ class Settings:
     """歌单循环排序方式：default/title/artist"""
     random_display_order: str = "original"
     """随机模式显示顺序：original/random"""
+    search_result_play_mode: str = "playlist"
+    """搜索结果播放方式：playlist=按原歌单位置播放 / temp_queue=结果集视为临时歌单"""
     show_romaji: bool = True
     """日语歌词显示罗马音"""
     show_japanese_lyrics: bool = True
@@ -311,6 +313,7 @@ class Settings:
             "prefer_playlist_order": bool(self.prefer_playlist_order),
             "playlist_loop_sort": self.playlist_loop_sort,
             "random_display_order": self.random_display_order,
+            "search_result_play_mode": self.search_result_play_mode,
             "show_romaji": bool(self.show_romaji),
             "show_japanese_lyrics": bool(self.show_japanese_lyrics),
             "collect_playback_data": bool(self.collect_playback_data),
@@ -360,6 +363,11 @@ class Settings:
         if 0 < max_window_height < 800:
             max_window_height = 800
 
+        # 验证搜索结果播放方式
+        search_result_play_mode = str(data.get("search_result_play_mode", "playlist")).strip().lower()
+        if search_result_play_mode not in {"playlist", "temp_queue"}:
+            search_result_play_mode = "playlist"
+
         return cls(
             control_host=str(data.get("control_host", "127.0.0.1")),
             # 限制端口范围在有效范围内
@@ -374,6 +382,7 @@ class Settings:
             prefer_playlist_order=bool(data.get("prefer_playlist_order", False)),
             playlist_loop_sort=str(data.get("playlist_loop_sort", "default")),
             random_display_order=str(data.get("random_display_order", "original")),
+            search_result_play_mode=search_result_play_mode,
             show_romaji=bool(data.get("show_romaji", True)),
             show_japanese_lyrics=bool(data.get("show_japanese_lyrics", True)),
             collect_playback_data=bool(data.get("collect_playback_data", True)),
